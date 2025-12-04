@@ -1,0 +1,5 @@
+*.pyc
+
+coze_doc.md
+coze-handling-and-project-logic.md
+news.db

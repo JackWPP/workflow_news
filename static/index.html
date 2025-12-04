@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高分子材料加工每日资讯</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css">
+    <style>
+        .markdown-body {
+            box-sizing: border-box;
+            min-width: 200px;
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 45px;
+        }
+        @media (max-width: 767px) {
+            .markdown-body {
+                padding: 15px;
+            }
+        }
+        /* Custom scrollbar for history list */
+        .history-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        .history-list::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+    <div id="app" class="flex-1 flex flex-col">
+        <!-- Header -->
+        <header class="bg-blue-600 text-white shadow-md">
+            <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+                <h1 class="text-xl md:text-2xl font-bold">🧪 高分子材料加工每日资讯</h1>
+                <div class="flex space-x-4">
+                    <button @click="toggleHistory" class="md:hidden px-3 py-1 bg-blue-500 rounded hover:bg-blue-400 transition">
+                        历史
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <div class="flex-1 container mx-auto flex flex-col md:flex-row py-6 gap-6 px-4">
+            
+            <!-- Main Content -->
+            <main class="flex-1 bg-white rounded-lg shadow-md overflow-hidden min-h-[600px] relative">
+                
+                <!-- Controls Bar -->
+                <div class="border-b p-4 flex justify-between items-center bg-gray-50">
+                    <div class="text-gray-700 font-medium">
+                        📅 日期: <span class="font-bold text-blue-600">{{ currentDate }}</span>
+                        <span v-if="isToday(currentDate)" class="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">今日</span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button 
+                            v-if="isToday(currentDate)" 
+                            @click="regenerateNews" 
+                            :disabled="loading"
+                            class="px-4 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition disabled:opacity-50 flex items-center gap-2"
+                        >
+                            <span v-if="loading" class="animate-spin">↻</span>
+                            {{ loading ? '生成中...' : '重新生成' }}
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Content Area -->
+                <div class="p-0">
+                    <div v-if="loading && !markdownContent" class="flex flex-col items-center justify-center h-64 text-gray-500">
+                        <div class="animate-spin text-4xl mb-4">↻</div>
+                        <p>正在获取最新资讯...</p>
+                    </div>
+
+                    <div v-else-if="!markdownContent" class="flex flex-col items-center justify-center h-64 text-gray-500">
+                        <p class="text-lg mb-4">📭 该日期暂无资讯</p>
+                        <button 
+                            v-if="isToday(currentDate)" 
+                            @click="regenerateNews" 
+                            class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                        >
+                            立即生成
+                        </button>
+                    </div>
+
+                    <div v-else class="markdown-body" v-html="renderedMarkdown"></div>
+                </div>
+            </main>
+
+            <!-- Sidebar History (Desktop) -->
+            <aside class="hidden md:block w-64 bg-white rounded-lg shadow-md flex flex-col h-[calc(100vh-150px)] sticky top-6">
+                <div class="p-4 border-b font-bold text-gray-700 bg-gray-50">
+                    📜 历史资讯
+                </div>
+                <div class="overflow-y-auto flex-1 p-2 history-list">
+                    <div v-if="historyDates.length === 0" class="text-center text-gray-400 py-4">暂无历史</div>
+                    <button 
+                        v-for="date in historyDates" 
+                        :key="date"
+                        @click="loadNews(date)"
+                        :class="['w-full text-left px-4 py-3 rounded mb-1 transition', currentDate === date ? 'bg-blue-100 text-blue-700 font-medium' : 'hover:bg-gray-100 text-gray-600']"
+                    >
+                        {{ date }}
+                    </button>
+                </div>
+            </aside>
+        </div>
+
+        <!-- Mobile History Modal -->
+        <div v-if="showMobileHistory" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-end md:hidden" @click.self="showMobileHistory = false">
+            <div class="w-64 bg-white h-full overflow-y-auto p-4">
+                <h2 class="text-xl font-bold mb-4">历史资讯</h2>
+                <div v-if="historyDates.length === 0" class="text-center text-gray-400 py-4">暂无历史</div>
+                <button 
+                    v-for="date in historyDates" 
+                    :key="date"
+                    @click="loadNews(date); showMobileHistory = false"
+                    :class="['w-full text-left px-4 py-3 rounded mb-1 transition', currentDate === date ? 'bg-blue-100 text-blue-700 font-medium' : 'hover:bg-gray-100 text-gray-600']"
+                >
+                    {{ date }}
+                </button>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <footer class="bg-white border-t py-4 mt-auto">
+            <div class="container mx-auto text-center text-gray-500 text-sm">
+                &copy; {{ new Date().getFullYear() }} 高分子材料加工资讯平台 | Powered by Coze & Trae
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const currentDate = ref(new Date().toISOString().split('T')[0]);
+                const markdownContent = ref('');
+                const historyDates = ref([]);
+                const loading = ref(false);
+                const showMobileHistory = ref(false);
+
+                // Check if a date string is today
+                const isToday = (dateStr) => {
+                    const today = new Date().toISOString().split('T')[0];
+                    return dateStr === today;
+                };
+
+                // Render Markdown
+                const renderedMarkdown = computed(() => {
+                    return markdownContent.value ? marked.parse(markdownContent.value) : '';
+                });
+
+                // Fetch History List
+                const fetchHistory = async () => {
+                    try {
+                        const res = await fetch('/api/news/history');
+                        const data = await res.json();
+                        historyDates.value = data.dates;
+                    } catch (e) {
+                        console.error("Failed to fetch history:", e);
+                    }
+                };
+
+                // Load News for a specific date
+                const loadNews = async (date) => {
+                    loading.value = true;
+                    currentDate.value = date;
+                    markdownContent.value = ''; // Clear previous content
+                    
+                    try {
+                        // If it's today, use the special endpoint (optional, but consistent)
+                        // Or just use /api/news/{date}
+                        let url = `/api/news/${date}`;
+                        if (isToday(date)) {
+                            url = '/api/news/today';
+                        }
+
+                        const res = await fetch(url);
+                        if (res.ok) {
+                            const data = await res.json();
+                            markdownContent.value = data.content;
+                        } else {
+                            markdownContent.value = null;
+                        }
+                    } catch (e) {
+                        console.error("Failed to load news:", e);
+                        markdownContent.value = null;
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                // Regenerate Today's News
+                const regenerateNews = async () => {
+                    loading.value = true;
+                    try {
+                        const res = await fetch('/api/regenerate', { method: 'POST' });
+                        if (res.ok) {
+                            // Reload today's news
+                            await loadNews(new Date().toISOString().split('T')[0]);
+                            await fetchHistory(); // Update history list if it was a new day
+                        } else {
+                            alert("生成失败，请稍后再试");
+                        }
+                    } catch (e) {
+                        console.error("Regeneration failed:", e);
+                        alert("请求失败");
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const toggleHistory = () => {
+                    showMobileHistory.value = !showMobileHistory.value;
+                };
+
+                // Initialize
+                onMounted(async () => {
+                    await fetchHistory();
+                    // Load today's news by default
+                    await loadNews(new Date().toISOString().split('T')[0]);
+                });
+
+                return {
+                    currentDate,
+                    markdownContent,
+                    renderedMarkdown,
+                    historyDates,
+                    loading,
+                    isToday,
+                    loadNews,
+                    regenerateNews,
+                    showMobileHistory,
+                    toggleHistory
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
