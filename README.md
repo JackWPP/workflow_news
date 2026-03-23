@@ -31,15 +31,23 @@
 pip install -r requirements.txt
 ```
 
-### 3. 配置 Coze 信息（可选）
+### 3. 配置 Coze 信息
 
-如果你需要更换自己的 Coze 工作流，请修改 `coze.py` 文件中的以下配置：
+项目会优先从项目根目录下的 `.env` 文件或系统环境变量读取 Coze 配置。可先复制一份示例文件：
 
-```python
-# coze.py
-WORKFLOW_ID = "你的工作流ID"
-ACCESS_TOKEN = "你的PAT Token"
+```bash
+cp .env.example .env
 ```
+
+然后填写以下变量：
+
+```dotenv
+COZE_ACCESS_TOKEN=你的 Coze Token
+COZE_WORKFLOW_ID=你的 Workflow ID
+COZE_API_URL=https://api.coze.cn/v1/workflow/stream_run
+```
+
+如果未显式设置 `COZE_WORKFLOW_ID` 和 `COZE_API_URL`，代码会分别回退到当前仓库内置的工作流 ID 和中国区 workflow 接口地址。
 
 ### 4. 启动服务
 
@@ -63,6 +71,7 @@ d:/workflow_news/
 ├── database.py             # SQLite 数据库操作封装
 ├── main.py                 # FastAPI 应用入口、路由与定时任务
 ├── requirements.txt        # Python 依赖列表
+├── .env.example            # 环境变量示例
 ├── news.db                 # SQLite 数据库文件（自动生成）
 ├── static/                 # 前端静态资源
 │   └── index.html          # 单页应用入口
@@ -83,3 +92,4 @@ d:/workflow_news/
 
 - **首次运行**：数据库为空，页面会提示“暂无资讯”。请点击页面上的“立即生成”按钮或等待次日定时任务执行。
 - **端口占用**：如果启动失败提示端口被占用，请修改 `main.py` 中的端口号或使用命令行参数指定新端口。
+- **Coze 调用失败**：优先检查 `.env` 中的 `COZE_ACCESS_TOKEN` 是否有效，以及对应 workflow 内部依赖的搜索/插件工具是否可用。

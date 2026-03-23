@@ -1,22 +1,55 @@
 import httpx
 import json
 import logging
+import os
+from pathlib import Path
 
 # Configuration
-COZE_API_URL = "https://api.coze.cn/v1/workflow/stream_run"
-WORKFLOW_ID = "7579472848718069801"
-ACCESS_TOKEN = "pat_Ynbf36hlJV5G8qSXSOzwsLWo4iYKLLHLM66GDWnipEEQysUTFrhdA96EZLCPgHSL"
+DEFAULT_COZE_API_URL = "https://api.coze.cn/v1/workflow/stream_run"
+DEFAULT_WORKFLOW_ID = "7579472848718069801"
 
 logger = logging.getLogger(__name__)
 
+
+def load_dotenv(dotenv_path: str = ".env") -> None:
+    env_file = Path(dotenv_path)
+    if not env_file.exists():
+        return
+
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        os.environ.setdefault(key, value)
+
+
+load_dotenv()
+
+
+def get_coze_config():
+    api_url = os.getenv("COZE_API_URL", DEFAULT_COZE_API_URL)
+    workflow_id = os.getenv("COZE_WORKFLOW_ID", DEFAULT_WORKFLOW_ID)
+    access_token = os.getenv("COZE_ACCESS_TOKEN")
+    return api_url, workflow_id, access_token
+
 async def fetch_coze_news():
+    api_url, workflow_id, access_token = get_coze_config()
+
+    if not access_token:
+        logger.error("Missing COZE_ACCESS_TOKEN. Set it in the environment or .env file.")
+        return None
+
     headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
     }
     
     payload = {
-        "workflow_id": WORKFLOW_ID,
+        "workflow_id": workflow_id,
         "parameters": {}, 
     }
 
@@ -25,9 +58,9 @@ async def fetch_coze_news():
     try:
         # Use a long timeout because workflow generation can take time
         async with httpx.AsyncClient(timeout=300.0) as client:
-            logger.info(f"Sending request to Coze: {COZE_API_URL}")
+            logger.info(f"Sending request to Coze: {api_url}")
             # Not using stream=True, waiting for full response
-            response = await client.post(COZE_API_URL, headers=headers, json=payload)
+            response = await client.post(api_url, headers=headers, json=payload)
             
             logger.info(f"Response status: {response.status_code}")
             

@@ -1,5 +1,7 @@
 *.pyc
+.env
 
 coze_doc.md
 coze-handling-and-project-logic.md
 news.db
+/Chatflow-News_fetch-draft-1623
