@@ -1,71 +1,52 @@
-import sqlite3
-from datetime import datetime
-import os
+from __future__ import annotations
 
-DB_PATH = "news.db"
+from datetime import date
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+from app.bootstrap import init_db as bootstrap_init_db
+from app.database import session_scope
+from app.models import Report
+from app.services.repository import get_latest_report_for_date, list_history_dates
+from app.utils import now_local
+
 
 def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Create news table
-    # content: The markdown content
-    # date: YYYY-MM-DD
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS news (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    bootstrap_init_db()
+
+
+def save_news(content: str, report_date: str | None = None):
+    target_date = date.fromisoformat(report_date) if report_date else now_local().date()
+    with session_scope() as session:
+        session.add(
+            Report(
+                report_date=target_date,
+                status="complete",
+                title=f"兼容导入日报（{target_date.isoformat()}）",
+                markdown_content=content,
+                summary="通过兼容层写入的日报内容。",
+                pipeline_version="legacy-compat",
+            )
         )
-    ''')
-    
-    conn.commit()
-    conn.close()
 
-def save_news(content: str, date: str = None):
-    if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO news (date, content) VALUES (?, ?)",
-        (date, content)
-    )
-    conn.commit()
-    conn.close()
 
-def get_latest_news_by_date(date: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    # Get the most recent generation for a specific date
-    cursor.execute(
-        "SELECT * FROM news WHERE date = ? ORDER BY id DESC LIMIT 1",
-        (date,)
-    )
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return dict(row)
-    return None
+def get_latest_news_by_date(report_date: str):
+    target_date = date.fromisoformat(report_date)
+    with session_scope() as session:
+        report = get_latest_report_for_date(session, target_date)
+        if report is None:
+            return None
+        return {
+            "id": report.id,
+            "date": report.report_date.isoformat(),
+            "content": report.markdown_content,
+            "created_at": report.created_at.isoformat(sep=" "),
+            "status": report.status,
+        }
+
 
 def get_history_dates():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    # Get unique dates that have news, ordered by date desc
-    cursor.execute(
-        "SELECT DISTINCT date FROM news ORDER BY date DESC"
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [row['date'] for row in rows]
+    with session_scope() as session:
+        return [value.isoformat() for value in list_history_dates(session)]
+
 
 def get_today_news():
-    today = datetime.now().strftime("%Y-%m-%d")
-    return get_latest_news_by_date(today)
+    return get_latest_news_by_date(now_local().date().isoformat())

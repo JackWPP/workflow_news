@@ -3,3 +3,6 @@ uvicorn
 httpx
 apscheduler
 python-multipart
+sqlalchemy
+psycopg[binary]
+feedparser
