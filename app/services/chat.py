@@ -102,6 +102,27 @@ class ChatService:
         return keywords
 
     async def build_answer(self, session, prompt: str, retrieval_mode: str = "local_first") -> tuple[str, list[dict[str, Any]], str]:
+        """
+        通过 ResearchAgent 进行多步研究并回答用户问题。
+        如果 Agent 不可用或 agent_mode 关闭，降级到旧的单轮补全。
+        """
+        if settings.agent_mode:
+            try:
+                from app.services.research_agent import ResearchAgent
+                agent = ResearchAgent(session=session)
+                result = await agent.research(question=prompt)
+                answer, citations, mode = result.to_chat_response()
+                if answer and answer != "研究过程遇到问题":
+                    return answer, citations, mode
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("ResearchAgent failed, falling back to legacy: %s", exc)
+
+        # ── 降级：旧单轮补全 ──────────────────────────────
+        return await self._legacy_build_answer(session, prompt, retrieval_mode)
+
+    async def _legacy_build_answer(self, session, prompt: str, retrieval_mode: str) -> tuple[str, list[dict[str, Any]], str]:
+        """旧版单轮补全（保留作为 fallback）。"""
         citations = self.retrieve_local_context(session, prompt)
         mode = "local"
 

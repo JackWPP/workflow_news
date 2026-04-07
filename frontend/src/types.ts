@@ -14,6 +14,18 @@ export interface ReportItem {
   summary: string
   research_signal: string
   image_url: string | null
+  image_source_url: string | null
+  image_origin_type: string | null
+  image_caption: string | null
+  image_relevance_score: number
+  has_verified_image: boolean
+  visual_verdict: string | null
+  context_verdict: string | null
+  visual_score: number
+  context_score: number
+  final_image_score: number
+  selected_for_publish: boolean
+  image_reason: string | null
   window_bucket: string
   citations: Citation[]
   combined_score: number
@@ -29,6 +41,11 @@ export interface Report {
   pipeline_version: string
   debug_url: string | null
   error_message: string | null
+  publish_grade: string
+  round_count: number
+  supervisor_actions: Array<Record<string, unknown>>
+  hero_image: Record<string, unknown> | null
+  image_review_summary: Record<string, unknown>
   created_at: string
   items: ReportItem[]
 }
@@ -142,6 +159,74 @@ export interface QualityOverview {
   top_policy_misses: Array<{ reason: string; count: number }>
   extended_window_usage: Array<{ date: string; extended_window_selected: number }>
   dominant_domain_runs: Array<{ domain: string; count: number }>
+  image_coverage_rate: number
+  no_image_rejections: number
+  duplicate_image_hits: number
+  round2_trigger_rate?: number
+  publish_grade_breakdown?: Record<string, number>
+  image_review_rejections?: Record<string, number>
+  policy_gap_breakdown?: Record<string, number>
+  report_score_trend?: Array<{ run_id: number; date: string; score: number }>
+  benchmark_score_trend?: Array<{ date: string; score: number }>
+  policy_fill_rate?: number
+  image_fill_rate?: number
+  round2_recovery_rate?: number
+  off_topic_escape_count?: number
+  average_daily_report_score?: number
+}
+
+export interface EvaluationSummary {
+  recent_runs: EvaluationRunSummary[]
+  latest_run: EvaluationRunSummary | null
+  best_run: EvaluationRunSummary | null
+  worst_run: EvaluationRunSummary | null
+  benchmark: {
+    benchmark_score: number
+    benchmark_pass_rate: number
+    cases: EvaluationBenchmarkCase[]
+    benchmark_score_trend: Array<{ date: string; score: number }>
+  }
+  report_samples: EvaluationReportSample[]
+  quality_overview: QualityOverview
+}
+
+export interface EvaluationRunSummary {
+  run_id: number
+  date: string
+  status: string
+  publish_grade: string
+  selected_count: number
+  section_coverage: number
+  verified_image_count: number
+  round_count: number
+  content_score: number
+  image_score: number
+  relevance_score: number
+  stability_score: number
+  daily_report_score: number
+  policy_gap_reason: string | null
+  image_gap_reason: string | null
+}
+
+export interface EvaluationBenchmarkCase {
+  name: string
+  passed: boolean
+  note: string
+  daily_report_score: number
+  content_score: number
+  image_score: number
+  relevance_score: number
+  stability_score: number
+}
+
+export interface EvaluationReportSample {
+  report_id: number
+  report_date: string
+  title: string
+  publish_grade: string
+  selected_count: number
+  verified_image_count: number
+  sections: string[]
 }
 
 export interface User {

@@ -42,6 +42,9 @@ from app.schemas import (
 )
 from app.services.auth import create_login_session, get_current_user, logout_session, register_user
 from app.services.chat import ChatService, append_message, create_conversation
+from app.services.daily_report_agent import DailyReportAgent
+from app.services.evaluation import enrich_debug_payload
+# pipeline kept for direct admin access (DailyReportAgent uses it as fallback internally)
 from app.services.pipeline import NativeReportPipeline
 from app.services.repository import (
     create_quality_feedback,
@@ -51,6 +54,7 @@ from app.services.repository import (
     get_latest_report_for_date,
     get_report_by_id,
     get_report_settings,
+    get_evaluation_summary,
     get_quality_overview,
     list_conversations,
     list_history_dates,
@@ -70,7 +74,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
-pipeline = NativeReportPipeline()
+# Use DailyReportAgent as the primary pipeline (falls back to NativeReportPipeline on error)
+pipeline = DailyReportAgent() if settings.agent_mode else NativeReportPipeline()
 chat_service = ChatService()
 SESSION_COOKIE = "session_token"
 FRONTEND_DIR = Path("frontend/dist")
@@ -182,6 +187,7 @@ async def run_report(payload: ReportRunRequest):
         report = await pipeline.run(
             session,
             shadow_mode=payload.shadow_mode,
+            mode=payload.mode,
         )
         hydrated = get_report_by_id(session, report.id)
         return ReportDetailOut.model_validate(hydrated)
@@ -225,7 +231,10 @@ async def get_report_items(report_id: int):
 async def get_retrieval_run_list(request: Request):
     with session_scope() as session:
         _admin_user_or_403(session, request)
-        return {"runs": [RetrievalRunOut.model_validate(run).model_dump() for run in list_retrieval_runs(session)]}
+        runs = list_retrieval_runs(session)
+        for run in runs:
+            run.debug_payload = enrich_debug_payload(run.debug_payload, report_status=run.status)
+        return {"runs": [RetrievalRunOut.model_validate(run).model_dump() for run in runs]}
 
 
 @app.get("/api/retrieval-runs/{run_id}", response_model=RetrievalRunOut)
@@ -235,6 +244,7 @@ async def get_retrieval_run(run_id: int, request: Request):
         run = session.get(RetrievalRun, run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Retrieval run not found")
+        run.debug_payload = enrich_debug_payload(run.debug_payload, report_status=run.status)
         return RetrievalRunOut.model_validate(run)
 
 
@@ -334,6 +344,13 @@ async def get_admin_quality_overview(request: Request, days: int = 7):
     with session_scope() as session:
         _admin_user_or_403(session, request)
         return get_quality_overview(session, days=max(1, min(days, 30)))
+
+
+@app.get("/api/admin/evaluation-summary")
+async def get_admin_evaluation_summary(request: Request, days: int = 7):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        return get_evaluation_summary(session, days=max(1, min(days, 30)))
 
 
 @app.get("/api/conversations")
@@ -510,6 +527,39 @@ async def regenerate_news():
         "report_id": report.id,
         "report_status": report.status,
     }
+
+
+
+# ── Agent Trace API ───────────────────────────────────────────────────────────
+
+@app.get("/api/agent-runs")
+async def list_agent_runs_api(request: Request, limit: int = 20):
+    from app.services.agent_observability import list_agent_runs
+    with session_scope() as session:
+        _current_user_or_401(session, request)
+        return {"runs": list_agent_runs(session, limit=min(limit, 50))}
+
+
+@app.get("/api/agent-runs/{run_id}")
+async def get_agent_run_trace_api(run_id: int, request: Request):
+    from app.services.agent_observability import get_agent_run_trace
+    with session_scope() as session:
+        _current_user_or_401(session, request)
+        trace = get_agent_run_trace(session, run_id)
+        if trace is None:
+            raise HTTPException(status_code=404, detail=f"AgentRun {run_id} not found")
+        return trace
+
+
+@app.get("/api/agent-runs/{run_id}/steps/{step_id}")
+async def get_agent_step_detail_api(run_id: int, step_id: int, request: Request):
+    from app.services.agent_observability import get_agent_step_detail
+    with session_scope() as session:
+        _current_user_or_401(session, request)
+        detail = get_agent_step_detail(session, step_id)
+        if detail is None or detail.get("agent_run_id") != run_id:
+            raise HTTPException(status_code=404, detail=f"AgentStep {step_id} not found")
+        return detail
 
 
 app.mount(

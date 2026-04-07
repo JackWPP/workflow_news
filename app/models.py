@@ -60,6 +60,7 @@ class RetrievalRun(TimestampMixin, Base):
     queries: Mapped[list["RetrievalQuery"]] = relationship(back_populates="run", cascade="all, delete-orphan")
     articles: Mapped[list["Article"]] = relationship(back_populates="run", cascade="all, delete-orphan")
     report: Mapped["Report | None"] = relationship(back_populates="retrieval_run", uselist=False)
+    agent_runs: Mapped[list["AgentRun"]] = relationship(back_populates="retrieval_run", cascade="all, delete-orphan")
 
 
 class RetrievalQuery(TimestampMixin, Base):
@@ -134,6 +135,7 @@ class Article(TimestampMixin, Base):
     metadata_json: Mapped[dict | None] = mapped_column(JSON)
 
     run: Mapped["RetrievalRun"] = relationship(back_populates="articles")
+    images: Mapped[list["ArticleImage"]] = relationship(back_populates="article", cascade="all, delete-orphan")
 
 
 class ArticleCluster(TimestampMixin, Base):
@@ -164,6 +166,54 @@ class Report(TimestampMixin, Base):
     retrieval_run: Mapped["RetrievalRun | None"] = relationship(back_populates="report")
     items: Mapped[list["ReportItem"]] = relationship(back_populates="report", cascade="all, delete-orphan")
 
+    @property
+    def publish_grade(self) -> str:
+        return self.status
+
+    @property
+    def round_count(self) -> int:
+        payload = (self.retrieval_run.debug_payload if self.retrieval_run and self.retrieval_run.debug_payload else {}) or {}
+        return int(payload.get("round_count", 1) or 1)
+
+    @property
+    def supervisor_actions(self) -> list[dict]:
+        payload = (self.retrieval_run.debug_payload if self.retrieval_run and self.retrieval_run.debug_payload else {}) or {}
+        return list(payload.get("supervisor_actions", []) or [])
+
+    @property
+    def hero_image(self) -> dict | None:
+        for item in sorted(self.items, key=lambda row: row.rank):
+            if item.image_url and item.has_verified_image:
+                return {
+                    "image_url": item.image_url,
+                    "image_caption": item.image_caption,
+                    "image_source_url": item.image_source_url,
+                    "title": item.title,
+                    "section": item.section,
+                }
+        if not self.items:
+            return None
+        first = sorted(self.items, key=lambda row: row.rank)[0]
+        if not first.image_url:
+            return None
+        return {
+            "image_url": first.image_url,
+            "image_caption": first.image_caption,
+            "image_source_url": first.image_source_url,
+            "title": first.title,
+            "section": first.section,
+        }
+
+    @property
+    def image_review_summary(self) -> dict:
+        total = len(self.items)
+        verified = sum(1 for item in self.items if item.has_verified_image)
+        return {
+            "selected_count": total,
+            "verified_image_count": verified,
+            "items_without_image": max(total - verified, 0),
+        }
+
 
 class ReportItem(TimestampMixin, Base):
     __tablename__ = "report_items"
@@ -180,11 +230,46 @@ class ReportItem(TimestampMixin, Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     research_signal: Mapped[str] = mapped_column(Text, nullable=False)
     image_url: Mapped[str | None] = mapped_column(String(1000))
+    image_source_url: Mapped[str | None] = mapped_column(String(1000))
+    image_origin_type: Mapped[str | None] = mapped_column(String(64))
+    image_caption: Mapped[str | None] = mapped_column(Text)
+    image_relevance_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    has_verified_image: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    visual_verdict: Mapped[str | None] = mapped_column(String(32))
+    context_verdict: Mapped[str | None] = mapped_column(String(32))
+    selected_for_publish: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    image_reason: Mapped[str | None] = mapped_column(Text)
     window_bucket: Mapped[str] = mapped_column(String(32), default="primary_24h", nullable=False)
     citations: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     combined_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
     report: Mapped["Report"] = relationship(back_populates="items")
+
+    @property
+    def visual_score(self) -> float:
+        verdict = (self.visual_verdict or "").lower()
+        if verdict in {"pass", "verified", "trusted"}:
+            return 0.9
+        if verdict in {"borderline", "fallback"}:
+            return 0.65
+        if verdict in {"reject", "invalid"}:
+            return 0.1
+        return round(float(self.image_relevance_score or 0.0), 4)
+
+    @property
+    def context_score(self) -> float:
+        verdict = (self.context_verdict or "").lower()
+        if verdict in {"pass", "verified", "matched"}:
+            return 0.9
+        if verdict in {"borderline", "fallback"}:
+            return 0.65
+        if verdict in {"reject", "mismatch"}:
+            return 0.1
+        return round(float(self.image_relevance_score or 0.0), 4)
+
+    @property
+    def final_image_score(self) -> float:
+        return round((self.visual_score + self.context_score + float(self.image_relevance_score or 0.0)) / 3.0, 4)
 
 
 class AppSetting(TimestampMixin, Base):
@@ -192,6 +277,73 @@ class AppSetting(TimestampMixin, Base):
 
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class AgentRun(TimestampMixin, Base):
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    retrieval_run_id: Mapped[int | None] = mapped_column(ForeignKey("retrieval_runs.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="running", nullable=False)
+    stage_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    agent_type: Mapped[str] = mapped_column(String(32), default="daily_report", nullable=False)
+    finished_reason: Mapped[str | None] = mapped_column(String(32))
+    total_steps: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    memory_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    debug_payload: Mapped[dict | None] = mapped_column(JSON)
+
+    retrieval_run: Mapped["RetrievalRun | None"] = relationship(back_populates="agent_runs")
+    steps: Mapped[list["AgentStep"]] = relationship(back_populates="agent_run", cascade="all, delete-orphan")
+
+
+class AgentStep(TimestampMixin, Base):
+    __tablename__ = "agent_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    agent_run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id"), nullable=False)
+    stage_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="completed", nullable=False)
+    model_name: Mapped[str | None] = mapped_column(String(255))
+    round_index: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    decision_type: Mapped[str | None] = mapped_column(String(64))
+    decision_summary: Mapped[str | None] = mapped_column(Text)
+    duration_seconds: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    fallback_triggered: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    input_ref_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    output_ref_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    input_payload: Mapped[dict | None] = mapped_column(JSON)
+    output_payload: Mapped[dict | None] = mapped_column(JSON)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    # New fields for agent observability
+    thought: Mapped[str | None] = mapped_column(Text)  # LLM's free-text reasoning
+    tool_name: Mapped[str | None] = mapped_column(String(64))  # tool called this step
+    harness_blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    agent_run: Mapped["AgentRun"] = relationship(back_populates="steps")
+
+
+class ArticleImage(TimestampMixin, Base):
+    __tablename__ = "article_images"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), nullable=False)
+    image_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    image_source_url: Mapped[str | None] = mapped_column(String(1000))
+    image_origin_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_relevance_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    image_caption: Mapped[str | None] = mapped_column(Text)
+    image_license_note: Mapped[str | None] = mapped_column(Text)
+    visual_verdict: Mapped[str | None] = mapped_column(String(32))
+    context_verdict: Mapped[str | None] = mapped_column(String(32))
+    review_model: Mapped[str | None] = mapped_column(String(255))
+    selected_for_publish: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    image_reason: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+
+    article: Mapped["Article"] = relationship(back_populates="images")
 
 
 class User(TimestampMixin, Base):

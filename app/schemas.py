@@ -21,6 +21,18 @@ class ReportItemOut(ORMModel):
     summary: str
     research_signal: str
     image_url: str | None
+    image_source_url: str | None
+    image_origin_type: str | None
+    image_caption: str | None
+    image_relevance_score: float
+    has_verified_image: bool
+    visual_verdict: str | None
+    context_verdict: str | None
+    visual_score: float = 0.0
+    context_score: float = 0.0
+    final_image_score: float = 0.0
+    selected_for_publish: bool
+    image_reason: str | None
     window_bucket: str
     citations: list[dict[str, Any]]
     combined_score: float
@@ -36,6 +48,11 @@ class ReportOut(ORMModel):
     pipeline_version: str
     debug_url: str | None
     error_message: str | None
+    publish_grade: str = "partial"
+    round_count: int = 1
+    supervisor_actions: list[dict[str, Any]] = Field(default_factory=list)
+    hero_image: dict[str, Any] | None = None
+    image_review_summary: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -106,6 +123,7 @@ class SourceRulesPayload(BaseModel):
 
 class ReportRunRequest(BaseModel):
     shadow_mode: bool | None = None
+    mode: str = "publish"
 
 
 class ReportSettingsOut(BaseModel):

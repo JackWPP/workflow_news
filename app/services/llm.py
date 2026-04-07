@@ -21,6 +21,24 @@ class PlannedQuery(BaseModel):
 class PlannerOutput(BaseModel):
     queries: list[PlannedQuery] = Field(default_factory=list)
     priority_domains: list[str] = Field(default_factory=list)
+    round_goal: str | None = None
+    focus_mode: str | None = None
+    preferred_sections: list[str] = Field(default_factory=list)
+    section_targets: dict[str, int] = Field(default_factory=dict)
+    image_targets: dict[str, int] = Field(default_factory=dict)
+
+
+class ResearchCandidateDecision(BaseModel):
+    candidate_id: int
+    section: str
+    keep: bool
+    priority_score: float
+    rationale: str | None = None
+    image_query: str | None = None
+
+
+class ResearcherOutput(BaseModel):
+    decisions: list[ResearchCandidateDecision] = Field(default_factory=list)
 
 
 class ArticleDecision(BaseModel):
@@ -35,6 +53,8 @@ class ArticleDecision(BaseModel):
     combined_score: float
     rationale: str | None = None
     research_signal: str | None = None
+    review_label: str = "publishable"
+    review_reason: str | None = None
 
 
 class ScorerOutput(BaseModel):
@@ -54,6 +74,34 @@ class WriterOutput(BaseModel):
     summary: str
     markdown_content: str
     items: list[WriterItemDecision] = Field(default_factory=list)
+
+
+class CuratedImageDecision(BaseModel):
+    article_id: int
+    keep: bool
+    image_url: str | None = None
+    image_source_url: str | None = None
+    image_origin_type: str | None = None
+    image_relevance_score: float = 0.0
+    image_caption: str | None = None
+    image_license_note: str | None = None
+    visual_verdict: str | None = None
+    context_verdict: str | None = None
+    selected_for_publish: bool = False
+    image_reason: str | None = None
+    rationale: str | None = None
+
+
+class ImageCuratorOutput(BaseModel):
+    selections: list[CuratedImageDecision] = Field(default_factory=list)
+
+
+class SupervisorOutput(BaseModel):
+    action: str
+    rationale: str | None = None
+    round_goal: str | None = None
+    preferred_sections: list[str] = Field(default_factory=list)
+    allow_borderline: bool = False
 
 
 class ReportLLMService:
@@ -153,6 +201,120 @@ class ReportLLMService:
             temperature=0.1,
         )
 
+    async def supervise_round(
+        self,
+        target_date: date,
+        round_payload: dict[str, Any],
+        runtime: dict[str, Any],
+    ) -> tuple[SupervisorOutput | None, dict[str, Any]]:
+        system_prompt = (
+            "你是高分子材料加工图文日报的 Supervisor。"
+            "你不能自由扩展动作，只能选择 stop_and_publish、retry_for_policy、retry_for_images、retry_for_quality 其中一个 action。"
+            "只有当首轮未达到内容或图片目标时，才允许触发第二轮。"
+            "输出必须是 JSON 对象，只能包含 action、rationale、round_goal、preferred_sections、allow_borderline。"
+        )
+        user_payload = {
+            "date": target_date.isoformat(),
+            "round_state": round_payload,
+            "constraints": {
+                "max_rounds": 2,
+                "allowed_actions": ["stop_and_publish", "retry_for_policy", "retry_for_images", "retry_for_quality"],
+            },
+        }
+        return await self._invoke_structured(
+            "supervisor",
+            system_prompt,
+            user_payload,
+            SupervisorOutput,
+            primary_model=runtime["report_primary_model"],
+            fallback_model=runtime["report_fallback_model"],
+            temperature=0.1,
+        )
+
+    async def research_candidates(
+        self,
+        target_date: date,
+        candidates: list[dict[str, Any]],
+        runtime: dict[str, Any],
+    ) -> tuple[ResearcherOutput | None, dict[str, Any]]:
+        system_prompt = (
+            "你是高分子材料加工日报的研究员。"
+            "你只能对候选进行理解、筛选和图片检索提示，不直接写日报。"
+            "输出必须是 JSON 对象，只能包含 decisions。"
+            "对每个 candidate 给出 keep、section、priority_score、rationale、image_query。"
+            "section 只能是 academic、industry、policy。"
+            "必须优先保留强相关、可追溯、适合做图文日报的候选。"
+            "对明显无图价值、跑题、PR、财经和弱相关内容必须拒绝。"
+        )
+        user_payload = {
+            "date": target_date.isoformat(),
+            "candidates": candidates,
+            "requirements": {
+                "goal": "support a visual daily report with at least three usable images when possible",
+                "sections": ["industry", "policy", "academic"],
+            },
+        }
+        return await self._invoke_structured(
+            "researcher",
+            system_prompt,
+            user_payload,
+            ResearcherOutput,
+            primary_model=runtime["report_primary_model"],
+            fallback_model=runtime["report_fallback_model"],
+            temperature=0.25,
+        )
+
+    async def curate_images(
+        self,
+        target_date: date,
+        articles: list[dict[str, Any]],
+        runtime: dict[str, Any],
+    ) -> tuple[ImageCuratorOutput | None, dict[str, Any]]:
+        system_prompt = (
+            "你是高分子材料加工日报的图片编辑。"
+            "输出必须是 JSON 对象，只能包含 selections。"
+            "每条 selection 必须引用 article_id，并对候选图片做 keep、image_url、image_source_url、image_origin_type、image_relevance_score、image_caption、image_license_note。"
+            "禁止选择验证码、logo、缩略图、装饰图和明显无关图片。"
+            "优先文章原图、官方图，其次可信相关配图。"
+        )
+        vision_inputs: list[dict[str, str]] = []
+        for article in articles[:8]:
+            for index, candidate in enumerate((article.get("candidates") or [])[:3], start=1):
+                image_url = str(candidate.get("image_url") or "").strip()
+                if not image_url:
+                    continue
+                vision_inputs.append(
+                    {
+                        "label": (
+                            f"article_id={article.get('article_id')} "
+                            f"candidate={index} "
+                            f"title={article.get('title') or ''} "
+                            f"source_url={article.get('source_url') or ''} "
+                            f"summary={article.get('summary') or ''}"
+                        ),
+                        "image_url": image_url,
+                    }
+                )
+
+        user_payload = {
+            "date": target_date.isoformat(),
+            "articles": articles,
+            "requirements": {
+                "minimum_images_for_complete": 3,
+                "allowed_origin_types": ["article_inline", "og_image", "official_related", "trusted_related"],
+            },
+            "__vision_inputs__": vision_inputs,
+        }
+        return await self._invoke_structured(
+            "image_curator",
+            system_prompt,
+            user_payload,
+            ImageCuratorOutput,
+            primary_model=runtime["report_primary_model"],
+            fallback_model=runtime["report_fallback_model"],
+            temperature=0.2,
+        )
+
     async def write_report(
         self,
         target_date: date,
@@ -246,19 +408,32 @@ class ReportLLMService:
             "HTTP-Referer": "https://workflow-news.local",
             "X-Title": "workflow_news",
         }
+        user_message: dict[str, Any] = {
+            "role": "user",
+            "content": (
+                "只返回 JSON 对象，不要使用 markdown 代码块。\n"
+                + json.dumps(user_payload, ensure_ascii=False)
+            ),
+        }
+        if user_payload.get("__vision_inputs__"):
+            content: list[dict[str, Any]] = [
+                {"type": "text", "text": user_message["content"]},
+            ]
+            for item in user_payload["__vision_inputs__"]:
+                image_url = str(item.get("image_url") or "").strip()
+                label = str(item.get("label") or "").strip()
+                if label:
+                    content.append({"type": "text", "text": label})
+                if image_url:
+                    content.append({"type": "image_url", "image_url": {"url": image_url}})
+            user_message = {"role": "user", "content": content}
         payload = {
             "model": model,
             "temperature": temperature,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": (
-                        "只返回 JSON 对象，不要使用 markdown 代码块。\n"
-                        + json.dumps(user_payload, ensure_ascii=False)
-                    ),
-                },
+                user_message,
             ],
         }
         async with httpx.AsyncClient(timeout=settings.openrouter_timeout_seconds) as client:
@@ -284,8 +459,14 @@ class ReportLLMService:
             raise ValueError(f"{stage_name} payload is not a JSON object")
         if stage_name == "planner":
             return self._normalize_planner_payload(payload, user_payload)
+        if stage_name == "supervisor":
+            return self._normalize_supervisor_payload(payload)
+        if stage_name == "researcher":
+            return self._normalize_researcher_payload(payload, user_payload)
         if stage_name == "scorer":
             return self._normalize_scorer_payload(payload, user_payload)
+        if stage_name == "image_curator":
+            return self._normalize_image_curator_payload(payload, user_payload)
         if stage_name == "writer":
             return self._normalize_writer_payload(payload, user_payload)
         return payload
@@ -336,7 +517,46 @@ class ReportLLMService:
                 if isinstance(domain, str) and domain.strip():
                     priority_domains.append(domain.strip())
 
-        return {"queries": queries, "priority_domains": priority_domains}
+        preferred_sections = []
+        for row in payload.get("preferred_sections", []) or []:
+            section = self._normalize_section(row, default=None)
+            if section and section not in preferred_sections:
+                preferred_sections.append(section)
+
+        return {
+            "queries": queries,
+            "priority_domains": priority_domains,
+            "round_goal": str(payload.get("round_goal") or payload.get("goal") or "").strip() or None,
+            "focus_mode": str(payload.get("focus_mode") or payload.get("focus") or "").strip() or None,
+            "preferred_sections": preferred_sections,
+            "section_targets": {
+                self._normalize_section(key, default="industry"): int(value)
+                for key, value in (payload.get("section_targets") or {}).items()
+                if isinstance(value, (int, float))
+            },
+            "image_targets": {
+                self._normalize_section(key, default="industry"): int(value)
+                for key, value in (payload.get("image_targets") or {}).items()
+                if isinstance(value, (int, float))
+            },
+        }
+
+    def _normalize_supervisor_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        action = str(payload.get("action") or payload.get("decision") or "stop_and_publish").strip()
+        if action not in {"stop_and_publish", "retry_for_policy", "retry_for_images", "retry_for_quality"}:
+            action = "stop_and_publish"
+        preferred_sections = []
+        for row in payload.get("preferred_sections", payload.get("sections", [])) or []:
+            section = self._normalize_section(row, default=None)
+            if section and section not in preferred_sections:
+                preferred_sections.append(section)
+        return {
+            "action": action,
+            "rationale": str(payload.get("rationale") or payload.get("reason") or "").strip() or None,
+            "round_goal": str(payload.get("round_goal") or payload.get("goal") or "").strip() or None,
+            "preferred_sections": preferred_sections,
+            "allow_borderline": self._coerce_keep_value({"keep": payload.get("allow_borderline")}),
+        }
 
     def _normalize_planner_query(
         self,
@@ -413,6 +633,73 @@ class ReportLLMService:
 
         return {"decisions": decisions}
 
+    def _normalize_researcher_payload(self, payload: dict[str, Any], user_payload: dict[str, Any]) -> dict[str, Any]:
+        candidate_lookup = {row["candidate_id"]: row for row in user_payload.get("candidates", []) if row.get("candidate_id") is not None}
+        raw_decisions = payload.get("decisions", payload.get("candidates", []))
+        decisions: list[dict[str, Any]] = []
+        if not isinstance(raw_decisions, list):
+            raw_decisions = []
+        for row in raw_decisions:
+            if not isinstance(row, dict):
+                continue
+            try:
+                candidate_id = int(row.get("candidate_id") or row.get("id"))
+            except (TypeError, ValueError):
+                continue
+            candidate = candidate_lookup.get(candidate_id, {})
+            keep = self._coerce_keep_value(row)
+            priority_score = self._coerce_score(
+                row.get("priority_score") or row.get("score") or row.get("confidence"),
+                default=0.75 if keep else 0.25,
+            )
+            decisions.append(
+                {
+                    "candidate_id": candidate_id,
+                    "section": self._normalize_section(row.get("section") or row.get("category"), default=candidate.get("section", "industry")),
+                    "keep": keep,
+                    "priority_score": priority_score,
+                    "rationale": str(row.get("rationale") or row.get("reason") or "").strip() or None,
+                    "image_query": str(row.get("image_query") or row.get("image_hint") or candidate.get("title") or "").strip() or None,
+                }
+            )
+        return {"decisions": decisions}
+
+    def _normalize_image_curator_payload(self, payload: dict[str, Any], user_payload: dict[str, Any]) -> dict[str, Any]:
+        article_lookup = {row["article_id"]: row for row in user_payload.get("articles", []) if row.get("article_id") is not None}
+        raw_rows = payload.get("selections", payload.get("images", []))
+        selections: list[dict[str, Any]] = []
+        if not isinstance(raw_rows, list):
+            raw_rows = []
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                article_id = int(row.get("article_id") or row.get("id"))
+            except (TypeError, ValueError):
+                continue
+            article = article_lookup.get(article_id, {})
+            image_url = str(row.get("image_url") or row.get("url") or "").strip() or None
+            image_source_url = str(row.get("image_source_url") or row.get("source_url") or article.get("source_url") or "").strip() or None
+            image_origin_type = str(row.get("image_origin_type") or row.get("origin_type") or "og_image").strip() or "og_image"
+            selections.append(
+                {
+                    "article_id": article_id,
+                    "keep": self._coerce_keep_value(row) if image_url else False,
+                    "image_url": image_url,
+                    "image_source_url": image_source_url,
+                    "image_origin_type": image_origin_type,
+                    "image_relevance_score": self._coerce_score(row.get("image_relevance_score") or row.get("score"), default=0.82 if image_url else 0.0),
+                    "image_caption": str(row.get("image_caption") or row.get("caption") or article.get("title") or "").strip() or None,
+                    "image_license_note": str(row.get("image_license_note") or row.get("license_note") or "来源可追溯").strip() or None,
+                    "visual_verdict": str(row.get("visual_verdict") or row.get("visual_check") or "").strip() or ("pass" if image_url else "reject"),
+                    "context_verdict": str(row.get("context_verdict") or row.get("context_check") or "").strip() or ("pass" if image_url else "reject"),
+                    "selected_for_publish": self._coerce_keep_value({"keep": row.get("selected_for_publish", row.get("keep"))}) if image_url else False,
+                    "image_reason": str(row.get("image_reason") or row.get("reason") or "").strip() or None,
+                    "rationale": str(row.get("rationale") or row.get("reason") or "").strip() or None,
+                }
+            )
+        return {"selections": selections}
+
     def _normalize_scorer_decision(self, row: Any, article_lookup: dict[int, dict[str, Any]]) -> dict[str, Any] | None:
         if not isinstance(row, dict):
             return None
@@ -473,6 +760,8 @@ class ReportLLMService:
             "combined_score": combined_score,
             "rationale": rationale,
             "research_signal": research_signal,
+            "review_label": self._normalize_review_label(row.get("review_label") or row.get("label"), keep),
+            "review_reason": str(row.get("review_reason") or row.get("review_rationale") or rationale or "").strip() or None,
         }
 
     def _normalize_writer_payload(self, payload: dict[str, Any], user_payload: dict[str, Any]) -> dict[str, Any]:
@@ -521,6 +810,22 @@ class ReportLLMService:
             "markdown_content": markdown_content,
             "items": items,
         }
+
+    def _normalize_review_label(self, raw_label: Any, keep: bool) -> str:
+        label = str(raw_label or "").strip().lower()
+        mapping = {
+            "publishable": "publishable",
+            "accept": "publishable",
+            "keep": "publishable",
+            "borderline": "borderline",
+            "maybe": "borderline",
+            "review": "borderline",
+            "reject": "reject",
+            "drop": "reject",
+        }
+        if label in mapping:
+            return mapping[label]
+        return "publishable" if keep else "reject"
 
     def _normalize_writer_item(
         self,

@@ -37,10 +37,69 @@ def _ensure_sqlite_schema() -> None:
             report_item_columns = {
                 row[1] for row in connection.execute(text("PRAGMA table_info('report_items')"))
             }
-            if "window_bucket" not in report_item_columns:
-                connection.execute(
-                    text("ALTER TABLE report_items ADD COLUMN window_bucket VARCHAR(32) NOT NULL DEFAULT 'primary_24h'")
-                )
+            report_item_statements = {
+                "window_bucket": "ALTER TABLE report_items ADD COLUMN window_bucket VARCHAR(32) NOT NULL DEFAULT 'primary_24h'",
+                "image_source_url": "ALTER TABLE report_items ADD COLUMN image_source_url VARCHAR(1000)",
+                "image_origin_type": "ALTER TABLE report_items ADD COLUMN image_origin_type VARCHAR(64)",
+                "image_caption": "ALTER TABLE report_items ADD COLUMN image_caption TEXT",
+                "image_relevance_score": "ALTER TABLE report_items ADD COLUMN image_relevance_score FLOAT NOT NULL DEFAULT 0.0",
+                "has_verified_image": "ALTER TABLE report_items ADD COLUMN has_verified_image BOOLEAN NOT NULL DEFAULT 0",
+                "visual_verdict": "ALTER TABLE report_items ADD COLUMN visual_verdict VARCHAR(32)",
+                "context_verdict": "ALTER TABLE report_items ADD COLUMN context_verdict VARCHAR(32)",
+                "selected_for_publish": "ALTER TABLE report_items ADD COLUMN selected_for_publish BOOLEAN NOT NULL DEFAULT 0",
+                "image_reason": "ALTER TABLE report_items ADD COLUMN image_reason TEXT",
+            }
+            for name, statement in report_item_statements.items():
+                if name not in report_item_columns:
+                    connection.execute(text(statement))
+
+        if "agent_runs" in tables:
+            agent_run_columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info('agent_runs')"))
+            }
+            agent_run_statements = {
+                "agent_type": "ALTER TABLE agent_runs ADD COLUMN agent_type VARCHAR(32) NOT NULL DEFAULT 'daily_report'",
+                "finished_reason": "ALTER TABLE agent_runs ADD COLUMN finished_reason VARCHAR(32)",
+                "total_steps": "ALTER TABLE agent_runs ADD COLUMN total_steps INTEGER NOT NULL DEFAULT 0",
+                "total_tokens": "ALTER TABLE agent_runs ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0",
+                "memory_snapshot": "ALTER TABLE agent_runs ADD COLUMN memory_snapshot JSON",
+            }
+            for name, statement in agent_run_statements.items():
+                if name not in agent_run_columns:
+                    connection.execute(text(statement))
+
+        if "agent_steps" in tables:
+            agent_step_columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info('agent_steps')"))
+            }
+            agent_step_statements_v2 = {
+                "round_index": "ALTER TABLE agent_steps ADD COLUMN round_index INTEGER NOT NULL DEFAULT 1",
+                "decision_type": "ALTER TABLE agent_steps ADD COLUMN decision_type VARCHAR(64)",
+                "decision_summary": "ALTER TABLE agent_steps ADD COLUMN decision_summary TEXT",
+                "input_ref_ids": "ALTER TABLE agent_steps ADD COLUMN input_ref_ids JSON NOT NULL DEFAULT '[]'",
+                "output_ref_ids": "ALTER TABLE agent_steps ADD COLUMN output_ref_ids JSON NOT NULL DEFAULT '[]'",
+                "thought": "ALTER TABLE agent_steps ADD COLUMN thought TEXT",
+                "tool_name": "ALTER TABLE agent_steps ADD COLUMN tool_name VARCHAR(64)",
+                "harness_blocked": "ALTER TABLE agent_steps ADD COLUMN harness_blocked BOOLEAN NOT NULL DEFAULT 0",
+            }
+            for name, statement in agent_step_statements_v2.items():
+                if name not in agent_step_columns:
+                    connection.execute(text(statement))
+
+        if "article_images" in tables:
+            article_image_columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info('article_images')"))
+            }
+            article_image_statements = {
+                "visual_verdict": "ALTER TABLE article_images ADD COLUMN visual_verdict VARCHAR(32)",
+                "context_verdict": "ALTER TABLE article_images ADD COLUMN context_verdict VARCHAR(32)",
+                "review_model": "ALTER TABLE article_images ADD COLUMN review_model VARCHAR(255)",
+                "selected_for_publish": "ALTER TABLE article_images ADD COLUMN selected_for_publish BOOLEAN NOT NULL DEFAULT 0",
+                "image_reason": "ALTER TABLE article_images ADD COLUMN image_reason TEXT",
+            }
+            for name, statement in article_image_statements.items():
+                if name not in article_image_columns:
+                    connection.execute(text(statement))
 
 
 def init_db() -> None:

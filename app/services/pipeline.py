@@ -75,6 +75,8 @@ SOURCE_TYPE_TO_SECTION = {
 MAX_REPORT_ITEMS = 5
 MIN_COMPLETE_ITEMS = 3
 MIN_COMPLETE_SECTIONS = 2
+MIN_COMPLETE_IMAGES = 3
+MIN_PARTIAL_IMAGES = 2
 QUALITY_SCORE_THRESHOLD = 0.58
 HIGH_CONFIDENCE_SCORE_THRESHOLD = 0.7
 MAX_QUERIES_PER_RUN = 12
@@ -336,9 +338,11 @@ class NativeReportPipeline:
         session,
         shadow_mode: bool | None = None,
         report_date: date | None = None,
+        mode: str = "publish",
     ) -> Report:
         settings_payload = get_report_settings(session)
         runtime = self._runtime_settings(settings_payload, shadow_mode)
+        runtime["mode"] = mode
         target_date = report_date or now_local().date()
         window_end = now_local().replace(tzinfo=None)
         primary_window_start = window_end - timedelta(hours=PRIMARY_RETRIEVAL_WINDOW_HOURS)
@@ -1079,8 +1083,14 @@ class NativeReportPipeline:
                 continue
             published_at = candidate.get("published_at") or result.get("published_at")
             if published_at is None:
-                self._reject_candidate(candidate, "missing_published_at")
-                continue
+                source_tier = self._resolve_source_tier(candidate["domain"], source)
+                if source_tier in ALLOW_MISSING_PUBLISHED_AT_TIERS:
+                    extracted_date = self._extract_policy_date(markdown, candidate["domain"])
+                    if extracted_date:
+                        published_at = extracted_date
+                if published_at is None:
+                    self._reject_candidate(candidate, "missing_published_at")
+                    continue
             window_bucket = self._resolve_window_bucket(
                 published_at,
                 self._resolve_source_tier(candidate["domain"], source),
@@ -1209,6 +1219,36 @@ class NativeReportPipeline:
         )
         self._score_article_heuristic(article, target_date, source.priority if source else 40, source_tier)
         return article
+
+    def _extract_policy_date(self, markdown: str, domain: str) -> datetime | None:
+        """Extract publication date from policy/government page markdown content.
+
+        Tries multiple Chinese date patterns commonly found in government releases.
+        Returns datetime if found, None otherwise.
+        """
+        policy_domains = ("gov.cn", "miit.gov.cn", "samr.gov.cn", "ndrc.gov.cn", "mee.gov.cn",
+                         "mofcom.gov.cn", "ccpit.org", "cnaec.org.cn", "cbmie.org")
+        if not any(domain.endswith(p) for p in policy_domains) and "government" not in domain:
+            return None
+
+        text = markdown[:8000]
+        date_patterns = [
+            (r'(\d{4})年(\d{1,2})月(\d{1,2})日', lambda m: datetime(int(m[0]), int(m[1]), int(m[2]))),
+            (r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', lambda m: datetime(int(m[0]), int(m[1]), int(m[2]))),
+            (r'发布[于在](\d{4})年(\d{1,2})月', lambda m: datetime(int(m[0]), int(m[1]), 1)),
+            (r'发布日期[：:]\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})', lambda m: datetime(int(m[0]), int(m[1]), int(m[2]))),
+            (r'发文日期[：:]\s*(\d{4})年(\d{1,2})月(\d{1,2})日', lambda m: datetime(int(m[0]), int(m[1]), int(m[2]))),
+            (r'日期[：:]\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})', lambda m: datetime(int(m[0]), int(m[1]), int(m[2]))),
+        ]
+
+        for pattern, parser in date_patterns:
+            match = re.search(pattern, text)
+            if match:
+                try:
+                    return parser(match.groups())
+                except (ValueError, OverflowError):
+                    continue
+        return None
 
     def _search_fallback_markdown(self, candidate: dict[str, Any]) -> str:
         return self._merge_candidate_context(candidate, candidate.get("snippet") or "")
@@ -1806,11 +1846,33 @@ class NativeReportPipeline:
             return "failed"
         section_count = distinct_sections(item["section"] for item in report_items)
         extended_used = any(item.get("window_bucket") == EXTENDED_WINDOW_BUCKET for item in report_items)
+        verified_image_count = sum(1 for item in report_items if item.get("has_verified_image"))
+        # complete: 3+ items + 2+ sections + no extended (images tracked but not blocking)
         if len(report_items) >= MIN_COMPLETE_ITEMS and section_count >= MIN_COMPLETE_SECTIONS and not extended_used:
             return "complete"
+        # partial: any items that don't meet complete criteria
         return "partial"
 
-    def _quality_gate_counts(self, rejection_counts: dict[str, int]) -> dict[str, int]:
+    def _partial_gap_description(self, report_items: list[dict[str, Any]], image_gap_reason: str | None = None, policy_gap_reason: str | None = None) -> str | None:
+        """Generate a human-readable description of what's missing for partial status."""
+        if not report_items:
+            return "无可发布内容"
+        section_count = distinct_sections(item["section"] for item in report_items)
+        verified_image_count = sum(1 for item in report_items if item.get("has_verified_image"))
+        gaps: list[str] = []
+        if len(report_items) < MIN_COMPLETE_ITEMS:
+            gaps.append(f"条目不足({len(report_items)}/{MIN_COMPLETE_ITEMS})")
+        if section_count < MIN_COMPLETE_SECTIONS:
+            gaps.append(f"板块不足({section_count}/{MIN_COMPLETE_SECTIONS})")
+        if verified_image_count < MIN_COMPLETE_IMAGES:
+            gaps.append(f"图片不足({verified_image_count}/{MIN_COMPLETE_IMAGES})")
+        if policy_gap_reason:
+            gaps.append(f"政策内容: {policy_gap_reason}")
+        if image_gap_reason:
+            gaps.append(f"图片来源: {image_gap_reason}")
+        return " | ".join(gaps) if gaps else None
+
+    def _quality_gate_counts(self, rejection_counts: dict[str, IntProperty]) -> dict[str, int]:
         return {
             "blocked_domain": rejection_counts.get("blocked_domain", 0),
             "duplicate": rejection_counts.get("duplicate_url_or_title", 0),

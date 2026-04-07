@@ -2,6 +2,7 @@ import type {
   ChatResponse,
   Conversation,
   ConversationDetail,
+  EvaluationSummary,
   QualityFeedback,
   QualityOverview,
   Report,
@@ -158,5 +159,17 @@ export const api = {
   },
   getQualityOverview(days = 7) {
     return request<QualityOverview>(`/api/admin/quality-overview?days=${days}`)
+  },
+  getEvaluationSummary(days = 7) {
+    return request<EvaluationSummary>(`/api/admin/evaluation-summary?days=${days}`)
+  },
+  listAgentRuns(limit = 30) {
+    return request<any>(`/api/agent-runs?limit=${limit}`)
+  },
+  getAgentRunTrace(id: number) {
+    return request<any>(`/api/agent-runs/${id}/trace`)
+  },
+  getAgentStepDetail(runId: number, stepNumber: number) {
+    return request<any>(`/api/agent-runs/${runId}/steps/${stepNumber}`)
   },
 }

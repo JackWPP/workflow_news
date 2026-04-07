@@ -52,7 +52,9 @@ class Settings:
     openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
     openrouter_base_url: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     openrouter_timeout_seconds: int = int(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "90"))
-    report_primary_model: str = os.getenv("REPORT_PRIMARY_MODEL", "google/gemini-3-flash-preview")
+    kimi_api_key: str = os.getenv("KIMI_API_KEY", "")
+    kimi_base_url: str = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
+    report_primary_model: str = os.getenv("REPORT_PRIMARY_MODEL", "kimi-k2.5")
     report_fallback_model: str = os.getenv("REPORT_FALLBACK_MODEL", "minimax/minimax-m2.7")
 
     report_hour: int = int(os.getenv("REPORT_HOUR", "10"))
@@ -63,6 +65,8 @@ class Settings:
     pipeline_version: str = os.getenv("PIPELINE_VERSION", "native-v2")
 
     shadow_mode: bool = _as_bool(os.getenv("SHADOW_MODE"), default=True)
+    agent_mode: bool = _as_bool(os.getenv("AGENT_MODE"), default=True)
+    agent_fallback_to_pipeline: bool = _as_bool(os.getenv("AGENT_FALLBACK_TO_PIPELINE"), default=True)
 
     report_title: str = os.getenv("REPORT_TITLE", "高分子加工全视界日报")
     admin_email: str = os.getenv("ADMIN_EMAIL", "admin@example.com")

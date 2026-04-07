@@ -22,6 +22,7 @@ from app.models import (
     Source,
     User,
 )
+from app.services.evaluation import build_evaluation_summary, enrich_debug_payload, run_offline_benchmark
 from app.utils import extract_domain, now_local
 
 
@@ -203,12 +204,33 @@ def get_quality_overview(session, days: int = 7) -> dict:
     top_policy_misses: dict[str, int] = defaultdict(int)
     dominant_domain_runs: dict[str, int] = defaultdict(int)
     extended_window_usage: list[dict] = []
+    no_image_rejections = 0
+    image_selected_total = 0
+    duplicate_image_hits = 0
+    round2_trigger_count = 0
+    round2_recovery_count = 0
+    publish_grade_breakdown: dict[str, int] = defaultdict(int)
+    image_review_rejections: dict[str, int] = defaultdict(int)
+    policy_gap_breakdown: dict[str, int] = defaultdict(int)
+    report_score_trend: list[dict] = []
+    score_total = 0.0
+    policy_filled_runs = 0
+    image_filled_runs = 0
+    off_topic_escape_count = 0
     recent_runs = session.scalars(select(RetrievalRun).where(RetrievalRun.run_date >= since).order_by(desc(RetrievalRun.id))).all()
     for run in recent_runs:
-        payload = run.debug_payload or {}
+        payload = enrich_debug_payload(run.debug_payload, report_status=run.status)
         for reason, count in (payload.get("rejection_counts") or {}).items():
             if reason in {"blocked_domain", "off_topic_candidate", "off_topic_content", "pr_like_candidate", "pr_like_content"}:
                 hard_rejects[reason] += int(count)
+        report_score_trend.append(
+            {
+                "run_id": run.id,
+                "date": run.run_date.date().isoformat(),
+                "score": float(payload.get("daily_report_score", 0.0) or 0.0),
+            }
+        )
+        score_total += float(payload.get("daily_report_score", 0.0) or 0.0)
         duplicate_trend.append(
             {
                 "run_id": run.id,
@@ -232,6 +254,23 @@ def get_quality_overview(session, days: int = 7) -> dict:
         if per_domain_selected:
             dominant_domain = max(per_domain_selected.items(), key=lambda item: int(item[1]))[0]
             dominant_domain_runs[str(dominant_domain)] += 1
+        if int(payload.get("round_count", 1) or 1) >= 2:
+            round2_trigger_count += 1
+        if payload.get("round2_recovery"):
+            round2_recovery_count += 1
+        publish_grade_breakdown[str(payload.get("publish_grade") or run.status)] += 1
+        if payload.get("policy_gap_reason"):
+            policy_gap_breakdown[str(payload["policy_gap_reason"])] += 1
+        if int(payload.get("policy_selected_count", 0) or 0) > 0:
+            policy_filled_runs += 1
+        if int(payload.get("image_selected_count", 0) or 0) >= 2:
+            image_filled_runs += 1
+        off_topic_escape_count += int(payload.get("off_topic_escape_count", 0) or 0)
+        no_image_rejections += int(payload.get("items_without_image", 0) or 0)
+        image_selected_total += int(payload.get("image_selected_count", 0) or 0)
+        duplicate_image_hits += int((payload.get("image_rejections") or {}).get("low_signal_asset", 0) or 0)
+        for reason, count in (payload.get("image_rejections") or {}).items():
+            image_review_rejections[str(reason)] += int(count)
 
     domain_rollup: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for feedback in recent_feedback:
@@ -274,6 +313,8 @@ def get_quality_overview(session, days: int = 7) -> dict:
     feedback_summary = dict(
         session.execute(select(QualityFeedback.label, func.count()).group_by(QualityFeedback.label)).all()
     )
+    benchmark = run_offline_benchmark()
+    run_count = len(list(recent_runs)) or 1
 
     return {
         "recent_feedback": [
@@ -313,4 +354,24 @@ def get_quality_overview(session, days: int = 7) -> dict:
             {"domain": domain, "count": count}
             for domain, count in sorted(dominant_domain_runs.items(), key=lambda item: item[1], reverse=True)[:10]
         ],
+        "image_coverage_rate": round(image_selected_total / max(sum(item["selected_count"] for item in daily_quality) or 1, 1), 4),
+        "no_image_rejections": no_image_rejections,
+        "duplicate_image_hits": duplicate_image_hits,
+        "round2_trigger_rate": round(round2_trigger_count / run_count, 4),
+        "publish_grade_breakdown": dict(publish_grade_breakdown),
+        "image_review_rejections": dict(image_review_rejections),
+        "policy_gap_breakdown": dict(policy_gap_breakdown),
+        "report_score_trend": report_score_trend[:7],
+        "benchmark_score_trend": benchmark["benchmark_score_trend"],
+        "policy_fill_rate": round(policy_filled_runs / run_count, 4),
+        "image_fill_rate": round(image_filled_runs / run_count, 4),
+        "round2_recovery_rate": round(round2_recovery_count / max(round2_trigger_count, 1), 4) if round2_trigger_count else 0.0,
+        "off_topic_escape_count": off_topic_escape_count,
+        "average_daily_report_score": round(score_total / run_count, 2),
     }
+
+
+def get_evaluation_summary(session, days: int = 7) -> dict:
+    summary = build_evaluation_summary(session, days=days)
+    summary["quality_overview"] = get_quality_overview(session, days=days)
+    return summary

@@ -6,6 +6,7 @@ import ChatView from './views/ChatView.vue'
 import DashboardView from './views/DashboardView.vue'
 import HistoryView from './views/HistoryView.vue'
 import LoginView from './views/LoginView.vue'
+import AgentTraceView from './views/AgentTraceView.vue'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -14,6 +15,7 @@ const router = createRouter({
     { path: '/history', component: HistoryView },
     { path: '/chat', component: ChatView, meta: { requiresAuth: true } },
     { path: '/admin', component: AdminView, meta: { requiresAuth: true, requiresAdmin: true } },
+    { path: '/traces', component: AgentTraceView, meta: { requiresAuth: true, requiresAdmin: true } },
     { path: '/login', component: LoginView },
   ],
 })
