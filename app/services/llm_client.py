@@ -10,6 +10,7 @@ llm_client.py — 统一的 LLM 客户端，支持 tool-use 模式 + 多 Provide
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -94,12 +95,28 @@ def _resolve_provider(model: str) -> _ProviderConfig:
     return _ProviderConfig(base_url=base_url, api_key=api_key, headers=headers)
 
 
-def _adjust_temperature(model: str, temperature: float) -> float:
-    """部分模型对 temperature 有限制，在此统一处理。"""
-    # kimi-k2.5 只接受 temperature=1
-    if model.startswith("kimi-") or model.startswith("moonshot-"):
-        return 1.0
-    return temperature
+def _is_kimi_model(model: str) -> bool:
+    """判断是否为 Kimi/Moonshot 模型。"""
+    return model.startswith("kimi-") or model.startswith("moonshot-")
+
+
+def _build_payload_params(model: str, temperature: float) -> dict[str, Any]:
+    """
+    构建请求参数，处理模型间的差异。
+
+    kimi-k2.5 限制：temperature, top_p, n, presence_penalty, frequency_penalty
+    均不可修改，payload 中应省略这些参数。
+    """
+    params: dict[str, Any] = {"model": model}
+
+    if _is_kimi_model(model):
+        # kimi-k2.5 不可修改 temperature 等参数，省略即可使用服务端默认值
+        # 显式启用 thinking 模式（kimi-k2.5 默认已启用，显式传递更安全）
+        params["thinking"] = {"type": "enabled"}
+    else:
+        params["temperature"] = temperature
+
+    return params
 
 
 class LLMClient:
@@ -118,13 +135,14 @@ class LLMClient:
         primary_model: str | None = None,
         fallback_model: str | None = None,
         timeout: int | None = None,
-        # 兼容旧签名（忽略 api_key/base_url，改用 _resolve_provider）
+        max_concurrency: int = 3,
         api_key: str | None = None,
         base_url: str | None = None,
     ):
         self.primary_model = primary_model or settings.report_primary_model
         self.fallback_model = fallback_model or settings.report_fallback_model
         self.timeout = timeout or settings.openrouter_timeout_seconds
+        self._semaphore = asyncio.Semaphore(max_concurrency)
 
     @property
     def enabled(self) -> bool:
@@ -175,36 +193,33 @@ class LLMClient:
     ) -> LLMResponse:
         provider = _resolve_provider(model)
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "temperature": _adjust_temperature(model, temperature),
-            "messages": messages,
-        }
+        payload = _build_payload_params(model, temperature)
+        payload["messages"] = messages
         if tool_definitions:
             payload["tools"] = tool_definitions
             payload["tool_choice"] = "auto"
 
-        import asyncio
-
         max_retries = 2
+        data: dict[str, Any] = {}
         for attempt in range(max_retries):
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(
-                    f"{provider.base_url}/chat/completions",
-                    json=payload,
-                    headers=provider.headers,
-                )
-                if resp.status_code == 429 and attempt < max_retries - 1:
-                    wait = min(float(resp.headers.get("retry-after", "2")), 5.0)
-                    logger.info("LLM %s rate limited (429), retrying in %.1fs", model, wait)
-                    await asyncio.sleep(wait)
-                    continue
-                if resp.status_code != 200:
-                    body = resp.text[:500]
-                    logger.warning("LLM %s returned %d: %s", model, resp.status_code, body)
-                    resp.raise_for_status()
-                data = resp.json()
-                break
+            async with self._semaphore:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    resp = await client.post(
+                        f"{provider.base_url}/chat/completions",
+                        json=payload,
+                        headers=provider.headers,
+                    )
+                    if resp.status_code == 429 and attempt < max_retries - 1:
+                        wait = self._extract_retry_wait(resp)
+                        logger.info("LLM %s rate limited (429), retrying in %.1fs", model, wait)
+                        await asyncio.sleep(wait)
+                        continue
+                    if resp.status_code != 200:
+                        body = resp.text[:500]
+                        logger.warning("LLM %s returned %d: %s", model, resp.status_code, body)
+                        resp.raise_for_status()
+                    data = resp.json()
+                    break
 
         if "choices" not in data or not data["choices"]:
             # Log error details if present (e.g., OpenRouter returns {"error": {...}})
@@ -279,34 +294,81 @@ class LLMClient:
             models.append(self.fallback_model)
 
         for model in models:
-            try:
-                provider = _resolve_provider(model)
-                payload: dict[str, Any] = {
-                    "model": model,
-                    "temperature": _adjust_temperature(model, temperature),
-                    "messages": messages,
-                }
-                if max_tokens:
-                    payload["max_tokens"] = max_tokens
+            provider = _resolve_provider(model)
+            payload = _build_payload_params(model, temperature)
+            payload["messages"] = messages
+            if max_tokens:
+                payload["max_tokens"] = max_tokens
 
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    resp = await client.post(
-                        f"{provider.base_url}/chat/completions",
-                        json=payload,
-                        headers=provider.headers,
-                    )
-                    if resp.status_code != 200:
-                        logger.warning("LLM %s returned %d: %s", model, resp.status_code, resp.text[:500])
-                        resp.raise_for_status()
-                    data = resp.json()
-                if "choices" not in data or not data["choices"]:
-                    error_info = data.get("error", data)
-                    raise ValueError(f"LLM response error from {model}: {error_info}")
-                return data["choices"][0]["message"]["content"] or ""
-            except (httpx.HTTPError, KeyError, ValueError) as exc:
-                logger.warning("simple_completion failed with %s: %s", model, exc)
+            max_retries = 3
+            data: dict[str, Any] = {}
+            for attempt in range(max_retries):
+                try:
+                    async with self._semaphore:
+                        async with httpx.AsyncClient(timeout=self.timeout) as client:
+                            resp = await client.post(
+                                f"{provider.base_url}/chat/completions",
+                                json=payload,
+                                headers=provider.headers,
+                            )
+                            if resp.status_code == 429 and attempt < max_retries - 1:
+                                wait = self._extract_retry_wait(resp)
+                                logger.info("simple_completion %s rate limited (429), retrying in %.1fs (attempt %d/%d)", model, wait, attempt + 1, max_retries)
+                                await asyncio.sleep(wait)
+                                continue
+                            if resp.status_code != 200:
+                                logger.warning("LLM %s returned %d: %s", model, resp.status_code, resp.text[:500])
+                                resp.raise_for_status()
+                            data = resp.json()
+                    if "choices" not in data or not data["choices"]:
+                        error_info = data.get("error", data)
+                        raise ValueError(f"LLM response error from {model}: {error_info}")
+                    return data["choices"][0]["message"]["content"] or ""
+                except (httpx.HTTPError, KeyError, ValueError) as exc:
+                    logger.warning("simple_completion failed with %s: %s (attempt %d/%d)", model, exc, attempt + 1, max_retries)
+                    if attempt < max_retries - 1 and isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+                        continue
+                    break
 
         return ""
+
+    @staticmethod
+    def _extract_retry_wait(resp: httpx.Response) -> float:
+        """
+        从 429 响应中提取重试等待时间。
+
+        Kimi API 429 错误类型：
+          - engine_overloaded_error：节点过载，建议 2-3s
+          - rate_limit_reached_error：配额限制，消息含 "please try again after Xs"
+          - exceeded_current_quota_error：余额不足，不建议重试
+
+        优先从 body 提取精确等待时间，其次用 retry-after header。
+        """
+        # 1. 尝试从 header 读取
+        header_wait = float(resp.headers.get("retry-after", "0"))
+
+        # 2. 尝试从 body 读取 Kimi 特定格式
+        try:
+            body = resp.json()
+            error = body.get("error", {})
+            message = error.get("message", "")
+
+            # rate_limit_reached_error: "please try again after 5.04 seconds"
+            match = re.search(r"try again after ([\d.]+)\s*s", message, re.IGNORECASE)
+            if match:
+                body_wait = float(match.group(1))
+                return min(max(body_wait, 1.0), 10.0)
+
+            # exceeded_current_quota_error: 余额不足，不重试
+            if "exceeded_current_quota" in message.lower() or "quota" in (error.get("type") or "").lower():
+                return 30.0  # 长等待，让后续模型接管
+        except (json.JSONDecodeError, KeyError, AttributeError):
+            pass
+
+        # 3. 使用 header 值或默认
+        if header_wait > 0:
+            return min(header_wait, 10.0)
+        return 2.0
 
     async def simple_json_completion(
         self,

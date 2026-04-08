@@ -61,10 +61,35 @@ export const api = {
     return request<Report>(`/api/reports/${id}`)
   },
   runReport() {
-    return request<Report>('/api/reports/run', {
+    return request<{ run_id: number; status: string }>('/api/reports/run', {
       method: 'POST',
       body: JSON.stringify({ shadow_mode: false }),
     })
+  },
+  runStatus() {
+    return request<{ status: string; run_id: number | null }>('/api/reports/run/status')
+  },
+  streamProgress(runId: number, handlers: {
+    onStep?: (data: any) => void
+    onPhase?: (data: any) => void
+    onComplete?: (data: any) => void
+    onError?: (data: any) => void
+  }) {
+    const es = new EventSource(`/api/reports/run/${runId}/stream`)
+    es.addEventListener('step', (e) => handlers.onStep?.(JSON.parse(e.data)))
+    es.addEventListener('phase', (e) => handlers.onPhase?.(JSON.parse(e.data)))
+    es.addEventListener('complete', (e) => {
+      handlers.onComplete?.(JSON.parse(e.data))
+      es.close()
+    })
+    es.addEventListener('error', (e) => {
+      if (e instanceof MessageEvent) {
+        handlers.onError?.(JSON.parse(e.data))
+      }
+      es.close()
+    })
+    es.addEventListener('done', () => es.close())
+    return es
   },
   listConversations() {
     return request<{ conversations: Conversation[] }>('/api/conversations')

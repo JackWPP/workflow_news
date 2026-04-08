@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
 import { Plus, MessageSquare, Send, Sparkles, Loader2 } from 'lucide-vue-next'
 
 import { api } from '../lib/api'
@@ -79,16 +79,6 @@ async function sendMessage() {
     error.value = err instanceof Error ? err.message : '发送失败'
   } finally {
     loading.value = false
-  }
-}
-
-async function toggleFavorite(conversation: Conversation) {
-  if (conversation.favorited) {
-    await api.unfavoriteConversation(conversation.id)
-    conversation.favorited = false
-  } else {
-    await api.favoriteConversation(conversation.id)
-    conversation.favorited = true
   }
 }
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ReportItem } from '../types'
-import { ExternalLink, Image as ImageIcon, CheckCircle2, AlertCircle } from 'lucide-vue-next'
+import { ExternalLink, Image as ImageIcon, CheckCircle2 } from 'lucide-vue-next'
 
 const props = defineProps<{ item: ReportItem }>()
 

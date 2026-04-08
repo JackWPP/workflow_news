@@ -15,11 +15,14 @@ agent_core.py — Agent Loop 引擎
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+import httpx
 
 from app.services.harness import Harness
 from app.services.llm_client import LLMClient, LLMResponse, ToolCallRequest
@@ -75,10 +78,12 @@ class AgentCore:
         tools: list[Tool],
         llm_client: LLMClient,
         harness: Harness,
+        event_queue: asyncio.Queue | None = None,
     ) -> None:
         self.tools: dict[str, Tool] = {t.name: t for t in tools}
         self.llm = llm_client
         self.harness = harness
+        self._event_queue = event_queue
         self._tool_definitions = [t.to_openai_schema() for t in tools]
 
     async def run(
@@ -86,6 +91,7 @@ class AgentCore:
         task: str,
         session: Any | None = None,
         agent_run_id: int | None = None,
+        memory: WorkingMemory | None = None,
     ) -> AgentResult:
         """
         启动 Agent 运行。
@@ -94,13 +100,16 @@ class AgentCore:
             task: 给 Agent 的任务描述（自然语言）
             session: 数据库会话（用于持久化 AgentStep，可选）
             agent_run_id: AgentRun 的数据库 ID（用于关联 AgentStep）
+            memory: 外部 WorkingMemory（可选，用于 multi-agent 共享状态）
 
         Returns:
             AgentResult: 最终结果
         """
-        memory = WorkingMemory()
+        memory = memory or WorkingMemory()
         total_tokens = 0
         step_index = 0
+        consecutive_finish_rejects = 0
+        _wind_down_warned = False
 
         # 构建初始 message history
         messages: list[dict[str, Any]] = [
@@ -110,7 +119,7 @@ class AgentCore:
 
         logger.info("[AgentCore] Starting agent run. Task: %s", task[:100])
 
-        while self.harness.budget_remaining > 0 and not self.harness.timed_out:
+        while self.harness.effective_budget_remaining > 0 and not self.harness.timed_out:
             step_index += 1
             step_start = time.time()
 
@@ -130,12 +139,24 @@ class AgentCore:
                 try:
                     finish_result = self._extract_finish_result(llm_response, memory)
                 except StopIteration as e:
-                    logger.info("[AgentCore] Intercepted premature finish: %s", e)
-                    messages.append({
-                        "role": "user",
-                        "content": f"系统提示：你试图调用 finish，但是被拒绝。原因：{str(e)} 请继续使用 web_search 探索新方向并使用 evaluate_article 评估文章。"
-                    })
-                    continue
+                    consecutive_finish_rejects += 1
+                    if consecutive_finish_rejects > self.harness.max_consecutive_finish_rejects:
+                        logger.info("[AgentCore] Force-accepting finish after %d consecutive rejects", consecutive_finish_rejects)
+                        # 提取 finish 参数（放宽限制）
+                        for tc in llm_response.tool_calls:
+                            if tc.tool_name == "finish":
+                                finish_result = tc.arguments
+                                break
+                        else:
+                            finish_result = {}
+                    else:
+                        logger.info("[AgentCore] Intercepted premature finish (%d/%d): %s",
+                                    consecutive_finish_rejects, self.harness.max_consecutive_finish_rejects, e)
+                        messages.append({
+                            "role": "user",
+                            "content": f"系统提示：你试图调用 finish，但是被拒绝。原因：{str(e)} 请继续使用 web_search 探索新方向并使用 evaluate_article 评估文章。"
+                        })
+                        continue
 
                 if finish_result:
                     logger.info("[AgentCore] Agent finished via finish tool at step %d", step_index)
@@ -155,6 +176,7 @@ class AgentCore:
 
             # === Step 3: 执行工具调用 ===
             tool_result_messages: list[dict[str, Any]] = []
+            consecutive_finish_rejects = 0  # 只要有非 finish 工具调用就重置
 
             # 把 LLM 的 assistant 消息加入历史（包含 tool_calls）
             assistant_message = self._build_assistant_message(llm_response)
@@ -202,13 +224,47 @@ class AgentCore:
                             self.harness.record_read()
 
                         try:
-                            tool_result = await tool.execute(memory=memory, **tool_call.arguments)
-                        except Exception as exc:
-                            logger.error("[AgentCore] Tool %s raised: %s", tool_call.tool_name, exc, exc_info=True)
+                            timeout = self.harness.tool_timeout(tool_call.tool_name)
+                            tool_result = await asyncio.wait_for(
+                                tool.execute(memory=memory, **tool_call.arguments),
+                                timeout=timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning("[AgentCore] Tool %s timed out (%.0fs)", tool_call.tool_name, timeout)
                             tool_result = ToolResult(
                                 success=False,
-                                summary=f"工具执行异常: {exc}",
-                                data={"error": str(exc)},
+                                summary=f"工具超时({tool_call.tool_name}, 限制{timeout:.0f}秒)",
+                                data={"error_type": "timeout", "tool": tool_call.tool_name},
+                            )
+                        except httpx.HTTPStatusError as exc:
+                            status = exc.response.status_code
+                            error_type = "rate_limit" if status == 429 else "http_error"
+                            logger.warning("[AgentCore] Tool %s HTTP %d", tool_call.tool_name, status)
+                            tool_result = ToolResult(
+                                success=False,
+                                summary=f"HTTP错误 {status}",
+                                data={"error_type": error_type, "status": status},
+                            )
+                        except httpx.TimeoutException:
+                            logger.warning("[AgentCore] Tool %s network timeout", tool_call.tool_name)
+                            tool_result = ToolResult(
+                                success=False,
+                                summary="网络请求超时",
+                                data={"error_type": "network_timeout"},
+                            )
+                        except json.JSONDecodeError as exc:
+                            logger.warning("[AgentCore] Tool %s JSON parse error: %s", tool_call.tool_name, exc)
+                            tool_result = ToolResult(
+                                success=False,
+                                summary="返回格式解析错误",
+                                data={"error_type": "parse_error"},
+                            )
+                        except Exception as exc:
+                            logger.error("[AgentCore] Tool %s unexpected error: %s", tool_call.tool_name, exc, exc_info=True)
+                            tool_result = ToolResult(
+                                success=False,
+                                summary=f"工具异常: {exc}",
+                                data={"error_type": "unexpected", "error": str(exc)},
                             )
 
                     step_duration = time.time() - step_start
@@ -251,6 +307,17 @@ class AgentCore:
 
             messages.extend(tool_result_messages)
 
+            # 动态预算感知：资源即将耗尽时注入收尾提示（只提示一次）
+            if self.harness.should_wind_down and not _wind_down_warned:
+                _wind_down_warned = True
+                remaining_time = max(0, self.harness.max_duration_seconds - self.harness.elapsed_seconds)
+                wind_down_msg = (
+                    f"⚠️ 资源即将耗尽（剩余约 {self.harness.effective_budget_remaining} 步，"
+                    f"{remaining_time:.0f}s）。"
+                    "请尽快使用 write_section 撰写已收集的内容并调用 finish 完成报告。"
+                )
+                messages.append({"role": "user", "content": wind_down_msg})
+
         # === Budget 耗尽或超时 ===
         finished_reason = "timeout" if self.harness.timed_out else "budget_exhausted"
         logger.info("[AgentCore] Agent stopped: %s at step %d", finished_reason, step_index)
@@ -259,20 +326,89 @@ class AgentCore:
         return self._build_fallback_result(memory, finished_reason, step_index, total_tokens)
 
     def _build_system_message(self) -> str:
-        """构建包含工具说明和工作记忆提示的 system message。"""
-        tool_names = ", ".join(self.tools.keys())
+        """构建包含工具说明和预算信息的 system message。"""
+        tool_info_parts = []
+        for t in self.tools.values():
+            # 取 description 的第一句话作为简要说明
+            first_sentence = t.description.split("。")[0] if t.description else ""
+            tool_info_parts.append(f"  - {t.name}: {first_sentence}")
+        tool_info = "\n".join(tool_info_parts)
+
         harness_info = (
             f"资源限制: 最多 {self.harness.max_steps} 步, "
             f"{self.harness.max_search_calls} 次搜索, "
-            f"{self.harness.max_page_reads} 次阅读。"
+            f"{self.harness.max_page_reads} 次阅读, "
+            f"{self.harness.max_duration_seconds:.0f} 秒超时。"
         )
         base_prompt = self.harness.system_prompt or "你是一个专业的新闻研究员助手。"
-        return f"{base_prompt}\n\n可用工具: {tool_names}\n{harness_info}"
+        return f"{base_prompt}\n\n可用工具:\n{tool_info}\n\n{harness_info}"
+
+    @staticmethod
+    def _trim_messages(
+        messages: list[dict[str, Any]],
+        keep_recent: int = 15,
+        max_total_chars: int = 80000,
+    ) -> list[dict[str, Any]]:
+        """
+        裁剪消息历史，防止 context window 溢出。
+
+        保留:
+          - system message (index 0)
+          - task message (index 1)
+          - 最近 keep_recent 条完整消息
+        中间消息的工具结果压缩为摘要。
+        """
+        if len(messages) <= keep_recent + 2:
+            # 检查总字符数
+            total = sum(len(m.get("content", "") or "") for m in messages)
+            if total <= max_total_chars:
+                return messages
+
+        # 保留: system + task + 最近 N 条
+        system = messages[0] if messages else None
+        task = messages[1] if len(messages) > 1 else None
+        recent = messages[-keep_recent:] if len(messages) > keep_recent else messages[2:]
+
+        # 压缩中间消息
+        middle = messages[2:-keep_recent] if len(messages) > keep_recent + 2 else []
+        compressed: list[dict[str, Any]] = []
+        for msg in middle:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "tool" and len(content) > 200:
+                # 工具结果压缩
+                compressed.append({
+                    "role": role,
+                    "tool_call_id": msg.get("tool_call_id", ""),
+                    "content": content[:200] + "...[已截断]",
+                })
+            elif role == "assistant" and msg.get("tool_calls"):
+                # 保留 assistant 消息但截断长内容
+                compressed.append(msg)
+            elif role == "user" and len(content) > 200:
+                compressed.append({
+                    "role": role,
+                    "content": content[:200] + "...[已截断]",
+                })
+            else:
+                compressed.append(msg)
+
+        result: list[dict[str, Any]] = []
+        if system:
+            result.append(system)
+        if task:
+            result.append(task)
+        result.extend(compressed)
+        result.extend(recent)
+        return result
 
     async def _get_llm_decision(
         self, messages: list[dict[str, Any]], memory: WorkingMemory
     ) -> LLMResponse:
         """调用 LLM 获取下一步决策。"""
+        # 裁剪消息历史防止 context window 溢出
+        messages = self._trim_messages(messages)
+
         # 每隔 5 步注入一次工作记忆摘要，帮助 LLM 了解当前状态
         if len(memory.step_history) > 0 and len(memory.step_history) % 5 == 0:
             memory_msg = {
@@ -293,10 +429,10 @@ class AgentCore:
         """构建 assistant 消息（包含 tool_calls）。"""
         msg: dict[str, Any] = {"role": "assistant"}
         msg["content"] = llm_response.content or ""
-        
-        # 兼容 kimi-k2.5 等 reasoning models 的历史上下文要求
-        if llm_response.reasoning_content or llm_response.model_used.startswith("kimi-") or llm_response.model_used.startswith("moonshot-"):
-            msg["reasoning_content"] = llm_response.reasoning_content or ""
+
+        # 始终携带 reasoning_content（即使是空字符串），避免 kimi-k2.5 报错：
+        # "thinking is enabled but reasoning_content is missing"
+        msg["reasoning_content"] = llm_response.reasoning_content or ""
 
         if llm_response.tool_calls:
             msg["tool_calls"] = [
@@ -318,9 +454,8 @@ class AgentCore:
         """从 LLM 的 finish 工具调用中提取结果。如果搜的不够多，拒绝 finish。"""
         for tc in llm_response.tool_calls:
             if tc.tool_name == "finish":
-                # 检查是否过早结束（仅在有 harness 配置阈值时检查）
-                min_searches = getattr(self.harness, "min_searches_before_finish", 6)
-                min_articles = getattr(self.harness, "min_articles_before_finish", 4)
+                min_searches = self.harness.min_searches_before_finish
+                min_articles = self.harness.min_articles_before_finish
                 if min_searches > 0 and len(memory.searched_queries) < min_searches:
                     raise StopIteration(f"搜索次数不足（{len(memory.searched_queries)}/{min_searches}），请继续搜索更多方向。")
                 if min_articles > 0 and len(memory.publishable_articles()) < min_articles:
@@ -352,7 +487,8 @@ class AgentCore:
         # 板块内容：优先使用 memory 缓存（write_section 写的），
         # 再用 finish 参数覆盖/补充（如果 LLM 也传了的话）
         sections_from_memory = memory.get_all_sections_content()
-        sections_from_finish = finish_data.get("sections_content", {})
+        raw_sections = finish_data.get("sections_content", {})
+        sections_from_finish: dict[str, str] = raw_sections if isinstance(raw_sections, dict) else {}
         merged_sections: dict[str, str] = {**sections_from_memory, **sections_from_finish}
 
         return AgentResult(
@@ -426,3 +562,18 @@ class AgentCore:
             session.flush()
         except Exception as exc:
             logger.warning("[AgentCore] Failed to persist AgentStep: %s", exc)
+
+        # 推送实时事件到 SSE 队列
+        if self._event_queue:
+            try:
+                self._event_queue.put_nowait({
+                    "type": "step",
+                    "tool_name": step_record.tool_name,
+                    "thought": (thought or "")[:200],
+                    "result_summary": step_record.result_summary[:300],
+                    "duration": round(step_record.duration_seconds, 2),
+                    "step_index": step_record.step_index,
+                    "harness_blocked": step_record.harness_blocked,
+                })
+            except Exception:
+                pass  # 不影响主流程

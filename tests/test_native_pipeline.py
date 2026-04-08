@@ -134,6 +134,10 @@ class FakeFirecrawlClient:
         return []
 
 
+# Alias: pipeline.scraper is used for scraping now, same fake works
+FakeJinaClient = FakeFirecrawlClient
+
+
 class DirectSourceMapFirecrawlClient(FakeFirecrawlClient):
     async def scrape(self, url: str, timeout_seconds: int | None = None):
         if "86pla.com/news/detail/90001.html" in url:
@@ -392,6 +396,7 @@ class NativePipelineTestCase(unittest.TestCase):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
         pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
         async def _run():
@@ -422,6 +427,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_api_compatibility_endpoints(self):
         main.pipeline.brave = FakeBraveClient()
         main.pipeline.firecrawl = FakeFirecrawlClient()
+        main.pipeline.scraper = FakeJinaClient()
         main.pipeline.llm = FakeReportLLM()
 
         with TestClient(main.app) as client:
@@ -451,6 +457,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_admin_quality_feedback_endpoints(self):
         main.pipeline.brave = FakeBraveClient()
         main.pipeline.firecrawl = FakeFirecrawlClient()
+        main.pipeline.scraper = FakeJinaClient()
         main.pipeline.llm = FakeReportLLM()
 
         with TestClient(main.app) as client:
@@ -501,6 +508,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_auth_and_conversation_flow(self):
         main.pipeline.brave = FakeBraveClient()
         main.pipeline.firecrawl = FakeFirecrawlClient()
+        main.pipeline.scraper = FakeJinaClient()
         main.pipeline.llm = FakeReportLLM()
 
         with TestClient(main.app) as client:
@@ -553,6 +561,7 @@ class NativePipelineTestCase(unittest.TestCase):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
         pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.scraper = FakeJinaClient()
         pipeline.llm = FallbackWriterLLM()
 
         async def _run():
@@ -573,6 +582,7 @@ class NativePipelineTestCase(unittest.TestCase):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
         pipeline.firecrawl = TimeoutFirecrawlClient()
+        pipeline.scraper = TimeoutFirecrawlClient()
         pipeline.llm = FakeReportLLM()
 
         async def _run():
@@ -594,6 +604,7 @@ class NativePipelineTestCase(unittest.TestCase):
         pipeline = NativeReportPipeline()
         pipeline.brave = MetadataFallbackBraveClient()
         pipeline.firecrawl = VerificationWallFirecrawlClient()
+        pipeline.scraper = VerificationWallFirecrawlClient()
         pipeline.llm = FakeReportLLM()
 
         import asyncio
@@ -618,6 +629,7 @@ class NativePipelineTestCase(unittest.TestCase):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
         pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
         import asyncio
@@ -866,6 +878,7 @@ class NativePipelineTestCase(unittest.TestCase):
         pipeline = NativeReportPipeline()
         pipeline.brave = OldIndustryBraveClient()
         pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
         import asyncio
@@ -886,6 +899,7 @@ class NativePipelineTestCase(unittest.TestCase):
         pipeline = NativeReportPipeline()
         pipeline.brave = DisabledBraveClient()
         pipeline.firecrawl = DirectSourceMapFirecrawlClient()
+        pipeline.scraper = DirectSourceMapFirecrawlClient()
         pipeline.llm = FakeReportLLM()
 
         with session_scope() as session:
@@ -913,6 +927,7 @@ class NativePipelineTestCase(unittest.TestCase):
         pipeline = NativeReportPipeline()
         pipeline.brave = SingleSectionBraveClient()
         pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
         import asyncio
@@ -938,6 +953,7 @@ class NativePipelineTestCase(unittest.TestCase):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
         pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
         import asyncio

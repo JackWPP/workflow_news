@@ -180,17 +180,110 @@ async def read_me(request: Request):
         return _serialize_me(session, user)
 
 
-@app.post("/api/reports/run", response_model=ReportDetailOut)
+import asyncio as _asyncio
+import json as _json_mod
+
+# ── 报告运行状态管理（SSE 实时推送） ──────────────────────────
+_run_event_queues: dict[int, _asyncio.Queue] = {}
+_running_task: _asyncio.Task | None = None
+_running_agent_run_id: int | None = None
+
+
+@app.post("/api/reports/run")
 async def run_report(payload: ReportRunRequest):
-    logger.info("Manual native report run requested.")
+    """异步启动报告生成，立即返回 run IDs。前端通过 SSE 端点跟踪进度。"""
+    global _running_task, _running_agent_run_id
+
+    if _running_task and not _running_task.done():
+        raise HTTPException(status_code=409, detail="A report is already being generated")
+
+    logger.info("Manual native report run requested (async mode).")
+
+    # 预创建 DB 记录以获取 ID
     with session_scope() as session:
-        report = await pipeline.run(
-            session,
-            shadow_mode=payload.shadow_mode,
-            mode=payload.mode,
+        from app.models import AgentRun
+        run_record = RetrievalRun(
+            run_date=now_local().date(),
+            status="running",
         )
-        hydrated = get_report_by_id(session, report.id)
-        return ReportDetailOut.model_validate(hydrated)
+        session.add(run_record)
+        session.flush()
+        run_id = run_record.id
+        session.commit()
+
+    # 创建事件队列
+    event_queue: _asyncio.Queue = _asyncio.Queue()
+
+    async def _run_pipeline():
+        global _running_task, _running_agent_run_id
+        try:
+            with session_scope() as session:
+                report = await pipeline.run(
+                    session,
+                    shadow_mode=payload.shadow_mode,
+                    mode=payload.mode,
+                    **({"event_queue": event_queue} if hasattr(pipeline, '_llm_client') else {}),
+                )
+                event_queue.put_nowait({
+                    "type": "complete",
+                    "report_id": report.id,
+                    "status": report.status,
+                })
+        except Exception as exc:
+            logger.error("Pipeline failed: %s", exc, exc_info=True)
+            event_queue.put_nowait({"type": "error", "message": str(exc)[:500]})
+        finally:
+            # 发送结束标记
+            event_queue.put_nowait(None)
+            _running_task = None
+            _running_agent_run_id = None
+            # 清理队列引用（延迟清理以允许 SSE 消费完）
+            await _asyncio.sleep(30)
+            _run_event_queues.pop(run_id, None)
+
+    _running_task = _asyncio.create_task(_run_pipeline())
+    _run_event_queues[run_id] = event_queue
+    _running_agent_run_id = run_id
+
+    return JSONResponse({"run_id": run_id, "status": "running"})
+
+
+@app.get("/api/reports/run/{run_id}/stream")
+async def stream_report_progress(run_id: int):
+    """SSE 端点：实时推送报告生成进度。"""
+    event_queue = _run_event_queues.get(run_id)
+    if not event_queue:
+        raise HTTPException(status_code=404, detail="No active run found for this ID")
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    event = await _asyncio.wait_for(event_queue.get(), timeout=120.0)
+                except _asyncio.TimeoutError:
+                    # 发送心跳保持连接
+                    yield ": heartbeat\n\n"
+                    continue
+
+                if event is None:
+                    # 结束标记
+                    yield "event: done\ndata: {}\n\n"
+                    break
+
+                event_type = event.get("type", "step")
+                yield f"event: {event_type}\ndata: {_json_mod.dumps(event, ensure_ascii=False, default=str)}\n\n"
+        except _asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/reports/run/status")
+async def get_run_status():
+    """查询当前是否有运行中的报告生成。"""
+    if _running_task and not _running_task.done():
+        return {"status": "running", "run_id": _running_agent_run_id}
+    return {"status": "idle", "run_id": None}
 
 
 @app.get("/api/reports/today", response_model=ReportDetailOut)

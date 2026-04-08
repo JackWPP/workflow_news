@@ -16,6 +16,7 @@ WorkingMemory 是 Agent 的认知状态——它让 Agent 知道
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -110,22 +111,22 @@ class CoverageState:
 
     @property
     def is_publishable(self) -> bool:
-        """至少 4 条 + 2 个板块。"""
-        return self.total_articles >= 4 and self.section_count >= 2
+        """至少 6 条 + 2 个板块。"""
+        return self.total_articles >= 6 and self.section_count >= 2
 
     @property
     def is_complete(self) -> bool:
-        """至少 6 条 + 2 个板块 + 2 张图。"""
+        """至少 8 条 + 3 个板块 + 3 张图。"""
         return (
-            self.total_articles >= 6
-            and self.section_count >= 2
-            and self.verified_image_count >= 2
+            self.total_articles >= 8
+            and self.section_count >= 3
+            and self.verified_image_count >= 3
         )
 
     def gaps(self) -> list[str]:
         gaps = []
-        if self.total_articles < 4:
-            gaps.append(f"文章不足（{self.total_articles}/4）")
+        if self.total_articles < 6:
+            gaps.append(f"文章不足（{self.total_articles}/6）")
         if self.section_count < 2:
             missing = []
             if self.industry_count == 0:
@@ -192,8 +193,15 @@ class WorkingMemory:
     """
 
     def __init__(self) -> None:
+        # 并发安全锁（asyncio 单线程下主要用于防御性保护）
+        self._lock: asyncio.Lock = asyncio.Lock()
+
         # 已搜索
         self.searched_queries: list[str] = []
+        self._searched_queries_normalized: set[str] = set()
+
+        # 原始搜索结果存储（供编排器提取候选 URL）
+        self.search_results: list[dict[str, Any]] = []
 
         # 已阅读
         self.read_urls: set[str] = set()
@@ -232,11 +240,13 @@ class WorkingMemory:
 
     def has_searched(self, query: str) -> bool:
         q = query.strip().lower()
-        return any(q == s.strip().lower() for s in self.searched_queries)
+        return q in self._searched_queries_normalized
 
     def record_search(self, query: str) -> None:
-        if not self.has_searched(query):
+        q = query.strip().lower()
+        if q not in self._searched_queries_normalized:
             self.searched_queries.append(query)
+            self._searched_queries_normalized.add(q)
 
     # ── 阅读记录 ──────────────────────────────────────────
 
@@ -353,21 +363,36 @@ class WorkingMemory:
         """生成给 LLM 的工作记忆摘要，让 Agent 知道自己的当前状态。"""
         parts = []
 
+        # 阶段判断
+        search_count = len(self.searched_queries)
+        article_count = len(self.publishable_articles())
+        written_sections = list(self.sections_content.keys())
+
+        if search_count < 6:
+            phase = "广度搜索"
+        elif article_count < 4:
+            phase = "深度评估"
+        else:
+            phase = "撰写收尾"
+        parts.append(f"📍 当前阶段：{phase}")
+
         if self.searched_queries:
-            parts.append(f"已搜索 {len(self.searched_queries)} 个查询：{', '.join(self.searched_queries[-5:])}")
+            parts.append(f"已搜索 {search_count} 个查询：{', '.join(self.searched_queries[-5:])}")
 
         if self.read_urls:
             parts.append(f"已阅读 {len(self.read_urls)} 个页面")
 
-        pub_articles = self.publishable_articles()
-        if pub_articles:
-            section_info = {}
+        if pub_articles := self.publishable_articles():
+            section_info: dict[str, list[str]] = {}
             for a in pub_articles:
                 section_info.setdefault(a.section, []).append(a.title)
-            section_parts = []
-            for section, titles in section_info.items():
-                section_parts.append(f"{section}: {len(titles)} 条")
-            parts.append(f"已确认 {len(pub_articles)} 篇有价值的文章（{', '.join(section_parts)}）")
+            section_parts = [f"{s}: {len(t)} 条" for s, t in section_info.items()]
+            parts.append(f"已确认 {article_count} 篇有价值的文章（{', '.join(section_parts)}）")
+
+        if written_sections:
+            unwritten = {"industry", "academic", "policy"} - set(written_sections)
+            parts.append(f"已写板块：{', '.join(written_sections)}"
+                         + (f" | 待写：{', '.join(unwritten)}" if unwritten else ""))
 
         if self.coverage.verified_image_count > 0:
             parts.append(f"已验证 {self.coverage.verified_image_count} 张配图")
@@ -379,11 +404,16 @@ class WorkingMemory:
         if self.exploration_queue:
             parts.append(f"待探索线索 {len(self.exploration_queue)} 条")
 
-        if self.rejected_directions:
-            parts.append(f"已放弃方向：{', '.join(self.rejected_directions[-3:])}")
-
         if self.key_findings:
             parts.append(f"关键发现：{'; '.join(self.key_findings[-3:])}")
+
+        # 阶段性建议
+        if phase == "广度搜索":
+            parts.append("💡 建议：继续搜索不同维度，覆盖产业/技术/政策")
+        elif phase == "深度评估":
+            parts.append("💡 建议：用 read_page 阅读有价值的搜索结果并评估，补足缺口板块")
+        elif phase == "撰写收尾":
+            parts.append("💡 建议：调用 write_section 撰写各板块内容，然后调用 finish")
 
         return "\n".join(parts) if parts else "刚开始，尚无发现。"
 
@@ -393,6 +423,7 @@ class WorkingMemory:
         """序列化为 dict，用于写入 AgentRun.memory_snapshot。"""
         return {
             "searched_queries": self.searched_queries,
+            "search_results_count": len(self.search_results),
             "read_urls": list(self.read_urls),
             "discovered_count": len(self.discovered_articles),
             "publishable_count": len(self.publishable_articles()),

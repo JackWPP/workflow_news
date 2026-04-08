@@ -35,6 +35,10 @@ class Settings:
     app_timezone: str = os.getenv("APP_TIMEZONE", "Asia/Hong_Kong")
     sqlite_busy_timeout_seconds: int = int(os.getenv("SQLITE_BUSY_TIMEOUT_SECONDS", "30"))
 
+    zhipu_api_key: str = os.getenv("ZHIPU_API_KEY", "")
+    zhipu_search_engine: str = os.getenv("ZHIPU_SEARCH_ENGINE", "search_pro_sogou")
+    zhipu_search_count: int = int(os.getenv("ZHIPU_SEARCH_COUNT", "15"))
+
     brave_api_key: str = os.getenv("BRAVE_API_KEY", "")
     brave_base_url: str = os.getenv("BRAVE_BASE_URL", "https://api.search.brave.com")
     brave_country: str = os.getenv("BRAVE_COUNTRY", "CN")
@@ -45,6 +49,8 @@ class Settings:
     firecrawl_base_url: str = os.getenv("FIRECRAWL_BASE_URL", "https://api.firecrawl.dev/v2")
     firecrawl_location: str = os.getenv("FIRECRAWL_LOCATION", "Hong Kong")
     firecrawl_country: str = os.getenv("FIRECRAWL_COUNTRY", "HK")
+    jina_api_key: str = os.getenv("JINA_API_KEY", "")
+    jina_base_url: str = os.getenv("JINA_BASE_URL", "https://r.jina.ai")
     scrape_timeout_seconds: int = int(os.getenv("SCRAPE_TIMEOUT_SECONDS", "20"))
     scrape_concurrency: int = int(os.getenv("SCRAPE_CONCURRENCY", "3"))
     domain_failure_threshold: int = int(os.getenv("DOMAIN_FAILURE_THRESHOLD", "2"))

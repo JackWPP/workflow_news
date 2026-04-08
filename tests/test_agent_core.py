@@ -206,6 +206,8 @@ class TestWorkingMemory:
         mem.add_article(make_article("industry", url="https://ex.com/2"))
         mem.add_article(make_article("industry", url="https://ex.com/3"))
         mem.add_article(make_article("policy", url="https://ex.com/4"))
+        mem.add_article(make_article("academic", url="https://ex.com/5"))
+        mem.add_article(make_article("industry", url="https://ex.com/6"))
         assert mem.coverage.is_publishable
 
     def test_context_summary_populated(self):
@@ -247,21 +249,21 @@ class TestWorkingMemory:
 class TestCoverageState:
     def test_complete_detection(self):
         cov = CoverageState(
-            academic_count=2,
-            industry_count=2,
+            academic_count=3,
+            industry_count=3,
             policy_count=2,
-            verified_image_count=2,
+            verified_image_count=3,
         )
         assert cov.is_complete
 
     def test_partial_detection(self):
-        cov = CoverageState(industry_count=3, policy_count=1)
+        cov = CoverageState(industry_count=4, policy_count=2)
         assert cov.is_publishable
         assert not cov.is_complete  # no verified images
 
     def test_not_publishable(self):
         cov = CoverageState(industry_count=3)
-        assert not cov.is_publishable  # only 1 section, 3 articles
+        assert not cov.is_publishable  # only 1 section, < 6 articles
 
     def test_gaps_reported(self):
         cov = CoverageState(industry_count=1)

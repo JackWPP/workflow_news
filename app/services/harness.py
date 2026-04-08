@@ -18,6 +18,22 @@ if TYPE_CHECKING:
     from app.services.tools import ToolCall
 
 
+# ── 默认工具超时（秒） ──────────────────────────────────────
+DEFAULT_TOOL_TIMEOUTS: dict[str, float] = {
+    "web_search": 30.0,
+    "read_page": 25.0,
+    "search_images": 20.0,
+    "evaluate_article": 25.0,
+    "write_section": 45.0,
+    "compare_sources": 30.0,
+    "verify_image": 15.0,
+    "follow_references": 5.0,
+    "check_coverage": 5.0,
+    "finish": 5.0,
+}
+DEFAULT_TOOL_TIMEOUT = 30.0
+
+
 # Default domain keywords — Agent 的内容必须与这些领域相关
 DEFAULT_DOMAIN_KEYWORDS: list[str] = [
     "高分子", "塑料", "橡胶", "复合材料", "树脂", "改性",
@@ -29,12 +45,22 @@ DEFAULT_DOMAIN_KEYWORDS: list[str] = [
 ]
 
 # Default blocked domains (safety/quality boundary)
+# 合并了质量低劣来源（PR、百科）和台湾地区媒体
 DEFAULT_BLOCKED_DOMAINS: list[str] = [
-    "openpr.com", "bilibili.com", "cn.investing.com",
+    # ── PR / 营销类 ──
+    "openpr.com", "prnewswire.com", "prnasia.com",
+    "businesswire.com", "globenewswire.com",
     "coherentmarketinsights.com", "gminsights.com",
-    "grandviewresearch.com", "baike.baidu.com",
-    "prnewswire.com", "prnasia.com", "businesswire.com",
-    "globenewswire.com", "zhuanlan.zhihu.com",
+    "grandviewresearch.com",
+    # ── 百科 / 社区 ──
+    "baike.baidu.com", "zhuanlan.zhihu.com", "bilibili.com",
+    # ── 财经 / 投资类（非行业内容）──
+    "cn.investing.com",
+    # ── 台湾媒体 ──
+    "digitimes.com.tw", "udn.com", "ltn.com.tw", "chinatimes.com",
+    "yahoo.com.tw", "tw.news.yahoo.com", "ctee.com.tw", "money.udn.com",
+    "technews.tw", "bnext.com.tw", "ettoday.net", "setn.com",
+    "storm.mg", "cna.com.tw", "taiwannews.com.tw",
 ]
 
 
@@ -85,6 +111,9 @@ class Harness:
     max_llm_calls: int = 25
     """最多 LLM 调用次数（含工具选择和工具内部 LLM 调用）。"""
 
+    tool_timeouts: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_TOOL_TIMEOUTS))
+    """每个工具的超时时间（秒）。未列出的工具使用 DEFAULT_TOOL_TIMEOUT。"""
+
     # ── 领域边界 ──────────────────────────────────────────
     domain_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_DOMAIN_KEYWORDS))
     """内容必须与这些关键词之一相关（逐 URL 内容检查在工具层完成）。"""
@@ -101,6 +130,16 @@ class Harness:
 
     max_single_source_ratio: float = 0.6
     """单一来源在最终报告中占比不能超过 60%。"""
+
+    # ── Finish 前置条件 ─────────────────────────────────────
+    min_searches_before_finish: int = 6
+    """finish 前至少需要搜索多少次。设为 0 跳过检查。"""
+
+    min_articles_before_finish: int = 4
+    """finish 前至少需要多少篇可发布文章。设为 0 跳过检查。"""
+
+    max_consecutive_finish_rejects: int = 3
+    """连续拒绝 finish 的最大次数。超过后强制接受。"""
 
     # ── System Prompt ─────────────────────────────────────
     system_prompt: str = ""
@@ -136,12 +175,38 @@ class Harness:
         return max(0, self.max_steps - self._step_count)
 
     @property
+    def effective_budget_remaining(self) -> int:
+        """综合考虑步骤预算和剩余时间的有效预算。"""
+        step_budget = max(0, self.max_steps - self._step_count)
+        if self.max_duration_seconds <= 0:
+            return step_budget
+        remaining_seconds = self.max_duration_seconds - self.elapsed_seconds
+        # 平均每步约 10 秒
+        time_based_budget = max(0, int(remaining_seconds / 10))
+        return min(step_budget, time_based_budget)
+
+    @property
+    def should_wind_down(self) -> bool:
+        """资源即将耗尽，应该进入收尾阶段。"""
+        if self.effective_budget_remaining < 5:
+            return True
+        if self.max_duration_seconds > 0:
+            remaining = self.max_duration_seconds - self.elapsed_seconds
+            if remaining < 60:
+                return True
+        return False
+
+    @property
     def timed_out(self) -> bool:
         return self.elapsed_seconds >= self.max_duration_seconds
 
     @property
     def violations(self) -> list[HarnessViolation]:
         return list(self._violations)
+
+    def tool_timeout(self, tool_name: str) -> float:
+        """返回指定工具的超时时间（秒）。"""
+        return self.tool_timeouts.get(tool_name, DEFAULT_TOOL_TIMEOUT)
 
     # ── 主检查入口 ────────────────────────────────────────
     def allows(self, tool_call: "ToolCall") -> tuple[bool, str]:

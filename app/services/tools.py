@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 from app.services.working_memory import (
     ArticleSummary,
@@ -84,28 +84,29 @@ class Tool:
         raise NotImplementedError
 
 
-# ── 不可信域名（硬过滤） ───────────────────────────────────
-_BLOCKED_RESULT_DOMAINS = {
-    # 台湾媒体
-    "digitimes.com.tw", "udn.com", "ltn.com.tw", "chinatimes.com",
-    "yahoo.com.tw", "tw.news.yahoo.com", "ctee.com.tw", "money.udn.com",
-    "technews.tw", "bnext.com.tw", "ettoday.net", "setn.com",
-    "storm.mg", "cna.com.tw", "taiwannews.com.tw",
-}
+# ── 不可信域名（统一引用 Harness 的黑名单） ──────────────────
+from app.services.harness import DEFAULT_BLOCKED_DOMAINS as _BLOCKED_DOMAINS
+from app.services.harness import DEFAULT_DOMAIN_KEYWORDS as _DOMAIN_KEYWORDS
+
+# 评估/提取用的关键词（小写预计算）
+_KEYWORDS_LOWER: list[str] = [kw.lower() for kw in _DOMAIN_KEYWORDS] + [
+    "发现", "突破", "进展", "研究", "技术", "创新",
+]
+
+# 构建快速查找 set
+_BLOCKED_DOMAIN_SET: set[str] = set(_BLOCKED_DOMAINS)
+# 台湾地区 TLD（仅用于地区标签，不再作为硬过滤条件）
+_TW_TLDS = (".com.tw", ".org.tw", ".edu.tw")
 
 
 def _is_blocked_domain(domain: str) -> bool:
-    """检查域名是否在屏蔽列表中或是 .com.tw 后缀。"""
-    if domain in _BLOCKED_RESULT_DOMAINS:
-        return True
-    if domain.endswith(".com.tw") or domain.endswith(".org.tw"):
-        return True
-    return False
+    """检查域名是否在屏蔽列表中。"""
+    return domain in _BLOCKED_DOMAIN_SET
 
 
 def _region_tag(domain: str) -> str:
     """根据域名判断地区标签。"""
-    if domain.endswith(".com.tw") or domain.endswith(".org.tw") or domain in _BLOCKED_RESULT_DOMAINS:
+    if domain in _BLOCKED_DOMAIN_SET or domain.endswith(_TW_TLDS):
         return " [台湾来源]"
     if domain.endswith(".hk") or domain in {"hk01.com"}:
         return " [香港来源]"
@@ -121,10 +122,10 @@ class WebSearchTool(Tool):
 
     name = "web_search"
     description = (
-        "搜索网页、新闻或图片。你可以自由构造搜索词，"
-        "系统会同时搜索 web 和 news 源。"
-        "搜索结果包含标题、摘要、URL 和发布时间。"
+        "搜索网页和新闻，发现相关文章链接。"
+        "你可以自由构造搜索词，系统会同时搜索 web 和 news 源。"
         "如果某个方向你已经搜过，请换一个角度。"
+        "搜索后发现有价值的结果，请用 read_page 深入阅读。"
     )
     parameters = {
         "type": "object",
@@ -142,9 +143,10 @@ class WebSearchTool(Tool):
         "required": ["query"],
     }
 
-    def __init__(self, brave_client: Any = None, firecrawl_client: Any = None) -> None:
+    def __init__(self, brave_client: Any = None, zhipu_client: Any = None, firecrawl_client: Any = None) -> None:
         self._brave = brave_client
-        self._firecrawl = firecrawl_client
+        self._zhipu = zhipu_client
+        # firecrawl_client 保留参数以兼容旧调用，但不再用于搜索
 
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
         query: str = kwargs.get("query", "").strip()
@@ -162,19 +164,19 @@ class WebSearchTool(Tool):
 
         memory.record_search(query)
 
-        # ── 搜索策略：中文用 Firecrawl（Brave 中文搜索不可用），英文用 Brave ──
+        # ── 搜索策略：中文用智谱 Web Search（search_pro），英文/失败时用 Brave ──
         results: list[dict[str, Any]] = []
 
-        if language == "zh" and self._firecrawl and self._firecrawl.enabled:
-            # 中文搜索：Firecrawl 为主
+        if language == "zh" and self._zhipu and self._zhipu.enabled:
+            # 中文搜索：智谱 Web Search 为主（多引擎协作，中文覆盖率高）
             try:
-                results = await self._firecrawl.search(query, limit=10, country="CN", timeout=30000)
-                logger.info("web_search [zh/firecrawl] '%s' → %d results", query, len(results))
+                results = await self._zhipu.search(query)
+                logger.info("web_search [zh/zhipu] '%s' → %d results", query, len(results))
             except Exception as exc:
-                logger.warning("Firecrawl search failed for '%s': %s", query, exc)
+                logger.warning("ZhipuSearch failed for '%s': %s", query, exc)
 
         if not results and self._brave and self._brave.enabled:
-            # 英文搜索 或 中文 Firecrawl 失败时的 Brave 兜底
+            # 英文搜索 或 中文搜索失败时的 Brave 兜底
             from app.config import settings
             search_lang = settings.brave_search_lang if language == "zh" else settings.brave_fallback_lang
             try:
@@ -210,8 +212,8 @@ class WebSearchTool(Tool):
                 data={"results": []},
             )
 
-        # ── 时效性过滤：只保留近 72 小时内发布的内容 ──
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=72)
+        # ── 时效性过滤：只保留近 7 天内发布的内容 ──
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
         fresh_results = []
         stale_count = 0
         for r in results:
@@ -226,19 +228,20 @@ class WebSearchTool(Tool):
             # pub 为 None 的保留（无法判断时效）
             fresh_results.append(r)
         if stale_count:
-            logger.info("web_search filtered out %d stale results (>72h old)", stale_count)
+            logger.info("web_search filtered out %d stale results (>7d old)", stale_count)
         results = fresh_results
 
         if not results:
             return ToolResult(
                 success=True,
-                summary=f"'{query}' 的搜索结果都是旧闻（超过 72 小时），请换一个更具时效性的搜索词。不要搜索去年的内容。",
+                summary=f"'{query}' 的搜索结果都是旧闻（超过 7 天），请换一个更具时效性的搜索词。",
                 data={"results": []},
             )
 
         # ── 格式化结果给 LLM 看 ──
+        display_limit = 8
         formatted = []
-        for r in results[:10]:
+        for r in results[:display_limit]:
             url = r.get("url", "")
             domain = r.get("domain") or extract_domain(url)
             region = _region_tag(domain)
@@ -251,7 +254,18 @@ class WebSearchTool(Tool):
                 f"  摘要: {snippet}"
             )
 
-        summary = f"搜索 '{query}' 找到 {len(results)} 条结果：\n\n" + "\n\n".join(formatted[:8])
+        summary = f"搜索 '{query}' 找到 {len(results)} 条结果：\n\n" + "\n\n".join(formatted)
+
+        # 存储原始搜索结果到 memory，供 multi-agent 编排器提取候选 URL
+        for r in results[:10]:
+            memory.search_results.append({
+                "url": r.get("url", ""),
+                "title": r.get("title", ""),
+                "domain": r.get("domain", ""),
+                "snippet": r.get("snippet", ""),
+                "published_at": r.get("published_at"),
+            })
+
         return ToolResult(
             success=True,
             summary=summary,
@@ -268,6 +282,7 @@ class ReadPageTool(Tool):
     description = (
         "深度阅读一个网页，获取完整正文、发布时间和页面图片。"
         "用于搜索结果中找到有价值的链接后深入阅读。"
+        "阅读后请立即用 evaluate_article 评估文章价值。"
         "避免重复阅读同一个 URL。"
     )
     parameters = {
@@ -281,8 +296,8 @@ class ReadPageTool(Tool):
         "required": ["url"],
     }
 
-    def __init__(self, firecrawl_client: Any = None) -> None:
-        self._firecrawl = firecrawl_client
+    def __init__(self, scraper_client: Any = None) -> None:
+        self._scraper = scraper_client
 
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
         url: str = kwargs.get("url", "").strip()
@@ -298,17 +313,17 @@ class ReadPageTool(Tool):
 
         domain = extract_domain(url)
 
-        if self._firecrawl is None or not self._firecrawl.enabled:
+        if self._scraper is None or not self._scraper.enabled:
             memory.record_read(url, links=[])
             return ToolResult(
                 success=False,
-                summary="页面抓取服务不可用（Firecrawl API key 未配置）",
+                summary="页面抓取服务不可用",
                 data={},
             )
 
         try:
             from app.config import settings
-            result = await self._firecrawl.scrape(url, timeout_seconds=settings.scrape_timeout_seconds)
+            result = await self._scraper.scrape(url, timeout_seconds=settings.scrape_timeout_seconds)
         except Exception as exc:
             memory.record_read(url, links=[])
             logger.warning("read_page failed for %s: %s", url, exc)
@@ -324,8 +339,9 @@ class ReadPageTool(Tool):
         links = self._extract_links(markdown, url)
         memory.record_read(url, links=links)
 
-        # 生成内容摘要（前 3000 字）
-        content_summary = summarize_markdown(markdown[:6000]) or markdown[:500]
+        # 智能内容提取：分段取引言 + 结论 + 中间关键词密集段
+        content_for_summary = self._extract_content(markdown, max_chars=8000)
+        content_summary = summarize_markdown(content_for_summary) or markdown[:500]
 
         summary = (
             f"📄 {title}\n"
@@ -366,6 +382,51 @@ class ReadPageTool(Tool):
             links.append({"text": text, "url": href, "domain": domain})
         return links[:15]
 
+    @staticmethod
+    def _extract_content(markdown: str, max_chars: int = 8000) -> str:
+        """
+        智能分段提取：引言 + 结论 + 中间关键词密集段落。
+        替代简单硬截断，保留长文章的关键后半部分内容。
+        """
+        if len(markdown) <= max_chars:
+            return markdown
+
+        head_size = 2500
+        tail_size = 1500
+        mid_budget = max_chars - head_size - tail_size
+
+        head = markdown[:head_size]
+        tail = markdown[-tail_size:] if len(markdown) > tail_size else ""
+
+        # 中间部分分段（按段落分割），选关键词密度最高的
+        mid_text = markdown[head_size:len(markdown) - tail_size]
+        paragraphs = [p for p in mid_text.split("\n\n") if len(p.strip()) > 50]
+
+        if mid_budget <= 0 or not paragraphs:
+            return head + "\n\n...\n\n" + tail
+
+        # 按关键词密度评分（使用模块级预计算的小写关键词列表）
+        def keyword_density(text: str) -> float:
+            text_lower = text.lower()
+            return sum(1 for kw in _KEYWORDS_LOWER if kw in text_lower) / max(len(text), 1) * 1000
+
+        scored = [(keyword_density(p), p) for p in paragraphs]
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        mid_selected: list[str] = []
+        mid_len = 0
+        for _, p in scored:
+            if mid_len + len(p) > mid_budget:
+                break
+            mid_selected.append(p)
+            mid_len += len(p)
+
+        result = head
+        if mid_selected:
+            result += "\n\n...[中间重点段落]...\n\n" + "\n\n".join(mid_selected)
+        result += "\n\n...[文末]...\n\n" + tail
+        return result
+
 
 # ── 3. follow_references ─────────────────────────────────
 
@@ -377,6 +438,7 @@ class FollowReferencesTool(Tool):
         "从一个已阅读的页面中提取引用、参考文献和相关链接，"
         "加入探索队列。用于在一篇文章中发现值得深入的新方向。"
         "不会立即读取，而是将线索加入工作记忆。"
+        "只在需要追踪引用来源时使用，普通文章不需要调用。"
     )
     parameters = {
         "type": "object",
@@ -460,7 +522,8 @@ class EvaluateArticleTool(Tool):
     name = "evaluate_article"
     description = (
         "评估一篇文章的价值：是否值得纳入日报、属于哪个板块、"
-        "核心发现是什么。用于决定是否要深入研究某篇文章。"
+        "核心发现是什么。只评估已用 read_page 阅读过的文章，"
+        "不要凭搜索摘要评估。"
     )
     parameters = {
         "type": "object",
@@ -486,6 +549,22 @@ class EvaluateArticleTool(Tool):
 
         if not title or not content:
             return ToolResult(success=False, summary="需要提供 title 和 content", data={})
+
+        # ── 启发式预过滤：无领域关键词直接拒绝，省 LLM 调用 ──
+        text = f"{title} {content}".lower()
+        topic_hits = sum(1 for kw in _KEYWORDS_LOWER if kw in text)
+
+        if topic_hits == 0:
+            # 零关键词命中，直接拒绝
+            return ToolResult(
+                success=True,
+                summary=f"❌ 价值不足：{title}\n板块: industry | 无领域关键词命中",
+                data={
+                    "worthy": False, "section": "industry",
+                    "key_finding": title[:50], "reason": "主题与高分子材料加工无关",
+                    "image_worthiness": False, "added_to_memory": False,
+                },
+            )
 
         system_prompt = (
             "你是高分子材料加工领域的日报研究员。\n"
@@ -691,9 +770,9 @@ class SearchImagesTool(Tool):
         "required": ["topic"],
     }
 
-    def __init__(self, brave_client: Any = None, firecrawl_client: Any = None) -> None:
+    def __init__(self, brave_client: Any = None, scraper_client: Any = None) -> None:
         self._brave = brave_client
-        self._firecrawl = firecrawl_client
+        self._scraper = scraper_client
 
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
         topic: str = kwargs.get("topic", "").strip()
@@ -715,28 +794,11 @@ class SearchImagesTool(Tool):
             except Exception as exc:
                 logger.warning("search_images [brave] failed: %s", exc)
 
-        # Brave 失败或无结果时，用 Firecrawl web 搜索找含图的页面
-        if not results and self._firecrawl and self._firecrawl.enabled:
-            try:
-                web_results = await self._firecrawl.search(f"{topic} 图片", limit=5, timeout=15000)
-                for wr in web_results:
-                    img = wr.get("image_url")
-                    if img:
-                        results.append({
-                            "url": wr.get("url", ""),
-                            "title": wr.get("title", topic),
-                            "image_url": img,
-                        })
-                if results:
-                    logger.info("search_images [firecrawl] found %d images for '%s'", len(results), topic)
-            except Exception as exc:
-                logger.warning("search_images [firecrawl] failed: %s", exc)
-
         if not results:
             # 如果有 article_url，尝试从文章页面本身提取图片
-            if article_url and self._firecrawl and self._firecrawl.enabled:
+            if article_url and self._scraper and self._scraper.enabled:
                 try:
-                    page_data = await self._firecrawl.scrape(article_url)
+                    page_data = await self._scraper.scrape(article_url)
                     og_image = page_data.get("image_url")
                     if og_image:
                         results.append({
@@ -865,7 +927,7 @@ class WriteSectionTool(Tool):
     name = "write_section"
     description = (
         "基于已收集的文章，写日报的某个板块内容（markdown 格式）。"
-        "在确认某个板块的文章已足够后调用。"
+        "先用 check_coverage 确认板块有足够文章再调用。"
         "输出带来源引用的 markdown 文本。"
     )
     parameters = {
@@ -957,6 +1019,35 @@ class WriteSectionTool(Tool):
 
 # ── 9. check_coverage ────────────────────────────────────
 
+# 搜索盲区话题模板
+_BLIND_SPOT_TOPICS: list[tuple[list[str], str]] = [
+    (["价格", "行情", "涨价", "跌价", "树脂"], "原料价格/市场行情"),
+    (["并购", "重组", "收购", "合作", "合资"], "企业并购/战略合作"),
+    (["投产", "扩产", "新建", "产能", "工厂"], "产能扩建/新工厂"),
+    (["汽车", "轻量化", "新能源车"], "汽车轻量化应用"),
+    (["电子", "封装", "半导体", "芯片"], "电子封装应用"),
+    (["医疗", "器械", "生物相容"], "医疗器械应用"),
+    (["包装", "食品", "接触材料"], "包装/食品接触材料"),
+    (["碳关税", "CBAM", "碳足迹", "ESG"], "碳关税/ESG"),
+    (["K展", "Chinaplas", "展会", "博览会"], "行业展会"),
+    (["标准", "ISO", "ASTM", "国标", "GB/T"], "标准更新"),
+]
+
+
+def _suggest_blind_spots(memory: "WorkingMemory", suggestions: list[str]) -> None:
+    """基于已搜索内容检测盲区并建议补充搜索。"""
+    searched_text = " ".join(memory.searched_queries).lower()
+
+    blind_spots = []
+    for keywords, label in _BLIND_SPOT_TOPICS:
+        if not any(kw.lower() in searched_text for kw in keywords):
+            blind_spots.append(label)
+
+    if blind_spots:
+        examples = blind_spots[:4]
+        suggestions.append(f"盲区提醒：尚未覆盖的话题方向 — {'、'.join(examples)}。请补充搜索。")
+
+
 class CheckCoverageTool(Tool):
     """检查当前收集状态，发现缺口并给出建议。"""
 
@@ -964,7 +1055,7 @@ class CheckCoverageTool(Tool):
     description = (
         "检查当前已收集的文章和图片状态，发现缺口，"
         "判断是否已经可以写报告或需要继续探索。"
-        "建议在每次收集了几篇文章后调用，以决定下一步。"
+        "每收集 3-4 篇文章后调用一次，以及写报告前调用。"
     )
     parameters = {
         "type": "object",
@@ -1015,10 +1106,12 @@ class CheckCoverageTool(Tool):
                         suggestions.append("建议搜索学术方向：如 '\"微纳米层叠\" 最新应用', '\"静电纺丝\" 产业化', 'polymer processing latest research'")
                     elif "图片" in gap:
                         suggestions.append("用 search_images 为主要文章找配图")
-            
-            # Additional tracking suggestion
-            if len(memory.searched_queries) < 6:
-                suggestions.append(f"进度提醒：你目前只搜索了 {len(memory.searched_queries)} 次。请确保完成 6 轮不同维度的广泛搜索后再结束。")
+
+            # 基于已搜内容发现盲区
+            _suggest_blind_spots(memory, suggestions)
+
+            if len(memory.searched_queries) < 8:
+                suggestions.append(f"进度提醒：你目前只搜索了 {len(memory.searched_queries)} 次。请确保完成 8 轮不同维度的广泛搜索后再结束。")
             ready = False
 
         if memory.exploration_queue:
@@ -1048,8 +1141,8 @@ class FinishTool(Tool):
     name = "finish"
     description = (
         "完成报告生成，输出最终的报告内容。"
+        "必须在所有需要的 write_section 完成后调用。"
         "调用此工具后 Agent 将停止探索。"
-        "建议在确认内容足够后调用，不要急于在探索初期调用。"
     )
     parameters = {
         "type": "object",
@@ -1101,17 +1194,18 @@ class FinishTool(Tool):
 
 def build_all_tools(
     brave_client: Any = None,
-    firecrawl_client: Any = None,
+    scraper_client: Any = None,
+    zhipu_client: Any = None,
     llm_client: "LLMClient | None" = None,
 ) -> list[Tool]:
     """构建完整工具集。"""
     return [
-        WebSearchTool(brave_client=brave_client, firecrawl_client=firecrawl_client),
-        ReadPageTool(firecrawl_client=firecrawl_client),
+        WebSearchTool(brave_client=brave_client, zhipu_client=zhipu_client, firecrawl_client=scraper_client),
+        ReadPageTool(scraper_client=scraper_client),
         FollowReferencesTool(),
         EvaluateArticleTool(llm_client=llm_client),
         CompareSourcesTool(llm_client=llm_client),
-        SearchImagesTool(brave_client=brave_client, firecrawl_client=firecrawl_client),
+        SearchImagesTool(brave_client=brave_client, scraper_client=scraper_client),
         VerifyImageTool(llm_client=llm_client),
         WriteSectionTool(llm_client=llm_client),
         CheckCoverageTool(),

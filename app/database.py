@@ -4,6 +4,7 @@ from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.config import settings
 
@@ -17,7 +18,15 @@ def _connect_args() -> dict:
     return {}
 
 
-engine = create_engine(settings.database_url, future=True, pool_pre_ping=True, connect_args=_connect_args())
+_is_sqlite = settings.database_url.startswith("sqlite")
+
+engine = create_engine(
+    settings.database_url,
+    future=True,
+    pool_pre_ping=not _is_sqlite,
+    **({"poolclass": NullPool} if _is_sqlite else {}),
+    connect_args=_connect_args(),
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
 
 

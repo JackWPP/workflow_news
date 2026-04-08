@@ -262,13 +262,13 @@ class ResearchAgent:
 
     def _build_tools(self) -> list[Tool]:
         from app.services.brave import BraveSearchClient
-        from app.services.firecrawl import FirecrawlClient
+        from app.services.scraper import ScraperClient
         brave = BraveSearchClient()
-        firecrawl = FirecrawlClient()
+        scraper = ScraperClient()
         return [
             LocalCorpusSearchTool(session=self._session),
             WebSearchTool(brave_client=brave),
-            ReadPageTool(firecrawl_client=firecrawl),
+            ReadPageTool(scraper_client=scraper),
             FollowReferencesTool(),
             EvaluateArticleTool(llm_client=self._llm_client),
             CompareSourcesTool(llm_client=self._llm_client),

@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services.brave import CircuitBreaker
 from app.utils import extract_domain, parse_datetime
 
 
@@ -13,20 +14,30 @@ class FirecrawlClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
         self.api_key = api_key or settings.firecrawl_api_key
         self.base_url = (base_url or settings.firecrawl_base_url).rstrip("/")
+        self._circuit_breaker = CircuitBreaker()
 
     @property
     def enabled(self) -> bool:
         return bool(self.api_key)
 
     async def _request(self, path: str, payload: dict[str, Any], timeout_seconds: int | None = None) -> dict[str, Any]:
+        if self._circuit_breaker.is_open:
+            raise ConnectionError("Firecrawl 服务暂时不可用（熔断保护中），请稍后重试")
+
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        async with httpx.AsyncClient(timeout=timeout_seconds or settings.scrape_timeout_seconds) as client:
-            response = await client.post(f"{self.base_url}{path}", json=payload, headers=headers)
-            response.raise_for_status()
-            return response.json()
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds or settings.scrape_timeout_seconds) as client:
+                response = await client.post(f"{self.base_url}{path}", json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+            self._circuit_breaker.record_success()
+            return data
+        except Exception:
+            self._circuit_breaker.record_failure()
+            raise
 
     async def scrape(self, url: str, timeout_seconds: int | None = None) -> dict[str, Any]:
         if not self.enabled:

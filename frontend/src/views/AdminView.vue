@@ -140,24 +140,9 @@ async function saveSettings() {
   }
 }
 
-function formatExcludedDomains(payload: Record<string, unknown> | null | undefined) {
-  const value = payload?.excluded_domains
-  return Array.isArray(value) ? value.join(', ') : '-'
-}
-
 function formatFeedbackSummary(summary: Record<string, number> | undefined) {
   if (!summary) return '-'
   return Object.entries(summary).map(([key, value]) => `${key}:${value}`).join(' / ')
-}
-
-function formatMetricMap(value: unknown) {
-  if (!value || typeof value !== 'object') return '-'
-  return Object.entries(value as Record<string, unknown>).map(([key, count]) => `${key}:${String(count)}`).join(' / ')
-}
-
-function formatRunActions(value: unknown) {
-  if (!Array.isArray(value) || value.length === 0) return '-'
-  return value.map((item) => String((item as Record<string, unknown>).action || 'unknown')).join(' -> ')
 }
 
 function formatScore(value: unknown) {

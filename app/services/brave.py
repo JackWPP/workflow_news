@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import httpx
@@ -9,10 +10,41 @@ from app.config import settings
 from app.utils import extract_domain, parse_datetime
 
 
+class CircuitBreaker:
+    """简单的熔断器：连续失败超过阈值后进入 open 状态，一段时间后尝试恢复。"""
+
+    def __init__(self, failure_threshold: int = 3, reset_timeout: float = 60.0) -> None:
+        self._failures = 0
+        self._threshold = failure_threshold
+        self._reset_timeout = reset_timeout
+        self._last_failure_time: float = 0.0
+        self._state = "closed"  # closed / open / half-open
+
+    @property
+    def is_open(self) -> bool:
+        if self._state == "open":
+            if time.time() - self._last_failure_time > self._reset_timeout:
+                self._state = "half-open"
+                return False
+            return True
+        return False
+
+    def record_success(self) -> None:
+        self._failures = 0
+        self._state = "closed"
+
+    def record_failure(self) -> None:
+        self._failures += 1
+        self._last_failure_time = time.time()
+        if self._failures >= self._threshold:
+            self._state = "open"
+
+
 class BraveSearchClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
         self.api_key = api_key or settings.brave_api_key
         self.base_url = (base_url or settings.brave_base_url).rstrip("/")
+        self._circuit_breaker = CircuitBreaker()
 
     @property
     def enabled(self) -> bool:
@@ -22,14 +54,27 @@ class BraveSearchClient:
         if not self.enabled:
             return {}
 
+        if self._circuit_breaker.is_open:
+            raise ConnectionError("Brave Search 服务暂时不可用（熔断保护中），请稍后重试")
+
         headers = {
             "Accept": "application/json",
             "X-Subscription-Token": self.api_key,
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{self.base_url}{path}", params=params, headers=headers)
-            response.raise_for_status()
-            return response.json()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(f"{self.base_url}{path}", params=params, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+            self._circuit_breaker.record_success()
+            return data
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 422:
+                self._circuit_breaker.record_failure()
+            raise
+        except Exception:
+            self._circuit_breaker.record_failure()
+            raise
 
     async def search(
         self,

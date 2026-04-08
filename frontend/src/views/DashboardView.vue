@@ -1,21 +1,23 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import MarkdownPanel from '../components/MarkdownPanel.vue'
 import ReportItemCard from '../components/ReportItemCard.vue'
 import HeroSection from '../components/HeroSection.vue'
 import CoverageGauge from '../components/CoverageGauge.vue'
 import SectionDivider from '../components/SectionDivider.vue'
+import AgentProgressPanel from '../components/AgentProgressPanel.vue'
 import { api } from '../lib/api'
-import { useSessionStore } from '../stores/session'
 import type { Report } from '../types'
 import { LayoutGrid, FileText } from 'lucide-vue-next'
 
-const session = useSessionStore()
 const report = ref<Report | null>(null)
 const loading = ref(false)
+const generating = ref(false)
 const error = ref('')
 const viewMode = ref<'cards' | 'markdown'>('cards')
+const progressPanel = ref<InstanceType<typeof AgentProgressPanel> | null>(null)
+let activeES: EventSource | null = null
 
 const heroItem = computed(() => report.value?.items.find((item) => item.has_verified_image) ?? report.value?.items[0] ?? null)
 
@@ -31,7 +33,7 @@ const stats = computed(() => ({
   academic: groupedItems.value.academic?.length || 0,
   industry: groupedItems.value.industry?.length || 0,
   policy: groupedItems.value.policy?.length || 0,
-  images: report.value?.image_review_summary?.verified_image_count || report.value?.items.filter(i => i.has_verified_image).length || 0
+  images: (report.value?.image_review_summary?.verified_image_count as number | undefined) ?? report.value?.items.filter(i => i.has_verified_image).length ?? 0
 }))
 
 async function loadReport() {
@@ -47,19 +49,49 @@ async function loadReport() {
 }
 
 async function regenerate() {
-  loading.value = true
+  generating.value = true
   error.value = ''
+  report.value = null
   try {
-    report.value = await api.runReport()
+    const { run_id } = await api.runReport()
+    activeES = api.streamProgress(run_id, {
+      onStep: (data) => progressPanel.value?.handleStep(data),
+      onPhase: (data) => progressPanel.value?.handlePhase(data),
+      onComplete: async (data) => {
+        activeES = null
+        generating.value = false
+        loading.value = true
+        try {
+          if (data.report_id) {
+            report.value = await api.getReport(data.report_id)
+          } else {
+            report.value = await api.todayReport()
+          }
+        } catch {
+          report.value = await api.todayReport()
+        } finally {
+          loading.value = false
+        }
+      },
+      onError: (data) => {
+        progressPanel.value?.handleError(data)
+        activeES = null
+        generating.value = false
+        error.value = data.message || '报告生成失败'
+      },
+    })
   } catch (err) {
+    generating.value = false
     error.value = err instanceof Error ? err.message : '生成失败'
-  } finally {
-    loading.value = false
   }
 }
 
 onMounted(() => {
   void loadReport()
+})
+
+onUnmounted(() => {
+  activeES?.close()
 })
 </script>
 
@@ -70,7 +102,10 @@ onMounted(() => {
 
     <p v-if="error" class="status-error status-pill w-max mx-auto px-4 py-2">{{ error }}</p>
 
-    <template v-if="report">
+    <!-- Agent Progress Panel (shown during generation) -->
+    <AgentProgressPanel ref="progressPanel" :active="generating" />
+
+    <template v-if="report && !generating">
       <!-- Toolbar & Analytics Row -->
       <div class="flex flex-col lg:flex-row gap-6 items-end justify-between mb-2">
         <!-- Coverage Gauge Analytics -->
@@ -120,7 +155,7 @@ onMounted(() => {
       </div>
     </template>
     
-    <div v-else-if="loading" class="flex flex-col items-center justify-center p-20 gap-4">
+    <div v-else-if="loading && !generating" class="flex flex-col items-center justify-center p-20 gap-4">
       <div class="w-12 h-12 border-4 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin glow-[0_0_15px_rgba(100,180,255,0.4)]"></div>
       <p class="text-[var(--text-secondary)] animate-pulse">正在获取情报矩阵...</p>
     </div>

@@ -14,6 +14,8 @@ from app.config import settings
 from app.models import Article, ArticleCluster, Report, ReportItem, RetrievalCandidate, RetrievalQuery, RetrievalRun, Source
 from app.services.brave import BraveSearchClient
 from app.services.firecrawl import FirecrawlClient
+from app.services.jina_reader import JinaReaderClient
+from app.services.scraper import ScraperClient
 from app.services.llm import PlannerOutput, ReportLLMService, ScorerOutput, WriterOutput
 from app.services.repository import get_report_settings, quality_feedback_domain_stats
 from app.services.rss import fetch_feed_entries
@@ -331,6 +333,7 @@ class NativeReportPipeline:
     def __init__(self):
         self.brave = BraveSearchClient()
         self.firecrawl = FirecrawlClient()
+        self.scraper = ScraperClient(jina_client=JinaReaderClient(), firecrawl_client=self.firecrawl)
         self.llm = ReportLLMService()
 
     async def run(
@@ -1024,7 +1027,7 @@ class NativeReportPipeline:
     ) -> list[Article]:
         results = await asyncio.gather(
             *[
-                self.firecrawl.scrape(candidate["url"], timeout_seconds=runtime["scrape_timeout_seconds"])
+                self.scraper.scrape(candidate["url"], timeout_seconds=runtime["scrape_timeout_seconds"])
                 for candidate in batch
             ],
             return_exceptions=True,
