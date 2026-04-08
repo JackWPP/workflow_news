@@ -6,7 +6,7 @@
 
 1. **服务器**：一台可以访问公网的服务器（Linux 或 Windows）。
 2. **环境**：Python 3.8 或更高版本。
-3. **网络**：确保服务器可以访问 `api.coze.cn`。
+3. **网络**：确保服务器可以访问 `api.search.brave.com`、`api.firecrawl.dev` 和 `openrouter.ai`。
 
 ---
 
@@ -153,4 +153,4 @@ A: 端口 8000 被占用。
 - **Windows**: 修改 `main.py` 中的端口号，或使用 `python -m uvicorn main:app --port 8001` 启动。
 
 **Q: 生成资讯失败？**
-A: 检查 `server.log` 日志。通常是因为 Coze Token 过期或网络无法连接到 Coze API。
+A: 检查 `server.log` 日志。通常是因为 Brave / Firecrawl / OpenRouter 配置不正确，或外部接口超时。

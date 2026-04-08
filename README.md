@@ -1,95 +1,109 @@
 # 高分子材料加工每日资讯平台
 
-这是一个基于 Coze 工作流的全栈资讯聚合平台，专为高分子材料加工领域设计。它能够每日自动从互联网搜集最新科研进展和新闻，整理成 Markdown 报告并展示。
+这是一个面向高分子材料加工领域的研究情报台。当前版本已经升级为“原生检索后端 + OpenRouter 混合式日报编排 + 正式 Vue 前端 + 基础账号体系”的产品化形态。
 
-## ✨ 核心功能
+## 当前能力
 
-- **自动化采集**：集成 APScheduler，每日上午 10:00 自动触发 Coze 工作流抓取最新资讯。
-- **即时生成**：支持手动触发“重新生成”，实时调用 Coze API 获取最新内容。
-- **历史存档**：自动将每日资讯持久化存储至 SQLite 数据库，支持按日期回溯查看。
-- **Markdown 渲染**：前端内置 Markdown 解析器，完美呈现标题、列表、链接等格式。
-- **轻量级架构**：后端采用 FastAPI，数据库使用 SQLite，前端为纯 HTML/Vue3，部署极其简单。
+- 原生日报流水线：Brave 负责发现，Firecrawl 负责抽取，OpenRouter 负责检索规划、候选评分与日报成稿。
+- 结构化数据：除 Markdown 外，同时保存 retrieval runs、articles、report items。
+- 正式前端：`frontend/` 为 Vue 3 + Vite + TypeScript 工程，包含今日日报、历史日报、研究助手、后台。
+- 账号体系：邮箱注册/登录、服务端 session、单管理员后台。
+- 聊天能力：优先使用本地日报库回答，命中不足时可走外部检索与 OpenAI 兼容模型。
 
-## 🛠 技术栈
+## 技术栈
 
-- **后端**：Python 3.12+, FastAPI, Uvicorn, APScheduler, HTTPX
-- **数据库**：SQLite
-- **前端**：HTML5, Vue 3, Tailwind CSS, Marked.js (全部通过 CDN 引入，无需构建)
-- **AI 服务**：Coze Workflow API (SSE 流式响应)
+- 后端：FastAPI、APScheduler、SQLAlchemy、HTTPX
+- 数据库：SQLite
+- 前端：Vue 3、Vite、TypeScript、Vue Router、Pinia
+- 检索：Brave Search API、Firecrawl API
+- 模型接口：OpenRouter（OpenAI-compatible）
 
-## 🚀 快速开始
+## 快速开始
 
-### 1. 环境准备
-
-确保你的系统已安装 Python 3.8 或更高版本。
-
-### 2. 安装依赖
-
-在项目根目录下运行：
+### 1. 安装 Python 依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. 配置 Coze 信息
-
-项目会优先从项目根目录下的 `.env` 文件或系统环境变量读取 Coze 配置。可先复制一份示例文件：
+### 2. 配置环境变量
 
 ```bash
 cp .env.example .env
 ```
 
-然后填写以下变量：
+最少建议配置：
 
 ```dotenv
-COZE_ACCESS_TOKEN=你的 Coze Token
-COZE_WORKFLOW_ID=你的 Workflow ID
-COZE_API_URL=https://api.coze.cn/v1/workflow/stream_run
+DATABASE_URL=sqlite:///./news.db
+BRAVE_API_KEY=你的 Brave API Key
+FIRECRAWL_API_KEY=你的 Firecrawl API Key
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=admin123456
+REPORT_HOUR=10
+REPORT_MINUTE=0
+SHADOW_MODE=true
+OPENROUTER_API_KEY=你的 OpenRouter API Key
+REPORT_PRIMARY_MODEL=google/gemini-3-flash-preview
+REPORT_FALLBACK_MODEL=minimax/minimax-m2.7
+SCRAPE_TIMEOUT_SECONDS=20
+SCRAPE_CONCURRENCY=3
 ```
 
-如果未显式设置 `COZE_WORKFLOW_ID` 和 `COZE_API_URL`，代码会分别回退到当前仓库内置的工作流 ID 和中国区 workflow 接口地址。
+### 3. 安装并构建前端
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+后端会优先托管 `frontend/dist`；如果没有构建产物，则回退到旧版 `static/` 页面。
 
 ### 4. 启动服务
 
 ```bash
-# 默认运行在 8000 端口
-python main.py
-
-# 或者指定端口运行
-python -m uvicorn main:app --host 0.0.0.0 --port 8001
+python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-### 5. 访问应用
+访问 `http://localhost:8000`。
 
-打开浏览器访问：http://localhost:8000 (或你指定的端口)
+## 默认管理员
 
-## 📂 目录结构
+- 邮箱：`.env` 中的 `ADMIN_EMAIL`
+- 密码：`.env` 中的 `ADMIN_PASSWORD`
 
-```
-d:/workflow_news/
-├── coze.py                 # Coze API 调用与 SSE 解析逻辑
-├── database.py             # SQLite 数据库操作封装
-├── main.py                 # FastAPI 应用入口、路由与定时任务
-├── requirements.txt        # Python 依赖列表
-├── .env.example            # 环境变量示例
-├── news.db                 # SQLite 数据库文件（自动生成）
-├── static/                 # 前端静态资源
-│   └── index.html          # 单页应用入口
-├── DEPLOY.md               # 部署指南
-└── README.md               # 项目说明文档
-```
+首次启动会自动创建管理员账号；SQLite 旧库会自动补齐当前版本所需的 `sources` 扩展字段。
 
-## 📝 API 接口说明
+## 主要接口
 
-| 方法 | 路径                  | 描述                                 |
-| ---- | --------------------- | ------------------------------------ |
-| GET  | `/api/news/today`   | 获取当日最新资讯                     |
-| GET  | `/api/news/history` | 获取所有有数据的历史日期列表         |
-| GET  | `/api/news/{date}`  | 获取指定日期的资讯详情               |
-| POST | `/api/regenerate`   | 手动触发 Coze 工作流重新生成当日资讯 |
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/me`
+- `GET /api/reports`
+- `GET /api/reports/today`
+- `POST /api/reports/run`
+- `GET /api/conversations`
+- `POST /api/conversations`
+- `POST /api/chat/stream`
+- `GET /api/retrieval-runs`
+- `GET /api/admin/source-rules`
+- `PUT /api/admin/source-rules`
+- `GET /api/admin/report-settings`
+- `PUT /api/admin/report-settings`
 
-## ⚠️ 注意事项
+兼容旧接口仍保留：
 
-- **首次运行**：数据库为空，页面会提示“暂无资讯”。请点击页面上的“立即生成”按钮或等待次日定时任务执行。
-- **端口占用**：如果启动失败提示端口被占用，请修改 `main.py` 中的端口号或使用命令行参数指定新端口。
-- **Coze 调用失败**：优先检查 `.env` 中的 `COZE_ACCESS_TOKEN` 是否有效，以及对应 workflow 内部依赖的搜索/插件工具是否可用。
+- `GET /api/news/today`
+- `GET /api/news/history`
+- `GET /api/news/{date}`
+- `POST /api/regenerate`
+
+## 开发说明
+
+- 后端测试：`python -m unittest discover -s tests -v`
+- 前端构建：`cd frontend && npm run build`
+- 本轮优先完成“完全脱离 Coze 的日报链路”；聊天仍维持本地优先的轻量能力。
+- 如果原生日报为空，优先检查 `BRAVE_API_KEY`、`FIRECRAWL_API_KEY`、`OPENROUTER_API_KEY`、来源规则和后台调度配置。

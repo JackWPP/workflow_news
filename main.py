@@ -1,84 +1,668 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from __future__ import annotations
+
+import json
+import logging
+from contextlib import asynccontextmanager
+from datetime import date
+from pathlib import Path
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-import logging
-import os
-from datetime import datetime
-from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
-from database import init_db, save_news, get_today_news, get_latest_news_by_date, get_history_dates
-from coze import fetch_coze_news
+from app.bootstrap import init_db
+from app.config import settings
+from app.database import session_scope
+from app.models import FavoriteConversation, FavoriteReport, RetrievalRun
+from app.schemas import (
+    AuthRequest,
+    ChatMessageResponse,
+    ChatPromptRequest,
+    ConversationCreate,
+    ConversationDetailOut,
+    ConversationOut,
+    FavoriteResponse,
+    MessageCreate,
+    MessageOut,
+    QualityFeedbackCreate,
+    QualityFeedbackOut,
+    ReportDetailOut,
+    ReportItemOut,
+    ReportRunRequest,
+    ReportSettingsOut,
+    ReportSettingsUpdate,
+    RetrievalCandidateOut,
+    RetrievalQueryOut,
+    RetrievalRunOut,
+    SourceOut,
+    SourceRulesPayload,
+    UserOut,
+)
+from app.services.auth import create_login_session, get_current_user, logout_session, register_user
+from app.services.chat import ChatService, append_message, create_conversation
+from app.services.daily_report_agent import DailyReportAgent
+from app.services.evaluation import enrich_debug_payload
+# pipeline kept for direct admin access (DailyReportAgent uses it as fallback internally)
+from app.services.pipeline import NativeReportPipeline
+from app.services.repository import (
+    create_quality_feedback,
+    favorite_conversation_ids,
+    favorite_report_ids,
+    get_conversation,
+    get_latest_report_for_date,
+    get_report_by_id,
+    get_report_settings,
+    get_evaluation_summary,
+    get_quality_overview,
+    list_conversations,
+    list_history_dates,
+    list_quality_feedback,
+    list_reports,
+    list_retrieval_candidates,
+    list_retrieval_queries,
+    list_retrieval_runs,
+    list_sources,
+    replace_sources,
+    update_report_settings,
+)
+from app.utils import now_local
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Scheduler
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone=settings.timezone)
+# Use DailyReportAgent as the primary pipeline (falls back to NativeReportPipeline on error)
+pipeline = DailyReportAgent() if settings.agent_mode else NativeReportPipeline()
+chat_service = ChatService()
+SESSION_COOKIE = "session_token"
+FRONTEND_DIR = Path("frontend/dist")
+LEGACY_STATIC_DIR = Path("static")
 
-async def scheduled_news_fetch():
-    logger.info("Starting scheduled news fetch...")
-    content = await fetch_coze_news()
-    if content:
-        save_news(content)
-        logger.info("News fetched and saved successfully.")
-    else:
-        logger.error("Failed to fetch news.")
+
+async def scheduled_report_run():
+    logger.info("Starting scheduled native report run.")
+    with session_scope() as session:
+        await pipeline.run(session, shadow_mode=None)
+    logger.info("Scheduled native report run finished.")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     init_db()
-    
-    # Schedule job: Every day at 10:00 AM
-    trigger = CronTrigger(hour=10, minute=0)
-    scheduler.add_job(scheduled_news_fetch, trigger, id="daily_news_fetch", replace_existing=True)
+    trigger = CronTrigger(hour=settings.report_hour, minute=settings.report_minute, timezone=settings.timezone)
+    scheduler.add_job(scheduled_report_run, trigger, id="daily_native_report", replace_existing=True)
     scheduler.start()
-    logger.info("Scheduler started. Job scheduled for 10:00 AM daily.")
-    
+    logger.info("Scheduler started. Job scheduled for %02d:%02d daily.", settings.report_hour, settings.report_minute)
     yield
-    
-    # Shutdown
     scheduler.shutdown()
 
-app = FastAPI(lifespan=lifespan)
 
-# API Endpoints
+app = FastAPI(title="Workflow News Native Pipeline", lifespan=lifespan)
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=settings.session_days * 24 * 60 * 60,
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(SESSION_COOKIE)
+
+
+def _current_user_or_401(session, request: Request):
+    user = get_current_user(session, request.cookies.get(SESSION_COOKIE))
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+def _admin_user_or_403(session, request: Request):
+    user = _current_user_or_401(session, request)
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def _serialize_me(session, user) -> dict:
+    return {
+        **UserOut.model_validate(user).model_dump(),
+        "favorite_report_ids": favorite_report_ids(session, user.id),
+        "favorite_conversation_ids": favorite_conversation_ids(session, user.id),
+    }
+
+
+@app.post("/api/auth/register")
+async def auth_register(payload: AuthRequest, response: Response):
+    try:
+        with session_scope() as session:
+            user = register_user(session, payload.email, payload.password)
+            _, auth_session = create_login_session(session, payload.email, payload.password)
+            result = _serialize_me(session, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _set_session_cookie(response, auth_session.token)
+    return result
+
+
+@app.post("/api/auth/login")
+async def auth_login(payload: AuthRequest, response: Response):
+    try:
+        with session_scope() as session:
+            user, auth_session = create_login_session(session, payload.email, payload.password)
+            result = _serialize_me(session, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    _set_session_cookie(response, auth_session.token)
+    return result
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    with session_scope() as session:
+        logout_session(session, request.cookies.get(SESSION_COOKIE))
+    _clear_session_cookie(response)
+    return {"status": "ok"}
+
+
+@app.get("/api/me")
+async def read_me(request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        return _serialize_me(session, user)
+
+
+import asyncio as _asyncio
+import json as _json_mod
+
+# ── 报告运行状态管理（SSE 实时推送） ──────────────────────────
+_run_event_queues: dict[int, _asyncio.Queue] = {}
+_running_task: _asyncio.Task | None = None
+_running_agent_run_id: int | None = None
+
+
+@app.post("/api/reports/run")
+async def run_report(payload: ReportRunRequest):
+    """异步启动报告生成，立即返回 run IDs。前端通过 SSE 端点跟踪进度。"""
+    global _running_task, _running_agent_run_id
+
+    if _running_task and not _running_task.done():
+        raise HTTPException(status_code=409, detail="A report is already being generated")
+
+    logger.info("Manual native report run requested (async mode).")
+
+    # 预创建 DB 记录以获取 ID
+    with session_scope() as session:
+        from app.models import AgentRun
+        run_record = RetrievalRun(
+            run_date=now_local().date(),
+            status="running",
+        )
+        session.add(run_record)
+        session.flush()
+        run_id = run_record.id
+        session.commit()
+
+    # 创建事件队列
+    event_queue: _asyncio.Queue = _asyncio.Queue()
+
+    async def _run_pipeline():
+        global _running_task, _running_agent_run_id
+        try:
+            with session_scope() as session:
+                report = await pipeline.run(
+                    session,
+                    shadow_mode=payload.shadow_mode,
+                    mode=payload.mode,
+                    **({"event_queue": event_queue} if hasattr(pipeline, '_llm_client') else {}),
+                )
+                event_queue.put_nowait({
+                    "type": "complete",
+                    "report_id": report.id,
+                    "status": report.status,
+                })
+        except Exception as exc:
+            logger.error("Pipeline failed: %s", exc, exc_info=True)
+            event_queue.put_nowait({"type": "error", "message": str(exc)[:500]})
+        finally:
+            # 发送结束标记
+            event_queue.put_nowait(None)
+            _running_task = None
+            _running_agent_run_id = None
+            # 清理队列引用（延迟清理以允许 SSE 消费完）
+            await _asyncio.sleep(30)
+            _run_event_queues.pop(run_id, None)
+
+    _running_task = _asyncio.create_task(_run_pipeline())
+    _run_event_queues[run_id] = event_queue
+    _running_agent_run_id = run_id
+
+    return JSONResponse({"run_id": run_id, "status": "running"})
+
+
+@app.get("/api/reports/run/{run_id}/stream")
+async def stream_report_progress(run_id: int):
+    """SSE 端点：实时推送报告生成进度。"""
+    event_queue = _run_event_queues.get(run_id)
+    if not event_queue:
+        raise HTTPException(status_code=404, detail="No active run found for this ID")
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    event = await _asyncio.wait_for(event_queue.get(), timeout=120.0)
+                except _asyncio.TimeoutError:
+                    # 发送心跳保持连接
+                    yield ": heartbeat\n\n"
+                    continue
+
+                if event is None:
+                    # 结束标记
+                    yield "event: done\ndata: {}\n\n"
+                    break
+
+                event_type = event.get("type", "step")
+                yield f"event: {event_type}\ndata: {_json_mod.dumps(event, ensure_ascii=False, default=str)}\n\n"
+        except _asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/reports/run/status")
+async def get_run_status():
+    """查询当前是否有运行中的报告生成。"""
+    if _running_task and not _running_task.done():
+        return {"status": "running", "run_id": _running_agent_run_id}
+    return {"status": "idle", "run_id": None}
+
+
+@app.get("/api/reports/today", response_model=ReportDetailOut)
+async def get_today_report():
+    with session_scope() as session:
+        report = get_latest_report_for_date(session, now_local().date())
+        if report is None:
+            raise HTTPException(status_code=404, detail="No report found for today")
+        return ReportDetailOut.model_validate(report)
+
+
+@app.get("/api/reports")
+async def get_report_list(limit: int = 30):
+    with session_scope() as session:
+        reports = list_reports(session, limit=max(1, min(limit, 100)))
+        return {"reports": [ReportDetailOut.model_validate(report).model_dump(mode="json") for report in reports]}
+
+
+@app.get("/api/reports/{report_id}", response_model=ReportDetailOut)
+async def get_report(report_id: int):
+    with session_scope() as session:
+        report = get_report_by_id(session, report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="Report not found")
+        return ReportDetailOut.model_validate(report)
+
+
+@app.get("/api/reports/{report_id}/items")
+async def get_report_items(report_id: int):
+    with session_scope() as session:
+        report = get_report_by_id(session, report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="Report not found")
+        return {"items": [ReportItemOut.model_validate(item).model_dump() for item in report.items]}
+
+
+@app.get("/api/retrieval-runs")
+async def get_retrieval_run_list(request: Request):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        runs = list_retrieval_runs(session)
+        for run in runs:
+            run.debug_payload = enrich_debug_payload(run.debug_payload, report_status=run.status)
+        return {"runs": [RetrievalRunOut.model_validate(run).model_dump() for run in runs]}
+
+
+@app.get("/api/retrieval-runs/{run_id}", response_model=RetrievalRunOut)
+async def get_retrieval_run(run_id: int, request: Request):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        run = session.get(RetrievalRun, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Retrieval run not found")
+        run.debug_payload = enrich_debug_payload(run.debug_payload, report_status=run.status)
+        return RetrievalRunOut.model_validate(run)
+
+
+@app.get("/api/retrieval-runs/{run_id}/queries")
+async def get_retrieval_queries(run_id: int, request: Request):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        return {"queries": [RetrievalQueryOut.model_validate(query).model_dump() for query in list_retrieval_queries(session, run_id)]}
+
+
+@app.get("/api/retrieval-runs/{run_id}/candidates")
+async def get_retrieval_candidates(run_id: int, request: Request):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        return {
+            "candidates": [
+                RetrievalCandidateOut.model_validate(candidate).model_dump()
+                for candidate in list_retrieval_candidates(session, run_id)
+            ]
+        }
+
+
+@app.get("/api/admin/source-rules")
+async def get_source_rules(request: Request):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        return {"sources": [SourceOut.model_validate(source).model_dump() for source in list_sources(session)]}
+
+
+@app.put("/api/admin/source-rules")
+async def put_source_rules(payload: SourceRulesPayload, request: Request):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        sources = replace_sources(session, [source.model_dump() for source in payload.sources])
+        return {"sources": [SourceOut.model_validate(source).model_dump() for source in sources]}
+
+
+@app.get("/api/admin/report-settings", response_model=ReportSettingsOut)
+async def get_admin_report_settings(request: Request):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        payload = get_report_settings(session) or {
+            "report_hour": settings.report_hour,
+            "report_minute": settings.report_minute,
+            "shadow_mode": settings.shadow_mode,
+            "scrape_timeout_seconds": settings.scrape_timeout_seconds,
+            "scrape_concurrency": settings.scrape_concurrency,
+            "max_extractions_per_run": settings.max_extractions_per_run,
+            "report_primary_model": settings.report_primary_model,
+            "report_fallback_model": settings.report_fallback_model,
+        }
+        return payload
+
+
+@app.put("/api/admin/report-settings", response_model=ReportSettingsOut)
+async def put_admin_report_settings(payload: ReportSettingsUpdate, request: Request):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        updated = update_report_settings(session, payload.model_dump())
+
+    scheduler.reschedule_job(
+        "daily_native_report",
+        trigger=CronTrigger(hour=updated["report_hour"], minute=updated["report_minute"], timezone=settings.timezone),
+    )
+    return updated
+
+
+@app.get("/api/admin/quality-feedback")
+async def get_admin_quality_feedback(request: Request, limit: int = 50):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        items = list_quality_feedback(session, limit=max(1, min(limit, 200)))
+        return {"items": [QualityFeedbackOut.model_validate(item).model_dump(mode="json") for item in items]}
+
+
+@app.post("/api/admin/quality-feedback", response_model=QualityFeedbackOut)
+async def post_admin_quality_feedback(payload: QualityFeedbackCreate, request: Request):
+    with session_scope() as session:
+        user = _admin_user_or_403(session, request)
+        try:
+            item = create_quality_feedback(
+                session,
+                user.id,
+                payload.target_type,
+                payload.target_id,
+                payload.label,
+                payload.reason,
+                payload.note,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return QualityFeedbackOut.model_validate(item)
+
+
+@app.get("/api/admin/quality-overview")
+async def get_admin_quality_overview(request: Request, days: int = 7):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        return get_quality_overview(session, days=max(1, min(days, 30)))
+
+
+@app.get("/api/admin/evaluation-summary")
+async def get_admin_evaluation_summary(request: Request, days: int = 7):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        return get_evaluation_summary(session, days=max(1, min(days, 30)))
+
+
+@app.get("/api/conversations")
+async def get_conversation_list(request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        conversations = list_conversations(session, user.id)
+        favorite_ids = set(favorite_conversation_ids(session, user.id))
+        return {
+            "conversations": [
+                {**ConversationOut.model_validate(conversation).model_dump(), "favorited": conversation.id in favorite_ids}
+                for conversation in conversations
+            ]
+        }
+
+
+@app.post("/api/conversations", response_model=ConversationOut)
+async def post_conversation(payload: ConversationCreate, request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        conversation = create_conversation(session, user.id, payload.title)
+        return ConversationOut.model_validate(conversation)
+
+
+@app.get("/api/conversations/{conversation_id}", response_model=ConversationDetailOut)
+async def get_conversation_detail(conversation_id: int, request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        conversation = get_conversation(session, conversation_id, user.id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return ConversationDetailOut.model_validate(conversation)
+
+
+@app.post("/api/conversations/{conversation_id}/messages", response_model=ChatMessageResponse)
+async def post_conversation_message(conversation_id: int, payload: MessageCreate, request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        conversation = get_conversation(session, conversation_id, user.id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        user_message = append_message(session, conversation, "user", payload.content)
+        answer, citations, mode = await chat_service.build_answer(session, payload.content, conversation.retrieval_mode)
+        assistant_message = append_message(session, conversation, "assistant", answer, citations=citations, retrieval_mode=mode)
+        return ChatMessageResponse(
+            user_message=MessageOut.model_validate(user_message),
+            assistant_message=MessageOut.model_validate(assistant_message),
+        )
+
+
+@app.post("/api/chat/stream")
+async def post_chat_stream(payload: ChatPromptRequest, request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        if payload.conversation_id is None:
+            conversation = create_conversation(session, user.id, payload.content[:20] or "新对话")
+        else:
+            conversation = get_conversation(session, payload.conversation_id, user.id)
+            if conversation is None:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+
+        user_message = append_message(session, conversation, "user", payload.content)
+        answer, citations, mode = await chat_service.build_answer(session, payload.content, conversation.retrieval_mode)
+        assistant_message = append_message(session, conversation, "assistant", answer, citations=citations, retrieval_mode=mode)
+
+        body = {
+            "conversation_id": conversation.id,
+            "user_message": MessageOut.model_validate(user_message).model_dump(mode="json"),
+            "assistant_message": MessageOut.model_validate(assistant_message).model_dump(mode="json"),
+            "content": answer,
+            "citations": citations,
+            "retrieval_mode": mode,
+        }
+
+    async def event_stream():
+        yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/favorites/reports/{report_id}", response_model=FavoriteResponse)
+async def favorite_report(report_id: int, request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        report = get_report_by_id(session, report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="Report not found")
+        exists = session.query(FavoriteReport).filter_by(user_id=user.id, report_id=report_id).first()
+        if exists is None:
+            session.add(FavoriteReport(user_id=user.id, report_id=report_id))
+        return FavoriteResponse(status="favorited", item_id=report_id)
+
+
+@app.delete("/api/favorites/reports/{report_id}", response_model=FavoriteResponse)
+async def unfavorite_report(report_id: int, request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        favorite = session.query(FavoriteReport).filter_by(user_id=user.id, report_id=report_id).first()
+        if favorite is not None:
+            session.delete(favorite)
+        return FavoriteResponse(status="unfavorited", item_id=report_id)
+
+
+@app.post("/api/favorites/conversations/{conversation_id}", response_model=FavoriteResponse)
+async def favorite_conversation(conversation_id: int, request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        conversation = get_conversation(session, conversation_id, user.id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        exists = session.query(FavoriteConversation).filter_by(user_id=user.id, conversation_id=conversation_id).first()
+        if exists is None:
+            session.add(FavoriteConversation(user_id=user.id, conversation_id=conversation_id))
+        return FavoriteResponse(status="favorited", item_id=conversation_id)
+
+
+@app.delete("/api/favorites/conversations/{conversation_id}", response_model=FavoriteResponse)
+async def unfavorite_conversation(conversation_id: int, request: Request):
+    with session_scope() as session:
+        user = _current_user_or_401(session, request)
+        favorite = session.query(FavoriteConversation).filter_by(user_id=user.id, conversation_id=conversation_id).first()
+        if favorite is not None:
+            session.delete(favorite)
+        return FavoriteResponse(status="unfavorited", item_id=conversation_id)
+
 
 @app.get("/api/news/today")
 async def read_today_news():
-    news = get_today_news()
-    if not news:
-        return {"content": None, "date": datetime.now().strftime("%Y-%m-%d")}
-    return news
+    with session_scope() as session:
+        report = get_latest_report_for_date(session, now_local().date())
+        if report is None:
+            return {"content": None, "date": now_local().date().isoformat(), "status": "missing"}
+        return {
+            "id": report.id,
+            "date": report.report_date.isoformat(),
+            "content": report.markdown_content,
+            "status": report.status,
+            "summary": report.summary,
+        }
+
 
 @app.get("/api/news/history")
 async def read_history():
-    dates = get_history_dates()
-    return {"dates": dates}
+    with session_scope() as session:
+        return {"dates": [value.isoformat() for value in list_history_dates(session)]}
 
-@app.get("/api/news/{date}")
-async def read_news_by_date(date: str):
-    news = get_latest_news_by_date(date)
-    if not news:
-        raise HTTPException(status_code=404, detail="News not found for this date")
-    return news
+
+@app.get("/api/news/{report_date}")
+async def read_news_by_date(report_date: str):
+    try:
+        target_date = date.fromisoformat(report_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD") from exc
+    with session_scope() as session:
+        report = get_latest_report_for_date(session, target_date)
+        if report is None:
+            raise HTTPException(status_code=404, detail="News not found for this date")
+        return {
+            "id": report.id,
+            "date": report.report_date.isoformat(),
+            "content": report.markdown_content,
+            "status": report.status,
+            "summary": report.summary,
+        }
+
 
 @app.post("/api/regenerate")
 async def regenerate_news():
-    logger.info("Manual regeneration requested.")
-    content = await fetch_coze_news()
-    if content:
-        save_news(content)
-        return {"status": "success", "message": "News regenerated successfully"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to fetch news from Coze")
+    report = await run_report(ReportRunRequest(shadow_mode=False))
+    return {
+        "status": "success",
+        "message": "Native report regenerated successfully",
+        "report_id": report.id,
+        "report_status": report.status,
+    }
 
-# Serve Static Files (Frontend)
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+
+# ── Agent Trace API ───────────────────────────────────────────────────────────
+
+@app.get("/api/agent-runs")
+async def list_agent_runs_api(request: Request, limit: int = 20):
+    from app.services.agent_observability import list_agent_runs
+    with session_scope() as session:
+        _current_user_or_401(session, request)
+        return {"runs": list_agent_runs(session, limit=min(limit, 50))}
+
+
+@app.get("/api/agent-runs/{run_id}")
+async def get_agent_run_trace_api(run_id: int, request: Request):
+    from app.services.agent_observability import get_agent_run_trace
+    with session_scope() as session:
+        _current_user_or_401(session, request)
+        trace = get_agent_run_trace(session, run_id)
+        if trace is None:
+            raise HTTPException(status_code=404, detail=f"AgentRun {run_id} not found")
+        return trace
+
+
+@app.get("/api/agent-runs/{run_id}/steps/{step_id}")
+async def get_agent_step_detail_api(run_id: int, step_id: int, request: Request):
+    from app.services.agent_observability import get_agent_step_detail
+    with session_scope() as session:
+        _current_user_or_401(session, request)
+        detail = get_agent_step_detail(session, step_id)
+        if detail is None or detail.get("agent_run_id") != run_id:
+            raise HTTPException(status_code=404, detail=f"AgentStep {step_id} not found")
+        return detail
+
+
+app.mount(
+    "/",
+    StaticFiles(directory=str(FRONTEND_DIR if FRONTEND_DIR.exists() else LEGACY_STATIC_DIR), html=True),
+    name="static",
+)
+
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
