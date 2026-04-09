@@ -28,6 +28,7 @@ from app.services.harness import Harness
 from app.services.llm_client import LLMClient, LLMResponse, ToolCallRequest
 from app.services.tools import FinishTool, Tool, ToolCall, ToolResult
 from app.services.working_memory import StepRecord, WorkingMemory
+from app.utils import now_local
 
 if TYPE_CHECKING:
     pass
@@ -43,11 +44,13 @@ class AgentResult:
     summary: str
     articles: list[dict[str, Any]] = field(default_factory=list)
     sections_content: dict[str, str] = field(default_factory=dict)
+    editorial: str = ""
     memory_snapshot: dict[str, Any] = field(default_factory=dict)
     harness_status: dict[str, Any] = field(default_factory=dict)
     finished_reason: str = "unknown"   # "complete" | "budget_exhausted" | "timeout" | "error" | "finish_tool"
     step_count: int = 0
     total_tokens: int = 0
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_publishable(self) -> bool:
@@ -62,6 +65,7 @@ class AgentResult:
             "sections": list(self.sections_content.keys()),
             "harness": self.harness_status,
             "memory": self.memory_snapshot,
+            "diagnostics": self.diagnostics,
         }
 
 
@@ -89,7 +93,6 @@ class AgentCore:
     async def run(
         self,
         task: str,
-        session: Any | None = None,
         agent_run_id: int | None = None,
         memory: WorkingMemory | None = None,
     ) -> AgentResult:
@@ -98,7 +101,6 @@ class AgentCore:
 
         Args:
             task: 给 Agent 的任务描述（自然语言）
-            session: 数据库会话（用于持久化 AgentStep，可选）
             agent_run_id: AgentRun 的数据库 ID（用于关联 AgentStep）
             memory: 外部 WorkingMemory（可选，用于 multi-agent 共享状态）
 
@@ -109,6 +111,8 @@ class AgentCore:
         total_tokens = 0
         step_index = 0
         consecutive_finish_rejects = 0
+        consecutive_no_tool_responses = 0
+        llm_no_tool_stall_count = 0
         _wind_down_warned = False
 
         # 构建初始 message history
@@ -161,11 +165,42 @@ class AgentCore:
                 if finish_result:
                     logger.info("[AgentCore] Agent finished via finish tool at step %d", step_index)
                     return self._build_result(
-                        memory, finish_result, "finish_tool", step_index, total_tokens
+                        memory,
+                        finish_result,
+                        "finish_tool",
+                        step_index,
+                        total_tokens,
+                        diagnostics={"llm_no_tool_stall_count": llm_no_tool_stall_count},
                     )
                 # 纯文本回复（没有工具调用），继续循环但记录
-                messages.append({"role": "assistant", "content": llm_response.content})
+                # 注意：必须携带 reasoning_content，否则 kimi-k2.5 在后续请求中会报 400
+                consecutive_no_tool_responses += 1
+                messages.append({
+                    "role": "assistant",
+                    "content": llm_response.content,
+                    "reasoning_content": llm_response.reasoning_content or llm_response.content or "[assistant response]",
+                })
                 logger.debug("[AgentCore] LLM gave text response without tool calls at step %d", step_index)
+                if consecutive_no_tool_responses >= 3:
+                    llm_no_tool_stall_count += 1
+                    logger.warning("[AgentCore] Agent stalled with %d consecutive no-tool replies", consecutive_no_tool_responses)
+                    if self._event_queue:
+                        try:
+                            self._event_queue.put_nowait({
+                                "type": "warning",
+                                "warning_code": "llm_no_tool_stall",
+                                "message": "LLM 连续多轮未调用工具，已提前收敛。",
+                                "step_index": step_index,
+                            })
+                        except Exception:
+                            pass
+                    return self._build_fallback_result(
+                        memory,
+                        "llm_no_tool_stall",
+                        step_index,
+                        total_tokens,
+                        diagnostics={"llm_no_tool_stall_count": llm_no_tool_stall_count},
+                    )
                 # 如果连续没有工具调用，给出提示
                 if step_index > 3:
                     messages.append({
@@ -177,6 +212,7 @@ class AgentCore:
             # === Step 3: 执行工具调用 ===
             tool_result_messages: list[dict[str, Any]] = []
             consecutive_finish_rejects = 0  # 只要有非 finish 工具调用就重置
+            consecutive_no_tool_responses = 0
 
             # 把 LLM 的 assistant 消息加入历史（包含 tool_calls）
             assistant_message = self._build_assistant_message(llm_response)
@@ -280,8 +316,8 @@ class AgentCore:
                 memory.record_step(step_record)
 
                 # 持久化 AgentStep
-                if session is not None and agent_run_id is not None:
-                    self._persist_step(session, agent_run_id, step_record, llm_response.thought)
+                if agent_run_id is not None:
+                    self._persist_step(agent_run_id, step_record, llm_response.thought)
 
                 # 在 memory context summary 后面附上工具结果
                 context_update = f"\n\n[当前状态]\n{memory.to_context_summary()}"
@@ -300,7 +336,12 @@ class AgentCore:
                 if tool_call.tool_name == "finish" and tool_result.success:
                     logger.info("[AgentCore] finish tool executed at step %d", step_index)
                     return self._build_result(
-                        memory, tool_result.data, "finish_tool", step_index, total_tokens
+                        memory,
+                        tool_result.data,
+                        "finish_tool",
+                        step_index,
+                        total_tokens,
+                        diagnostics={"llm_no_tool_stall_count": llm_no_tool_stall_count},
                     )
 
                 logger.debug("[AgentCore] Step %d [%s]: %s", step_index, tool_call.tool_name, tool_result.summary[:100])
@@ -323,7 +364,13 @@ class AgentCore:
         logger.info("[AgentCore] Agent stopped: %s at step %d", finished_reason, step_index)
 
         # 尝试用当前 memory 生成兜底报告
-        return self._build_fallback_result(memory, finished_reason, step_index, total_tokens)
+        return self._build_fallback_result(
+            memory,
+            finished_reason,
+            step_index,
+            total_tokens,
+            diagnostics={"llm_no_tool_stall_count": llm_no_tool_stall_count},
+        )
 
     def _build_system_message(self) -> str:
         """构建包含工具说明和预算信息的 system message。"""
@@ -432,7 +479,7 @@ class AgentCore:
 
         # 始终携带 reasoning_content（即使是空字符串），避免 kimi-k2.5 报错：
         # "thinking is enabled but reasoning_content is missing"
-        msg["reasoning_content"] = llm_response.reasoning_content or ""
+        msg["reasoning_content"] = llm_response.reasoning_content or llm_response.content or "[tool planning]"
 
         if llm_response.tool_calls:
             msg["tool_calls"] = [
@@ -479,6 +526,7 @@ class AgentCore:
         finished_reason: str,
         step_count: int,
         total_tokens: int,
+        diagnostics: dict[str, Any] | None = None,
     ) -> AgentResult:
         """从 finish 工具的数据和 memory 构建最终结果。"""
         self._enrich_articles_with_images(memory)
@@ -495,6 +543,7 @@ class AgentCore:
             success=True,
             title=finish_data.get("title", "高分子加工全视界日报"),
             summary=finish_data.get("summary", ""),
+            editorial=finish_data.get("editorial", ""),
             articles=articles,
             sections_content=merged_sections,
             memory_snapshot=memory.snapshot(),
@@ -502,6 +551,7 @@ class AgentCore:
             finished_reason=finished_reason,
             step_count=step_count,
             total_tokens=total_tokens,
+            diagnostics=diagnostics or {},
         )
 
     def _build_fallback_result(
@@ -510,6 +560,7 @@ class AgentCore:
         finished_reason: str,
         step_count: int,
         total_tokens: int,
+        diagnostics: dict[str, Any] | None = None,
     ) -> AgentResult:
         """Budget/timeout 耗尽时，用当前 memory 生成兆底结果。"""
         self._enrich_articles_with_images(memory)
@@ -517,8 +568,7 @@ class AgentCore:
         success = len(articles) >= 1
 
         if articles:
-            from datetime import date
-            title = f"高分子加工全视界日报（{date.today().isoformat()}）"
+            title = f"高分子加工全视界日报（{now_local().date().isoformat()}）"
         else:
             title = "日报生成未完成"
 
@@ -533,33 +583,40 @@ class AgentCore:
             finished_reason=finished_reason,
             step_count=step_count,
             total_tokens=total_tokens,
+            diagnostics=diagnostics or {},
         )
 
     def _persist_step(
         self,
-        session: Any,
         agent_run_id: int,
         step_record: StepRecord,
         thought: str,
     ) -> None:
-        """持久化 AgentStep 到数据库。"""
+        """
+        持久化 AgentStep 到数据库。
+
+        使用独立短生命周期 session，避免长事务占用 SQLite 写锁。
+        """
         try:
             from app.models import AgentStep
-            step = AgentStep(
-                agent_run_id=agent_run_id,
-                stage_name=step_record.tool_name,
-                status="completed" if not step_record.harness_blocked else "blocked",
-                round_index=step_record.step_index,
-                decision_type="tool_call",
-                decision_summary=step_record.result_summary[:500],
-                duration_seconds=step_record.duration_seconds,
-                fallback_triggered=step_record.harness_blocked,
-                input_payload={"arguments": step_record.arguments, "thought": thought[:1000] if thought else ""},
-                output_payload={"result_summary": step_record.result_summary[:500]},
-                error_message=step_record.block_reason if step_record.harness_blocked else None,
-            )
-            session.add(step)
-            session.flush()
+            from app.database import session_scope
+
+            with session_scope() as step_session:
+                step = AgentStep(
+                    agent_run_id=agent_run_id,
+                    stage_name=step_record.tool_name,
+                    status="completed" if not step_record.harness_blocked else "blocked",
+                    round_index=step_record.step_index,
+                    decision_type="tool_call",
+                    decision_summary=step_record.result_summary[:500],
+                    duration_seconds=step_record.duration_seconds,
+                    fallback_triggered=step_record.harness_blocked,
+                    input_payload={"arguments": step_record.arguments, "thought": thought[:1000] if thought else ""},
+                    output_payload={"result_summary": step_record.result_summary[:500]},
+                    error_message=step_record.block_reason if step_record.harness_blocked else None,
+                )
+                step_session.add(step)
+                step_session.flush()
         except Exception as exc:
             logger.warning("[AgentCore] Failed to persist AgentStep: %s", exc)
 

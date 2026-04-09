@@ -39,12 +39,21 @@ class CircuitBreaker:
         if self._failures >= self._threshold:
             self._state = "open"
 
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "state": self._state,
+            "failure_count": self._failures,
+            "reset_timeout_seconds": self._reset_timeout,
+        }
+
 
 class BraveSearchClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
         self.api_key = api_key or settings.brave_api_key
         self.base_url = (base_url or settings.brave_base_url).rstrip("/")
         self._circuit_breaker = CircuitBreaker()
+        self._request_count = 0
+        self._last_error = ""
 
     @property
     def enabled(self) -> bool:
@@ -61,18 +70,22 @@ class BraveSearchClient:
             "Accept": "application/json",
             "X-Subscription-Token": self.api_key,
         }
+        self._request_count += 1
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=20.0) as client:
                 response = await client.get(f"{self.base_url}{path}", params=params, headers=headers)
                 response.raise_for_status()
                 data = response.json()
             self._circuit_breaker.record_success()
+            self._last_error = ""
             return data
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code != 422:
+            self._last_error = f"http_{exc.response.status_code}"
+            if exc.response.status_code not in {402, 422}:
                 self._circuit_breaker.record_failure()
             raise
         except Exception:
+            self._last_error = "request_failed"
             self._circuit_breaker.record_failure()
             raise
 
@@ -117,6 +130,9 @@ class BraveSearchClient:
                 break
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
+                if exc.response.status_code == 402:
+                    self._last_error = "quota_exceeded"
+                    raise
                 if exc.response.status_code != 422:
                     raise
         if payload is None:
@@ -177,7 +193,29 @@ class BraveSearchClient:
                     "published_at": parse_datetime(published),
                     "domain": extract_domain(url),
                     "search_type": search_type,
+                    "result_type": search_type,
+                    "provider": "brave",
                     "metadata": row,
                 }
             )
         return results
+
+    def health_snapshot(self) -> dict[str, Any]:
+        if not self.enabled:
+            health_state = "disabled"
+        elif self._last_error == "quota_exceeded":
+            health_state = "quota_limited"
+        elif self._circuit_breaker.snapshot().get("state") == "open":
+            health_state = "circuit_open"
+        elif self._last_error:
+            health_state = "network_failed"
+        else:
+            health_state = "healthy"
+        return {
+            **self._circuit_breaker.snapshot(),
+            "provider": "brave",
+            "enabled": self.enabled,
+            "request_count": self._request_count,
+            "last_error": self._last_error,
+            "health_state": health_state,
+        }

@@ -15,6 +15,8 @@ class FirecrawlClient:
         self.api_key = api_key or settings.firecrawl_api_key
         self.base_url = (base_url or settings.firecrawl_base_url).rstrip("/")
         self._circuit_breaker = CircuitBreaker()
+        self._request_count = 0
+        self._last_error = ""
 
     @property
     def enabled(self) -> bool:
@@ -29,13 +31,16 @@ class FirecrawlClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         try:
+            self._request_count += 1
             async with httpx.AsyncClient(timeout=timeout_seconds or settings.scrape_timeout_seconds) as client:
                 response = await client.post(f"{self.base_url}{path}", json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
             self._circuit_breaker.record_success()
+            self._last_error = ""
             return data
-        except Exception:
+        except Exception as exc:
+            self._last_error = str(exc)[:200]
             self._circuit_breaker.record_failure()
             raise
 
@@ -69,6 +74,7 @@ class FirecrawlClient:
         metadata = page.get("metadata", {}) or {}
         return {
             "url": url,
+            "resolved_url": metadata.get("sourceURL") or metadata.get("url") or url,
             "domain": extract_domain(url),
             "title": title,
             "markdown": markdown,
@@ -77,6 +83,7 @@ class FirecrawlClient:
             "image_url": metadata.get("ogImage"),
             "published_at": self._extract_published_at(metadata, title, markdown, html),
             "status": "success",
+            "scrape_layer": "firecrawl",
         }
 
     async def map(self, url: str) -> list[str]:
@@ -126,6 +133,8 @@ class FirecrawlClient:
                     ),
                     "domain": extract_domain(url),
                     "search_type": "web",
+                    "result_type": "web",
+                    "provider": "firecrawl",
                     "metadata": {
                         **row,
                         "provider": "firecrawl_search",
@@ -151,6 +160,8 @@ class FirecrawlClient:
                     ),
                     "domain": extract_domain(url),
                     "search_type": "news",
+                    "result_type": "news",
+                    "provider": "firecrawl",
                     "metadata": {
                         **row,
                         "provider": "firecrawl_search",
@@ -159,6 +170,25 @@ class FirecrawlClient:
             )
 
         return results
+
+    def health_snapshot(self) -> dict[str, Any]:
+        circuit_state = self._circuit_breaker.snapshot().get("state")
+        if not self.enabled:
+            health_state = "disabled"
+        elif circuit_state == "open":
+            health_state = "circuit_open"
+        elif self._last_error:
+            health_state = "network_failed"
+        else:
+            health_state = "healthy"
+        return {
+            **self._circuit_breaker.snapshot(),
+            "provider": "firecrawl",
+            "enabled": self.enabled,
+            "request_count": self._request_count,
+            "last_error": self._last_error,
+            "health_state": health_state,
+        }
 
     async def _fallback_scrape(self, url: str) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
@@ -176,6 +206,7 @@ class FirecrawlClient:
 
         return {
             "url": url,
+            "resolved_url": str(response.url),
             "domain": extract_domain(url),
             "title": title,
             "markdown": markdown,
@@ -184,6 +215,7 @@ class FirecrawlClient:
             "image_url": None,
             "published_at": None,
             "status": "fallback",
+            "scrape_layer": "direct_http",
         }
 
     def _extract_published_at(

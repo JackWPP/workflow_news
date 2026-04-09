@@ -17,6 +17,7 @@ tools.py — Agent 工具集
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -25,18 +26,27 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from app.services.source_quality import classify_source, detect_page_kind, is_valid_price_content
 from app.services.working_memory import (
     ArticleSummary,
     ExplorationLead,
     ImageCandidate,
 )
-from app.utils import extract_domain, summarize_markdown
+from app.utils import extract_domain, normalize_external_url, now_local, parse_datetime, summarize_markdown
 
 if TYPE_CHECKING:
     from app.services.llm_client import LLMClient
     from app.services.working_memory import WorkingMemory
 
 logger = logging.getLogger(__name__)
+
+_OFF_TOPIC_REJECT_PATTERNS = [
+    "market forecast", "cagr", "stock", "earnings", "quarterly results",
+    "marathon", "football", "soccer", "basketball", "tennis",
+    "war", "missile", "military",
+    "ophthalmology", "biogen", "apellis", "drug", "pharma",
+    "财经", "股价", "财报", "马拉松", "足球", "战争", "导弹", "医药并购",
+]
 
 
 # ── Base ─────────────────────────────────────────────────
@@ -100,8 +110,16 @@ _TW_TLDS = (".com.tw", ".org.tw", ".edu.tw")
 
 
 def _is_blocked_domain(domain: str) -> bool:
-    """检查域名是否在屏蔽列表中。"""
-    return domain in _BLOCKED_DOMAIN_SET
+    """检查域名或其父域名是否在屏蔽列表中。"""
+    if domain in _BLOCKED_DOMAIN_SET:
+        return True
+    # 支持子域名匹配：geerpower.en.made-in-china.com → made-in-china.com
+    parts = domain.split(".")
+    for i in range(1, len(parts)):
+        parent = ".".join(parts[i:])
+        if parent in _BLOCKED_DOMAIN_SET:
+            return True
+    return False
 
 
 def _region_tag(domain: str) -> str:
@@ -143,10 +161,15 @@ class WebSearchTool(Tool):
         "required": ["query"],
     }
 
-    def __init__(self, brave_client: Any = None, zhipu_client: Any = None, firecrawl_client: Any = None) -> None:
+    def __init__(self, brave_client: Any = None, zhipu_client: Any = None) -> None:
         self._brave = brave_client
         self._zhipu = zhipu_client
-        # firecrawl_client 保留参数以兼容旧调用，但不再用于搜索
+
+    @staticmethod
+    def _should_skip_provider(memory: "WorkingMemory", provider: str, blocked_states: set[str]) -> bool:
+        snapshot = (memory.search_provider_health or {}).get(provider, {})
+        state = str(snapshot.get("health_state") or snapshot.get("state") or "")
+        return state in blocked_states
 
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
         query: str = kwargs.get("query", "").strip()
@@ -174,8 +197,14 @@ class WebSearchTool(Tool):
                 logger.info("web_search [zh/zhipu] '%s' → %d results", query, len(results))
             except Exception as exc:
                 logger.warning("ZhipuSearch failed for '%s': %s", query, exc)
+            finally:
+                memory.record_search_provider_health("zhipu", self._zhipu.health_snapshot())
 
-        if not results and self._brave and self._brave.enabled:
+        if (
+            not results
+            and self._brave and self._brave.enabled
+            and not self._should_skip_provider(memory, "brave", {"quota_limited", "circuit_open"})
+        ):
             # 英文搜索 或 中文搜索失败时的 Brave 兜底
             from app.config import settings
             search_lang = settings.brave_search_lang if language == "zh" else settings.brave_fallback_lang
@@ -183,7 +212,15 @@ class WebSearchTool(Tool):
                 results = await self._brave.search_all(query, search_lang)
                 logger.info("web_search [%s/brave] '%s' → %d results", language, query, len(results))
             except Exception as exc:
-                logger.warning("Brave search failed for '%s': %s", query, exc)
+                brave_health = self._brave.health_snapshot()
+                if brave_health.get("last_error") == "quota_exceeded":
+                    logger.warning("Brave quota limited for '%s', switching strategy", query)
+                else:
+                    logger.warning("Brave search failed for '%s': %s", query, exc)
+            finally:
+                memory.record_search_provider_health("brave", self._brave.health_snapshot())
+        elif not results and self._brave and self._brave.enabled:
+            logger.info("web_search skipping Brave for '%s' due to run-level health state", query)
 
         if not results:
             return ToolResult(
@@ -238,10 +275,13 @@ class WebSearchTool(Tool):
                 data={"results": []},
             )
 
+        article_results = [r for r in results if (r.get("result_type") or r.get("search_type")) != "images"]
+        image_results = [r for r in results if (r.get("result_type") or r.get("search_type")) == "images"]
+
         # ── 格式化结果给 LLM 看 ──
         display_limit = 8
         formatted = []
-        for r in results[:display_limit]:
+        for r in article_results[:display_limit]:
             url = r.get("url", "")
             domain = r.get("domain") or extract_domain(url)
             region = _region_tag(domain)
@@ -250,26 +290,27 @@ class WebSearchTool(Tool):
             snippet = (r.get("snippet") or "")[:200]
             formatted.append(
                 f"- [{r.get('title', 'Untitled')}]({url})\n"
-                f"  来源: {domain}{region} | {pub_str}\n"
+                f"  来源: {domain}{region} | {pub_str} | 类型: {(r.get('result_type') or r.get('search_type') or 'web')}\n"
                 f"  摘要: {snippet}"
             )
 
-        summary = f"搜索 '{query}' 找到 {len(results)} 条结果：\n\n" + "\n\n".join(formatted)
+        summary = f"搜索 '{query}' 找到 {len(article_results)} 条文章结果"
+        if image_results:
+            summary += f"、{len(image_results)} 条图片结果"
+        summary += "：\n\n" + "\n\n".join(formatted)
 
-        # 存储原始搜索结果到 memory，供 multi-agent 编排器提取候选 URL
-        for r in results[:10]:
-            memory.search_results.append({
-                "url": r.get("url", ""),
-                "title": r.get("title", ""),
-                "domain": r.get("domain", ""),
-                "snippet": r.get("snippet", ""),
-                "published_at": r.get("published_at"),
-            })
+        # 按结果类型分池存储，避免图片污染文章候选池
+        memory.record_search_results(query, results[:12])
 
         return ToolResult(
             success=True,
             summary=summary,
-            data={"query": query, "results": results[:10], "total": len(results)},
+            data={
+                "query": query,
+                "results": article_results[:10],
+                "image_results": image_results[:5],
+                "total": len(article_results),
+            },
         )
 
 
@@ -296,11 +337,12 @@ class ReadPageTool(Tool):
         "required": ["url"],
     }
 
-    def __init__(self, scraper_client: Any = None) -> None:
+    def __init__(self, scraper_client: Any = None, timeout_seconds: int | None = None) -> None:
         self._scraper = scraper_client
+        self._timeout_seconds = timeout_seconds
 
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
-        url: str = kwargs.get("url", "").strip()
+        url: str = normalize_external_url(kwargs.get("url", "").strip())
         if not url:
             return ToolResult(success=False, summary="url 不能为空", data={})
 
@@ -314,7 +356,7 @@ class ReadPageTool(Tool):
         domain = extract_domain(url)
 
         if self._scraper is None or not self._scraper.enabled:
-            memory.record_read(url, links=[])
+            memory.record_page_attempt(url, "attempted_failed", metadata={"content_available": False})
             return ToolResult(
                 success=False,
                 summary="页面抓取服务不可用",
@@ -323,21 +365,140 @@ class ReadPageTool(Tool):
 
         try:
             from app.config import settings
-            result = await self._scraper.scrape(url, timeout_seconds=settings.scrape_timeout_seconds)
+            timeout_seconds = self._timeout_seconds or settings.scrape_timeout_seconds
+            result = await self._scraper.scrape(url, timeout_seconds=timeout_seconds)
         except Exception as exc:
-            memory.record_read(url, links=[])
+            memory.record_page_attempt(url, "attempted_failed", metadata={"content_available": False})
             logger.warning("read_page failed for %s: %s", url, exc)
             return ToolResult(success=False, summary=f"抓取失败: {url} — {exc}", data={"url": url})
 
-        title = result.get("title") or ""
+        scrape_status = result.get("status") or ""
         markdown = result.get("markdown") or ""
-        image_url = result.get("image_url")
+        title = result.get("title") or ""
+        image_url = normalize_external_url(result.get("image_url") or "") or None
         published_at = result.get("published_at")
+        resolved_url = normalize_external_url(result.get("resolved_url") or url)
+        scrape_layer = result.get("scrape_layer") or scrape_status or "unknown"
+        page_kind = detect_page_kind(resolved_url, title=title, content=markdown)
+
+        if scrape_status == "error" or not title.strip() or not markdown.strip():
+            memory.record_page_attempt(
+                url,
+                "attempted_failed",
+                metadata={
+                    "resolved_url": resolved_url,
+                    "scrape_status": scrape_status or "attempted_failed",
+                    "scrape_layer": scrape_layer,
+                    "page_kind": page_kind,
+                    "content_available": False,
+                },
+            )
+            memory.record_scrape_layer(scrape_layer)
+            return ToolResult(
+                success=False,
+                summary=f"页面内容不可用: {resolved_url}",
+                data={"url": url, "resolved_url": resolved_url, "scrape_layer": scrape_layer},
+            )
+
+        if page_kind in {"download", "anti_bot", "binary"}:
+            memory.record_page_attempt(
+                url,
+                "rejected_by_page_kind",
+                metadata={
+                    "resolved_url": resolved_url,
+                    "scrape_status": scrape_status or "success",
+                    "scrape_layer": scrape_layer,
+                    "page_kind": page_kind,
+                    "content_available": False,
+                },
+            )
+            memory.record_scrape_layer(scrape_layer)
+            return ToolResult(
+                success=False,
+                summary=f"页面类型不适合直接作为正文: {page_kind}",
+                data={
+                    "url": url,
+                    "resolved_url": resolved_url,
+                    "scrape_layer": scrape_layer,
+                    "page_kind": page_kind,
+                },
+            )
+
+        quality = classify_source(url=resolved_url, title=title, content=markdown[:1500])
+        if quality.get("publish_block_reason"):
+            memory.record_page_attempt(
+                url,
+                "rejected_by_quality",
+                metadata={
+                    "resolved_url": resolved_url,
+                    "scrape_status": scrape_status or "success",
+                    "scrape_layer": scrape_layer,
+                    "page_kind": quality["page_kind"],
+                    "content_available": False,
+                    "quality_rejection_reason": quality["publish_block_reason"],
+                },
+            )
+            memory.record_scrape_layer(scrape_layer)
+            return ToolResult(
+                success=False,
+                summary=f"页面质量不符合正文标准: {quality['publish_block_reason']}",
+                data={
+                    "url": url,
+                    "resolved_url": resolved_url,
+                    "scrape_layer": scrape_layer,
+                    "page_kind": quality["page_kind"],
+                },
+            )
+
+        published_dt = published_at if isinstance(published_at, datetime) else parse_datetime(str(published_at)) if published_at else None
+        if published_dt is not None:
+            if published_dt.tzinfo is None:
+                published_dt = published_dt.replace(tzinfo=timezone.utc)
+            ref_now = now_local().astimezone(published_dt.tzinfo)
+            age_days = max((ref_now.replace(tzinfo=None) - published_dt.replace(tzinfo=None)).days, 0)
+            if age_days > 7:
+                memory.record_page_attempt(
+                    url,
+                    "rejected_by_recency",
+                    metadata={
+                        "resolved_url": resolved_url,
+                        "scrape_status": scrape_status or "success",
+                        "scrape_layer": scrape_layer,
+                        "page_kind": page_kind,
+                        "content_available": False,
+                        "published_at": published_dt.isoformat(),
+                    },
+                )
+                memory.record_scrape_layer(scrape_layer)
+                return ToolResult(
+                    success=False,
+                    summary=f"页面发布时间过旧（>{7}天）: {published_dt.date().isoformat()}",
+                    data={
+                        "url": url,
+                        "resolved_url": resolved_url,
+                        "scrape_layer": scrape_layer,
+                        "page_kind": page_kind,
+                    },
+                )
+
+        published_at = published_dt
         pub_str = published_at.strftime("%Y-%m-%d %H:%M") if published_at else "未知"
 
         # 提取页内链接（用于 follow_references）
         links = self._extract_links(markdown, url)
-        memory.record_read(url, links=links)
+        memory.record_page_attempt(
+            url,
+            "readable",
+            links=links,
+            metadata={
+                "resolved_url": resolved_url,
+                "scrape_status": scrape_status or "success",
+                "scrape_layer": scrape_layer,
+                "page_kind": page_kind,
+                "content_available": True,
+            },
+        )
+        memory.record_scrape_layer(scrape_layer)
 
         # 智能内容提取：分段取引言 + 结论 + 中间关键词密集段
         content_for_summary = self._extract_content(markdown, max_chars=8000)
@@ -364,6 +525,10 @@ class ReadPageTool(Tool):
                 "content_summary": content_summary,
                 "image_url": image_url,
                 "published_at": published_at.isoformat() if published_at else None,
+                "resolved_url": resolved_url,
+                "scrape_layer": scrape_layer,
+                "scrape_status": scrape_status or "success",
+                "page_kind": page_kind,
                 "links": links[:10],
             },
         )
@@ -533,6 +698,8 @@ class EvaluateArticleTool(Tool):
             "url": {"type": "string", "description": "文章 URL"},
             "domain": {"type": "string", "description": "来源域名"},
             "published_at": {"type": "string", "description": "发布时间（可选）"},
+            "resolved_url": {"type": "string", "description": "抓取后最终落地 URL（可选）"},
+            "page_kind": {"type": "string", "description": "页面类型（可选）"},
         },
         "required": ["title", "content", "url"],
     }
@@ -543,26 +710,70 @@ class EvaluateArticleTool(Tool):
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
         title: str = kwargs.get("title", "")
         content: str = kwargs.get("content", "")
-        url: str = kwargs.get("url", "")
+        url: str = normalize_external_url(kwargs.get("url", ""))
         domain: str = kwargs.get("domain", extract_domain(url))
         published_at: str = kwargs.get("published_at", "")
+        resolved_url: str = normalize_external_url(kwargs.get("resolved_url", ""))
+        page_kind: str = kwargs.get("page_kind", "")
 
         if not title or not content:
             return ToolResult(success=False, summary="需要提供 title 和 content", data={})
 
-        # ── 启发式预过滤：无领域关键词直接拒绝，省 LLM 调用 ──
-        text = f"{title} {content}".lower()
-        topic_hits = sum(1 for kw in _KEYWORDS_LOWER if kw in text)
+        quality = classify_source(url=resolved_url or url, title=title, content=content)
+        if page_kind:
+            quality["page_kind"] = page_kind
+        recency_status = "unknown"
+        published_at_source = "missing"
+        published_dt = parse_datetime(published_at) if published_at else None
+        if published_dt is not None:
+            if published_dt.tzinfo is None:
+                published_dt = published_dt.replace(tzinfo=timezone.utc)
+            ref_now = now_local().astimezone(published_dt.tzinfo)
+            age_days = max((ref_now.replace(tzinfo=None) - published_dt.replace(tzinfo=None)).days, 0)
+            recency_status = "recent_verified"
+            published_at_source = "page_or_metadata"
+            if age_days > 7:
+                return ToolResult(
+                    success=True,
+                    summary=f"❌ 价值不足：{title}\n板块: rejected | 发布时间过旧",
+                    data={
+                        "worthy": False,
+                        "section": "rejected",
+                        "key_finding": "",
+                        "reason": f"发布时间过旧（{published_dt.date().isoformat()}），不纳入今日日报",
+                        "image_worthiness": False,
+                        "added_to_memory": False,
+                        "source_tier": quality["source_tier"],
+                        "source_reliability_label": quality["source_reliability_label"],
+                        "source_kind": quality["source_kind"],
+                        "page_kind": quality["page_kind"],
+                        "recency_status": "stale_verified",
+                        "published_at_source": published_at_source,
+                    },
+                )
 
-        if topic_hits == 0:
-            # 零关键词命中，直接拒绝
+        hard_reject_reason = self._hard_reject_reason(
+            title,
+            content,
+            domain,
+            page_kind=quality["page_kind"],
+            quality=quality,
+        )
+        if hard_reject_reason:
             return ToolResult(
                 success=True,
-                summary=f"❌ 价值不足：{title}\n板块: industry | 无领域关键词命中",
+                summary=f"❌ 价值不足：{title}\n板块: rejected | {hard_reject_reason}",
                 data={
-                    "worthy": False, "section": "industry",
-                    "key_finding": title[:50], "reason": "主题与高分子材料加工无关",
-                    "image_worthiness": False, "added_to_memory": False,
+                    "worthy": False,
+                    "section": "rejected",
+                    "key_finding": "",
+                    "reason": hard_reject_reason,
+                    "image_worthiness": False,
+                    "added_to_memory": False,
+                    "source_tier": quality["source_tier"],
+                    "source_reliability_label": quality["source_reliability_label"],
+                    "source_kind": quality["source_kind"],
+                    "page_kind": quality["page_kind"],
                 },
             )
 
@@ -570,6 +781,8 @@ class EvaluateArticleTool(Tool):
             "你是高分子材料加工领域的日报研究员。\n"
             "评估这篇文章是否值得纳入今日日报，并给出理由。\n"
             "优先选择中国大陆权威媒体或英文学术/产业新闻，对台湾或非相关繁体媒体降低评分权重！\n"
+            "对以下内容必须直接拒绝：泛财经市场预测、宏观战争新闻、纯医药并购、体育社会新闻、"
+            "与高分子材料加工/设备/原料/政策无直接关系的内容。\n"
             "输出 JSON，包含：\n"
             "  - worthy: true/false\n"
             "  - section: academic/industry/policy\n"
@@ -582,7 +795,9 @@ class EvaluateArticleTool(Tool):
         user_content = (
             f"标题：{title}\n"
             f"来源：{domain}\n"
-            f"发布时间：{published_at or '未知'}\n"
+            f"来源等级：{quality['source_tier']} / {quality['source_kind']}\n"
+            f"页面类型：{quality['page_kind']}\n"
+            f"发布时间：{published_at or '未知（允许继续评估，但需降低时效置信）'}\n"
             f"内容摘要：\n{content[:1200]}"
         )
 
@@ -601,6 +816,9 @@ class EvaluateArticleTool(Tool):
         zh_summary = result.get("zh_summary") or content[:500]
 
         if worthy:
+            # 查找发现此 URL 的搜索 query
+            search_query = memory.url_search_query.get(url, "")
+
             article = ArticleSummary(
                 title=zh_title,
                 url=url,
@@ -612,6 +830,19 @@ class EvaluateArticleTool(Tool):
                 key_finding=key_finding,
                 worth_publishing=True,
                 evaluation_reason=reason,
+                search_query=search_query,
+                resolved_url=resolved_url or None,
+                source_tier=quality["source_tier"],
+                source_reliability_label=quality["source_reliability_label"],
+                source_kind=quality["source_kind"],
+                page_kind=quality["page_kind"],
+                evidence_strength=quality["evidence_strength"],
+                supports_numeric_claims=quality["supports_numeric_claims"],
+                allowed_for_trend_summary=quality["allowed_for_trend_summary"],
+                is_primary_source=quality["is_primary_source"],
+                requires_observation_only=quality["requires_observation_only"],
+                recency_status=recency_status,
+                published_at_source=published_at_source,
             )
             memory.add_article(article)
 
@@ -638,6 +869,15 @@ class EvaluateArticleTool(Tool):
                 "reason": reason,
                 "image_worthiness": image_worthiness,
                 "added_to_memory": worthy,
+                "source_tier": quality["source_tier"],
+                "source_reliability_label": quality["source_reliability_label"],
+                "source_kind": quality["source_kind"],
+                "page_kind": quality["page_kind"],
+                "evidence_strength": quality["evidence_strength"],
+                "supports_numeric_claims": quality["supports_numeric_claims"],
+                "allowed_for_trend_summary": quality["allowed_for_trend_summary"],
+                "recency_status": recency_status,
+                "published_at_source": published_at_source,
             },
         )
 
@@ -662,6 +902,28 @@ class EvaluateArticleTool(Tool):
             "reason": f"关键词命中 {topic_hits} 个" if worthy else "主题相关度不足",
             "image_worthiness": True,
         }
+
+    @staticmethod
+    def _hard_reject_reason(
+        title: str,
+        content: str,
+        domain: str,
+        *,
+        page_kind: str,
+        quality: dict[str, Any],
+    ) -> str | None:
+        text = f"{title} {content} {domain}".lower()
+        if quality.get("publish_block_reason"):
+            return str(quality["publish_block_reason"])
+        if any(pattern in text for pattern in _OFF_TOPIC_REJECT_PATTERNS):
+            return "内容与高分子材料加工日报主题弱相关"
+        if "globenewswire" in text or "prnewswire" in text:
+            return "PR/新闻稿内容，不纳入日报"
+        if "merger" in text and not any(term in text for term in ["polymer", "plastic", "plastics", "树脂", "塑料", "高分子"]):
+            return "并购新闻缺少高分子材料加工相关性"
+        if page_kind == "price_snapshot" and not is_valid_price_content(title, content):
+            return "价格快照页缺少日期、变化和供需解释，不纳入日报"
+        return None
 
 
 # ── 5. compare_sources ───────────────────────────────────
@@ -709,12 +971,17 @@ class CompareSourcesTool(Tool):
         ])
 
         system_prompt = (
-            "你是高分子材料加工日报的编辑。"
-            f"请对比以下 {len(articles)} 篇文章，找出重复事件并推荐最终保留哪些。\n"
+            "你是高分子材料加工日报的资深分析师。\n"
+            f"请深度分析以下 {len(articles)} 篇文章，完成：\n"
+            "1. 去重：找出报道同一事件的文章\n"
+            "2. 趋势洞察：跨文章发现行业大趋势，判断信号强度\n"
+            "3. 关联分析：哪些文章之间存在因果关系或连锁反应\n\n"
             "输出 JSON，包含：\n"
             "  - duplicates: [[index1, index2], ...] 重复文章的索引对\n"
             "  - keep_indices: [1,2,3,...] 推荐保留的文章索引（1-based）\n"
             "  - analysis: 对比分析（100字以内）\n"
+            "  - trends: [{\"theme\": \"趋势主题\", \"strength\": \"强/中/弱\", "
+            "\"articles\": [1,2], \"insight\": \"跨文章关联洞察（50字以内）\"}, ...]\n"
         )
 
         if self._llm and self._llm.enabled:
@@ -725,22 +992,26 @@ class CompareSourcesTool(Tool):
         keep_indices = result.get("keep_indices", [])
         duplicates = result.get("duplicates", [])
         analysis = result.get("analysis", "")
-
-        # 标记不保留的文章
-        for i, article in enumerate(articles):
-            if (i + 1) not in keep_indices:
-                article.worth_publishing = False
+        for trend in result.get("trends", [])[:3]:
+            insight = (trend or {}).get("insight")
+            if insight:
+                memory.add_finding(str(insight))
 
         summary = (
             f"对比 {len(articles)} 篇文章：\n"
             f"发现 {len(duplicates)} 组重复\n"
-            f"推荐保留 {len(keep_indices)} 篇\n"
+            f"辅助建议保留 {len(keep_indices)} 篇\n"
             f"分析：{analysis}"
         )
         return ToolResult(
             success=True,
             summary=summary,
-            data={"keep_count": len(keep_indices), "duplicates": len(duplicates), "analysis": analysis},
+            data={
+                "keep_count": len(keep_indices),
+                "duplicates": len(duplicates),
+                "analysis": analysis,
+                "trends": result.get("trends", []),
+            },
         )
 
 
@@ -776,7 +1047,7 @@ class SearchImagesTool(Tool):
 
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
         topic: str = kwargs.get("topic", "").strip()
-        article_url: str = kwargs.get("article_url", "")
+        article_url: str = normalize_external_url(kwargs.get("article_url", ""))
 
         if not topic:
             return ToolResult(success=False, summary="topic 不能为空", data={})
@@ -784,7 +1055,9 @@ class SearchImagesTool(Tool):
         results: list[dict[str, Any]] = []
 
         # 优先 Brave 图片搜索
-        if self._brave and self._brave.enabled:
+        brave_health = (memory.search_provider_health or {}).get("brave", {})
+        brave_state = str(brave_health.get("health_state") or brave_health.get("state") or "")
+        if self._brave and self._brave.enabled and brave_state not in {"quota_limited", "circuit_open"}:
             from app.config import settings
             try:
                 results = await self._brave.search(
@@ -793,6 +1066,11 @@ class SearchImagesTool(Tool):
                 )
             except Exception as exc:
                 logger.warning("search_images [brave] failed: %s", exc)
+            finally:
+                if hasattr(self._brave, "health_snapshot"):
+                    memory.record_search_provider_health("brave", self._brave.health_snapshot())
+        elif self._brave and self._brave.enabled:
+            logger.info("search_images skipping Brave for '%s' due to run-level health state", topic)
 
         if not results:
             # 如果有 article_url，尝试从文章页面本身提取图片
@@ -804,7 +1082,7 @@ class SearchImagesTool(Tool):
                         results.append({
                             "url": article_url,
                             "title": page_data.get("title", topic),
-                            "image_url": og_image,
+                            "image_url": normalize_external_url(og_image),
                         })
                         logger.info("search_images: extracted OG image from article page")
                 except Exception as exc:
@@ -817,12 +1095,12 @@ class SearchImagesTool(Tool):
         candidates_added = 0
         formatted = []
         for r in results[:5]:
-            img_url = r.get("image_url") or r.get("url", "")
+            img_url = normalize_external_url(r.get("image_url") or r.get("url", ""))
             if not img_url:
                 continue
             candidate = ImageCandidate(
                 image_url=img_url,
-                source_url=r.get("url", img_url),
+                source_url=normalize_external_url(r.get("url", img_url)),
                 caption=r.get("title", topic),
                 relevance_score=0.6,
                 origin_type="search_result",
@@ -864,8 +1142,8 @@ class VerifyImageTool(Tool):
         self._llm = llm_client
 
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
-        image_url: str = kwargs.get("image_url", "").strip()
-        article_url: str = kwargs.get("article_url", "")
+        image_url: str = normalize_external_url(kwargs.get("image_url", "").strip())
+        article_url: str = normalize_external_url(kwargs.get("article_url", ""))
         context: str = kwargs.get("context", "")
 
         if not image_url:
@@ -959,53 +1237,68 @@ class WriteSectionTool(Tool):
         section: str = kwargs.get("section", "industry")
         target_count: int = int(kwargs.get("target_count", 2))
 
-        articles = [a for a in memory.publishable_articles() if a.section == section]
-        if not articles:
+        topics = memory.get_compiled_topics(section)
+        if not topics:
             return ToolResult(
                 success=False,
-                summary=f"板块 '{section}' 没有找到有价值的文章",
-                data={"section": section, "article_count": 0},
+                summary=f"板块 '{section}' 没有足够高可信主题",
+                data={"section": section, "article_count": 0, "topic_count": 0},
             )
 
-        articles = articles[:target_count]
+        topics = topics[:target_count]
         heading = self._SECTION_HEADINGS.get(section, f"## {section}")
+        content = ""
 
         if self._llm and self._llm.enabled:
-            articles_payload = "\n\n".join([
-                f"标题: {a.title}\n来源: {a.domain} ({a.published_at or '未知'})\n"
-                f"摘要: {a.summary[:400]}\n核心: {a.key_finding}\n链接: {a.url}"
-                for a in articles
+            topics_payload = "\n\n".join([
+                "\n".join([
+                    f"主题: {topic['title']}",
+                    f"来源等级: {topic['source_tier']} / {topic['source_reliability_label']}",
+                    f"证据强度: {topic['evidence_strength']}",
+                    f"允许数字: {'是' if topic['supports_numeric_claims'] else '否'}",
+                    "事实句:",
+                    *[f"- {fact}" for fact in topic.get("facts", []) if fact],
+                    "引用:",
+                    *[
+                        f"- {citation['title']} | {citation['domain']} | {citation['source_tier']} | {citation['url']}"
+                        for citation in topic.get("citations", [])
+                    ],
+                ])
+                for topic in topics
             ])
+            section_labels = {"academic": "学术前沿", "industry": "产业动态", "policy": "政策与下游应用"}
             system_prompt = (
-                "你是高分子材料加工日报写作器。\n"
-                f"基于以下文章，写日报{section}板块的内容。\n"
-                "要求：\n"
-                "1. 中文写作，专业简洁\n"
-                "2. 每条必须有来源引用（[来源名称](URL)格式）\n"
-                "3. 每条包含：标题、来源时间、核心发现、研究信号\n"
-                "4. 不要编造内容，只用提供的资料\n"
-                "输出纯 markdown，不要加代码块"
+                "你是证据优先的高分子材料加工日报编辑。\n"
+                f"基于以下规则层已批准的主题，撰写日报「{section_labels.get(section, section)}」板块。\n"
+                "硬性规则：\n"
+                "1. 只能使用提供的事实句与引用，不得补充任何新数字、占比、市场规模、年份、时间线。\n"
+                "2. 不得输出星级、信号强度、预计、将超过、有望、引导全年等外推性措辞。\n"
+                "3. 可靠度只能照抄给定的来源等级标签，不得自创高/中/低判断。\n"
+                "4. 若主题证据不足以支撑行业影响分析，只写事实摘要与谨慎观察，不要拔高。\n"
+                "5. 每个主题最后必须带来源引用，格式为 [来源名称](URL)。\n"
+                "6. 不要生成行业趋势综述，不要跨主题补数。\n"
+                "输出纯 markdown，不要代码块。"
             )
-            content = await self._llm.simple_completion(system_prompt, articles_payload, temperature=0.3)
-        else:
-            # 模板兜底
-            lines = [heading, ""]
-            for i, a in enumerate(articles, 1):
-                pub = a.published_at or "未知"
-                lines += [
-                    f"### {i}. {a.title}",
-                    f"* **来源**：[{a.source_name}]({a.url})",
-                    f"* **时间**：{pub}",
-                    f"* **摘要**：{a.summary[:200]}",
-                    f"* **研究信号**：{a.key_finding}",
-                    "",
-                ]
-            content = "\n".join(lines)
+            try:
+                content = await asyncio.wait_for(
+                    self._llm.simple_completion(system_prompt, topics_payload, temperature=0.2),
+                    timeout=25.0,
+                )
+                memory.record_section_generation(section, "llm")
+            except asyncio.TimeoutError:
+                memory.record_section_generation(section, "template_fallback", timed_out=True)
+                content = self._render_safe_section_template(heading, topics)
+            except Exception:
+                memory.record_section_generation(section, "template_fallback")
+                content = self._render_safe_section_template(heading, topics)
+        if not content:
+            memory.record_section_generation(section, "template_fallback")
+            content = self._render_safe_section_template(heading, topics)
 
         if not content.startswith("#"):
             content = f"{heading}\n\n{content}"
 
-        summary = f"已写 {section} 板块（{len(articles)} 条文章）"
+        summary = f"已写 {section} 板块（{len(topics)} 个主题）"
 
         # 关键：将写好的内容缓存到 WorkingMemory，让 _build_result 能收集
         memory.cache_section_content(section, content)
@@ -1013,8 +1306,29 @@ class WriteSectionTool(Tool):
         return ToolResult(
             success=True,
             summary=summary,
-            data={"section": section, "content": content, "article_count": len(articles)},
+            data={"section": section, "content": content, "topic_count": len(topics)},
         )
+
+    @staticmethod
+    def _render_safe_section_template(heading: str, topics: list[dict[str, Any]]) -> str:
+        lines = [heading, ""]
+        for index, topic in enumerate(topics, start=1):
+            citation_lines = "；".join(
+                f"[{citation['domain']}]({citation['url']})"
+                for citation in topic.get("citations", [])[:2]
+            )
+            fact_text = "；".join(fact for fact in topic.get("facts", [])[:2] if fact)
+            observation = "谨慎观察：当前素材支持该主题具备持续关注价值，但不足以做更强外推。"
+            if topic.get("supports_numeric_claims"):
+                observation = "谨慎观察：当前素材包含可引用的事实数据，可作为后续跟踪依据。"
+            lines.extend([
+                f"### {index}. {topic['title']}",
+                fact_text or "事实摘要：暂无更完整原文事实句。",
+                observation,
+                f"来源等级：{topic['source_reliability_label']}；证据强度：{topic['evidence_strength']}；参考：{citation_lines}",
+                "",
+            ])
+        return "\n".join(lines).strip()
 
 
 # ── 9. check_coverage ────────────────────────────────────
@@ -1073,6 +1387,7 @@ class CheckCoverageTool(Tool):
             f"  产业动态: {coverage.industry_count} 条",
             f"  政策标准: {coverage.policy_count} 条",
             f"  学术前沿: {coverage.academic_count} 条",
+            f"  正式主题: {coverage.formal_topic_count} 条",
             f"  已验证图片: {coverage.verified_image_count} 张",
             f"  共 {len(articles)} 篇可发布文章，{coverage.section_count} 个板块",
         ]
@@ -1088,8 +1403,8 @@ class CheckCoverageTool(Tool):
             suggestions = []
             if coverage.verified_image_count < 2:
                 suggestions.append("建议用 search_images 给主要文章找配图")
-            if len(articles) < 3:
-                suggestions.append("可继续搜索以达到 complete 级")
+            if (coverage.formal_topic_count or len(articles)) < 4:
+                suggestions.append("可继续补充高可信主题以达到 complete 级")
             else:
                 suggestions.append("可以调用 finish 完成报告，或继续完善")
             ready = True
@@ -1163,6 +1478,9 @@ class FinishTool(Tool):
         "required": ["title"],
     }
 
+    def __init__(self, llm_client: "LLMClient | None" = None) -> None:
+        self._llm = llm_client
+
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
         title: str = kwargs.get("title", "高分子加工全视界日报")
         summary_text: str = kwargs.get("summary", "")
@@ -1176,12 +1494,22 @@ class FinishTool(Tool):
                 data={"ready": False},
             )
 
+        # ── 生成"编者按"洞察摘要 ──
+        editorial = ""
+        trusted_findings = [
+            a.key_finding for a in articles
+            if a.key_finding and a.source_tier in {"A", "B"} and not a.requires_observation_only
+        ]
+        if trusted_findings:
+            editorial = "今日关注：" + "；".join(trusted_findings[:3]) + "。"
+
         return ToolResult(
             success=True,
             summary=f"✅ 报告完成：{title}（{len(articles)} 篇文章）",
             data={
                 "title": title,
                 "summary": summary_text,
+                "editorial": editorial,
                 "sections_content": sections_content,
                 "articles": [a.to_dict() for a in articles],
                 "coverage": memory.coverage.to_dict(),
@@ -1197,11 +1525,12 @@ def build_all_tools(
     scraper_client: Any = None,
     zhipu_client: Any = None,
     llm_client: "LLMClient | None" = None,
+    scrape_timeout_seconds: int | None = None,
 ) -> list[Tool]:
     """构建完整工具集。"""
     return [
-        WebSearchTool(brave_client=brave_client, zhipu_client=zhipu_client, firecrawl_client=scraper_client),
-        ReadPageTool(scraper_client=scraper_client),
+        WebSearchTool(brave_client=brave_client, zhipu_client=zhipu_client),
+        ReadPageTool(scraper_client=scraper_client, timeout_seconds=scrape_timeout_seconds),
         FollowReferencesTool(),
         EvaluateArticleTool(llm_client=llm_client),
         CompareSourcesTool(llm_client=llm_client),
@@ -1209,5 +1538,5 @@ def build_all_tools(
         VerifyImageTool(llm_client=llm_client),
         WriteSectionTool(llm_client=llm_client),
         CheckCoverageTool(),
-        FinishTool(),
+        FinishTool(llm_client=llm_client),
     ]

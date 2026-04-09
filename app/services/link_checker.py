@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from app.utils import normalize_external_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,9 +39,10 @@ class LinkChecker:
         """
         检查单个 URL 的可用性。
 
-        策略：先 HEAD，405 时回退 GET（只取 headers，不下载 body）。
+        策略：先 HEAD，405/403/401 时回退 GET（只取 headers，不下载 body）。
         200-399 视为可用。
         """
+        normalized_url = normalize_external_url(url)
         async with self._semaphore:
             try:
                 async with httpx.AsyncClient(
@@ -48,12 +51,19 @@ class LinkChecker:
                     headers={"User-Agent": "Mozilla/5.0 (compatible; LinkChecker/1.0)"},
                 ) as client:
                     # 先尝试 HEAD
-                    resp = await client.head(url)
-                    if resp.status_code == 405:
-                        # HEAD 不被允许，回退 GET（限制响应大小）
-                        resp = await client.get(url, headers={"Range": "bytes=0-1024"})
+                    resp = await client.head(normalized_url)
+                    if resp.status_code in (405, 403, 401):
+                        # HEAD 不被允许或被拦截，回退 GET
+                        resp = await client.get(
+                            normalized_url,
+                            headers={
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Range": "bytes=0-1024",
+                            },
+                        )
 
-                    redirect_url = str(resp.url) if str(resp.url) != url else None
+                    final_url = normalize_external_url(str(resp.url))
+                    redirect_url = final_url if final_url != normalized_url else None
                     is_available = 200 <= resp.status_code < 400
 
                     return LinkCheckResult(

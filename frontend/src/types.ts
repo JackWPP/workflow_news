@@ -3,6 +3,22 @@ export interface Citation {
   url: string
 }
 
+export interface DecisionTrace {
+  search_query: string
+  evaluation_reason: string
+  key_finding: string
+  source_domain: string
+  section: string
+  source_tier?: string
+  source_reliability_label?: string
+  source_kind?: string
+  page_kind?: string
+  evidence_strength?: string
+  supports_numeric_claims?: boolean
+  allowed_for_trend_summary?: boolean
+  selection_reason?: string
+}
+
 export interface ReportItem {
   id: number
   section: string
@@ -29,6 +45,7 @@ export interface ReportItem {
   window_bucket: string
   citations: Citation[]
   combined_score: number
+  decision_trace: DecisionTrace
 }
 
 export interface Report {
@@ -123,6 +140,11 @@ export interface ReportSettings {
   max_extractions_per_run: number
   report_primary_model: string
   report_fallback_model: string
+  strict_primary_model_for_tool_use?: boolean
+  strict_primary_model_for_all_llm?: boolean
+  tool_use_fallback_mode?: string
+  report_min_formal_topics?: number
+  report_target_items?: number
 }
 
 export interface QualityFeedback {

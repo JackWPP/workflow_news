@@ -19,8 +19,10 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
+
+from app.utils import canonicalize_url, normalize_external_url
 
 
 @dataclass
@@ -38,6 +40,22 @@ class ArticleSummary:
     image_url: str | None = None
     worth_publishing: bool = True
     evaluation_reason: str = ""
+    search_query: str = ""
+    resolved_url: str | None = None
+    source_tier: str = "C"
+    source_reliability_label: str = "中（仅可辅助参考）"
+    source_kind: str = "general_site"
+    page_kind: str = "article"
+    evidence_strength: str = "low"
+    supports_numeric_claims: bool = False
+    allowed_for_trend_summary: bool = False
+    is_primary_source: bool = False
+    requires_observation_only: bool = False
+    selection_reason: str = ""
+    topic_confidence: str = ""
+    excluded_reason: str = ""
+    recency_status: str = "unknown"
+    published_at_source: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +71,22 @@ class ArticleSummary:
             "image_url": self.image_url,
             "worth_publishing": self.worth_publishing,
             "evaluation_reason": self.evaluation_reason,
+            "search_query": self.search_query,
+            "resolved_url": self.resolved_url,
+            "source_tier": self.source_tier,
+            "source_reliability_label": self.source_reliability_label,
+            "source_kind": self.source_kind,
+            "page_kind": self.page_kind,
+            "evidence_strength": self.evidence_strength,
+            "supports_numeric_claims": self.supports_numeric_claims,
+            "allowed_for_trend_summary": self.allowed_for_trend_summary,
+            "is_primary_source": self.is_primary_source,
+            "requires_observation_only": self.requires_observation_only,
+            "selection_reason": self.selection_reason,
+            "topic_confidence": self.topic_confidence,
+            "excluded_reason": self.excluded_reason,
+            "recency_status": self.recency_status,
+            "published_at_source": self.published_at_source,
         }
 
 
@@ -96,6 +130,7 @@ class CoverageState:
     policy_count: int = 0
     image_count: int = 0
     verified_image_count: int = 0
+    formal_topic_count: int = 0
 
     @property
     def section_count(self) -> int:
@@ -111,22 +146,22 @@ class CoverageState:
 
     @property
     def is_publishable(self) -> bool:
-        """至少 6 条 + 2 个板块。"""
-        return self.total_articles >= 6 and self.section_count >= 2
+        """至少 3 个正式主题 + 2 个板块。"""
+        topic_count = self.formal_topic_count or self.total_articles
+        return topic_count >= 3 and self.section_count >= 2
 
     @property
     def is_complete(self) -> bool:
-        """至少 8 条 + 3 个板块 + 3 张图。"""
-        return (
-            self.total_articles >= 8
-            and self.section_count >= 3
-            and self.verified_image_count >= 3
-        )
+        """至少 4 个正式主题 + 2 个板块。"""
+        topic_count = self.formal_topic_count or self.total_articles
+        return topic_count >= 4 and self.section_count >= 2
 
     def gaps(self) -> list[str]:
         gaps = []
-        if self.total_articles < 6:
-            gaps.append(f"文章不足（{self.total_articles}/6）")
+        topic_count = self.formal_topic_count or self.total_articles
+        if topic_count < 3:
+            label = "正式主题" if self.formal_topic_count else "高质量条目"
+            gaps.append(f"{label}不足（{topic_count}/3）")
         if self.section_count < 2:
             missing = []
             if self.industry_count == 0:
@@ -136,8 +171,6 @@ class CoverageState:
             if self.academic_count == 0:
                 missing.append("学术前沿")
             gaps.append(f"板块不足，缺少：{', '.join(missing[:2])}")
-        if self.verified_image_count < 2:
-            gaps.append(f"图片不足（{self.verified_image_count}/2）")
         return gaps
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,6 +180,7 @@ class CoverageState:
             "policy_count": self.policy_count,
             "image_count": self.image_count,
             "verified_image_count": self.verified_image_count,
+            "formal_topic_count": self.formal_topic_count,
             "section_count": self.section_count,
             "total_articles": self.total_articles,
             "is_publishable": self.is_publishable,
@@ -165,7 +199,7 @@ class StepRecord:
     duration_seconds: float
     harness_blocked: bool = False
     block_reason: str = ""
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -202,12 +236,18 @@ class WorkingMemory:
 
         # 原始搜索结果存储（供编排器提取候选 URL）
         self.search_results: list[dict[str, Any]] = []
+        self.image_search_results: list[dict[str, Any]] = []
 
-        # 已阅读
+        # URL → 搜索 query 映射（追踪哪篇文章是哪个 query 发现的）
+        self.url_search_query: dict[str, str] = {}
+
+        # 已尝试抓取 / 成功可读
+        self.attempted_urls: set[str] = set()
         self.read_urls: set[str] = set()
 
         # 页面链接缓存（url → links list），供 follow_references 使用
         self.page_links_cache: dict[str, list[dict[str, str]]] = {}
+        self.page_read_meta: dict[str, dict[str, Any]] = {}
 
         # 已发现的文章（所有可能有用的，包括尚未评估的）
         self.discovered_articles: list[ArticleSummary] = []
@@ -226,6 +266,9 @@ class WorkingMemory:
 
         # 已写板块内容缓存（section → markdown），供 _build_result 收集
         self.sections_content: dict[str, str] = {}
+        self.compiled_topics: dict[str, list[dict[str, Any]]] = {}
+        self.section_generation_mode: dict[str, str] = {}
+        self.section_write_timeouts: list[str] = []
 
         # 步骤历史（完整 trace）
         self.step_history: list[StepRecord] = []
@@ -235,6 +278,12 @@ class WorkingMemory:
 
         # 覆盖状态（动态维护）
         self.coverage: CoverageState = CoverageState()
+
+        # 诊断与质量观测
+        self.candidate_rejection_reasons: dict[str, int] = {}
+        self.scrape_layer_stats: dict[str, int] = {}
+        self.domain_failures: dict[str, dict[str, Any]] = {}
+        self.search_provider_health: dict[str, dict[str, Any]] = {}
 
     # ── 搜索记录 ──────────────────────────────────────────
 
@@ -248,19 +297,75 @@ class WorkingMemory:
             self.searched_queries.append(query)
             self._searched_queries_normalized.add(q)
 
+    def record_search_result_urls(self, query: str, urls: list[str]) -> None:
+        """记录搜索 query 与其发现的 URL 之间的映射。"""
+        for url in urls:
+            if url not in self.url_search_query:
+                self.url_search_query[url] = query
+
+    def record_search_results(self, query: str, results: list[dict[str, Any]]) -> None:
+        article_urls: list[str] = []
+        for row in results:
+            normalized = dict(row)
+            if normalized.get("url"):
+                normalized["url"] = normalize_external_url(str(normalized["url"]))
+            if normalized.get("image_url"):
+                normalized["image_url"] = normalize_external_url(str(normalized["image_url"]))
+            result_type = row.get("result_type") or row.get("search_type") or "web"
+            if result_type == "images":
+                self.image_search_results.append(normalized)
+                continue
+            self.search_results.append(normalized)
+            url = normalized.get("url")
+            if url:
+                article_urls.append(url)
+        self.record_search_result_urls(query, article_urls)
+
+    def record_search_provider_health(self, provider: str, snapshot: dict[str, Any]) -> None:
+        if provider:
+            self.search_provider_health[provider] = dict(snapshot)
+
     # ── 阅读记录 ──────────────────────────────────────────
 
     def has_read(self, url: str) -> bool:
-        return url in self.read_urls
+        return canonicalize_url(url) in self.read_urls
 
-    def record_read(self, url: str, links: list[dict[str, str]] | None = None) -> None:
-        self.read_urls.add(url)
-        if links:
-            self.page_links_cache[url] = links
+    def has_attempted_read(self, url: str) -> bool:
+        return canonicalize_url(url) in self.attempted_urls
+
+    def record_read(
+        self,
+        url: str,
+        links: list[dict[str, str]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.record_page_attempt(url, "readable", links=links, metadata=metadata)
+
+    def record_page_attempt(
+        self,
+        url: str,
+        status: str,
+        links: list[dict[str, str]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        normalized_url = canonicalize_url(url)
+        self.attempted_urls.add(normalized_url)
+        if status == "readable":
+            self.read_urls.add(normalized_url)
+        if links and status == "readable":
+            self.page_links_cache[normalized_url] = links
+        merged_meta = dict(self.page_read_meta.get(normalized_url, {}))
+        merged_meta["read_state"] = status
+        if metadata:
+            merged_meta.update(metadata)
+        self.page_read_meta[normalized_url] = merged_meta
 
     def get_page_links(self, url: str) -> list[dict[str, str]]:
         """获取某个已读页面中提取的链接（供 follow_references 使用）。"""
-        return self.page_links_cache.get(url, [])
+        return self.page_links_cache.get(canonicalize_url(url), [])
+
+    def get_read_metadata(self, url: str) -> dict[str, Any]:
+        return dict(self.page_read_meta.get(canonicalize_url(url), {}))
 
     # ── 文章记录 ──────────────────────────────────────────
 
@@ -274,6 +379,34 @@ class WorkingMemory:
     def publishable_articles(self) -> list[ArticleSummary]:
         return [a for a in self.discovered_articles if a.worth_publishing]
 
+    def sync_article_card(self, card: Any) -> None:
+        """将 ArticleAgent 的最终卡片状态回写到已记录的 ArticleSummary。
+
+        evaluate_article 会先把文章写入 WorkingMemory，但图片是在 ArticleAgent
+        后续步骤中才确定的。若不回写，Phase 3 读取 memory.publishable_articles()
+        时会看不到已验证图片。
+        """
+        card_url = canonicalize_url(getattr(card, "url", "") or "")
+        resolved_url = canonicalize_url(getattr(card, "resolved_url", "") or "")
+        image_url = normalize_external_url(getattr(card, "image_url", "") or "") or None
+        for article in self.discovered_articles:
+            article_url = canonicalize_url(article.url)
+            article_resolved = canonicalize_url(article.resolved_url or "")
+            if card_url not in {article_url, article_resolved} and resolved_url not in {article_url, article_resolved}:
+                continue
+
+            article.title = getattr(card, "title", article.title) or article.title
+            article.source_name = getattr(card, "source_name", article.source_name) or article.source_name
+            article.domain = getattr(card, "domain", article.domain) or article.domain
+            article.published_at = getattr(card, "published_at", article.published_at) or article.published_at
+            article.summary = getattr(card, "summary", article.summary) or article.summary
+            article.section = getattr(card, "section", article.section) or article.section
+            article.key_finding = getattr(card, "key_finding", article.key_finding) or article.key_finding
+            article.resolved_url = getattr(card, "resolved_url", article.resolved_url) or article.resolved_url
+            article.image_url = image_url
+            article.has_image = bool(image_url)
+            return
+
     def _update_coverage(self, article: ArticleSummary) -> None:
         if not article.worth_publishing:
             return
@@ -283,6 +416,21 @@ class WorkingMemory:
             self.coverage.industry_count += 1
         elif article.section == "policy":
             self.coverage.policy_count += 1
+
+    def rebuild_coverage(self) -> None:
+        verified_images = self.coverage.verified_image_count
+        image_count = self.coverage.image_count
+        formal_topic_count = self.coverage.formal_topic_count
+        self.coverage = CoverageState(
+            image_count=image_count,
+            verified_image_count=verified_images,
+            formal_topic_count=formal_topic_count,
+        )
+        for article in self.publishable_articles():
+            self._update_coverage(article)
+
+    def set_formal_topic_count(self, count: int) -> None:
+        self.coverage.formal_topic_count = max(0, int(count))
 
     # ── 图片记录 ──────────────────────────────────────────
 
@@ -314,7 +462,7 @@ class WorkingMemory:
     # ── 线索队列 ──────────────────────────────────────────
 
     def add_exploration_lead(self, lead: ExplorationLead) -> None:
-        if lead.url in self.read_urls:
+        if canonicalize_url(lead.url) in self.read_urls:
             return
         if any(l.url == lead.url for l in self.exploration_queue):
             return
@@ -346,12 +494,41 @@ class WorkingMemory:
     def record_thought(self, thought: str) -> None:
         self.thoughts.append(thought)
 
+    def record_candidate_rejection(self, reason: str) -> None:
+        self.candidate_rejection_reasons[reason] = self.candidate_rejection_reasons.get(reason, 0) + 1
+
+    def record_scrape_layer(self, layer: str) -> None:
+        if not layer:
+            return
+        self.scrape_layer_stats[layer] = self.scrape_layer_stats.get(layer, 0) + 1
+
+    def record_domain_failure(self, domain: str, reason: str) -> None:
+        if not domain:
+            return
+        bucket = self.domain_failures.setdefault(domain, {"count": 0, "reasons": []})
+        bucket["count"] += 1
+        reasons = bucket.setdefault("reasons", [])
+        if reason and reason not in reasons:
+            reasons.append(reason[:120])
+
     # ── 板块内容缓存 ──────────────────────────────────────
 
     def cache_section_content(self, section: str, content: str) -> None:
         """缓存 write_section 生成的板块 markdown。"""
         if section and content:
             self.sections_content[section] = content
+
+    def cache_compiled_topics(self, section: str, topics: list[dict[str, Any]]) -> None:
+        self.compiled_topics[section] = topics
+
+    def get_compiled_topics(self, section: str) -> list[dict[str, Any]]:
+        return list(self.compiled_topics.get(section, []))
+
+    def record_section_generation(self, section: str, mode: str, timed_out: bool = False) -> None:
+        if section:
+            self.section_generation_mode[section] = mode
+        if timed_out and section and section not in self.section_write_timeouts:
+            self.section_write_timeouts.append(section)
 
     def get_all_sections_content(self) -> dict[str, str]:
         """返回所有已写的板块内容。"""
@@ -379,8 +556,10 @@ class WorkingMemory:
         if self.searched_queries:
             parts.append(f"已搜索 {search_count} 个查询：{', '.join(self.searched_queries[-5:])}")
 
+        if self.attempted_urls:
+            parts.append(f"已尝试抓取 {len(self.attempted_urls)} 个页面")
         if self.read_urls:
-            parts.append(f"已阅读 {len(self.read_urls)} 个页面")
+            parts.append(f"成功可读 {len(self.read_urls)} 个页面")
 
         if pub_articles := self.publishable_articles():
             section_info: dict[str, list[str]] = {}
@@ -388,6 +567,8 @@ class WorkingMemory:
                 section_info.setdefault(a.section, []).append(a.title)
             section_parts = [f"{s}: {len(t)} 条" for s, t in section_info.items()]
             parts.append(f"已确认 {article_count} 篇有价值的文章（{', '.join(section_parts)}）")
+        if self.coverage.formal_topic_count > 0:
+            parts.append(f"规则层正式主题 {self.coverage.formal_topic_count} 条")
 
         if written_sections:
             unwritten = {"industry", "academic", "policy"} - set(written_sections)
@@ -424,6 +605,8 @@ class WorkingMemory:
         return {
             "searched_queries": self.searched_queries,
             "search_results_count": len(self.search_results),
+            "image_search_results_count": len(self.image_search_results),
+            "attempted_urls": list(self.attempted_urls),
             "read_urls": list(self.read_urls),
             "discovered_count": len(self.discovered_articles),
             "publishable_count": len(self.publishable_articles()),
@@ -437,6 +620,13 @@ class WorkingMemory:
                 for url, candidates in self.image_candidates.items()
             },
             "step_count": len(self.step_history),
+            "candidate_rejection_reasons": dict(self.candidate_rejection_reasons),
+            "scrape_layer_stats": dict(self.scrape_layer_stats),
+            "domain_failures": dict(self.domain_failures),
+            "search_provider_health": dict(self.search_provider_health),
+            "compiled_topics": dict(self.compiled_topics),
+            "section_generation_mode": dict(self.section_generation_mode),
+            "section_write_timeouts": list(self.section_write_timeouts),
         }
 
     def to_json(self) -> str:

@@ -13,7 +13,6 @@ from sqlalchemy import desc, select
 from app.config import settings
 from app.models import Article, ArticleCluster, Report, ReportItem, RetrievalCandidate, RetrievalQuery, RetrievalRun, Source
 from app.services.brave import BraveSearchClient
-from app.services.firecrawl import FirecrawlClient
 from app.services.jina_reader import JinaReaderClient
 from app.services.scraper import ScraperClient
 from app.services.llm import PlannerOutput, ReportLLMService, ScorerOutput, WriterOutput
@@ -332,8 +331,8 @@ SOURCE_TIER_THRESHOLDS = {
 class NativeReportPipeline:
     def __init__(self):
         self.brave = BraveSearchClient()
-        self.firecrawl = FirecrawlClient()
-        self.scraper = ScraperClient(jina_client=JinaReaderClient(), firecrawl_client=self.firecrawl)
+        self.firecrawl = None  # compatibility placeholder; Firecrawl is no longer part of the runtime path
+        self.scraper = ScraperClient(jina_client=JinaReaderClient())
         self.llm = ReportLLMService()
 
     async def run(
@@ -522,7 +521,7 @@ class NativeReportPipeline:
                 "fallbacks_triggered": fallbacks_triggered,
                 "sources_enabled": len(sources),
                 "brave_enabled": self.brave.enabled,
-                "firecrawl_enabled": self.firecrawl.enabled,
+                "firecrawl_enabled": False,
             }
             session.flush()
             session.commit()
@@ -675,14 +674,6 @@ class NativeReportPipeline:
             except Exception as exc:
                 provider_errors.append(f"brave:{exc}")
 
-            if self.firecrawl.enabled and len(results) < 2:
-                try:
-                    firecrawl_results = await self.firecrawl.search(spec["query"], limit=4)
-                    provider_counts["firecrawl"] = len(firecrawl_results)
-                    results.extend(firecrawl_results)
-                except Exception as exc:
-                    provider_errors.append(f"firecrawl:{exc}")
-
             if not results and provider_errors:
                 query_row.response_status = "error"
                 query_row.filters = {
@@ -825,8 +816,8 @@ class NativeReportPipeline:
                                 },
                             }
                         )
-                elif source.crawl_mode == "listing" and self.firecrawl.enabled:
-                    links = await self.firecrawl.map(source.rss_or_listing_url)
+                elif source.crawl_mode == "listing":
+                    links = await self._fetch_listing_links(source.rss_or_listing_url)
                     for link in links[:8]:
                         mapped = self._normalize_listing_map_entry(link, source.rss_or_listing_url)
                         if mapped is None:
@@ -855,6 +846,31 @@ class NativeReportPipeline:
             except Exception:
                 continue
         return direct_candidates
+
+    async def _fetch_listing_links(self, listing_url: str) -> list[Any]:
+        if hasattr(self.scraper, "map"):
+            try:
+                return await self.scraper.map(listing_url)
+            except Exception:
+                pass
+
+        import httpx
+
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            response = await client.get(listing_url)
+            response.raise_for_status()
+            html = response.text
+
+        links: list[dict[str, Any]] = []
+        pattern = re.compile(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+        for match in pattern.finditer(html):
+            href = (match.group(1) or "").strip()
+            text = re.sub(r"<[^>]+>", " ", match.group(2) or "")
+            text = re.sub(r"\s+", " ", text).strip()
+            if not href or not text:
+                continue
+            links.append({"url": href, "title": text})
+        return links
 
     def _normalize_listing_map_entry(self, link: Any, listing_url: str) -> dict[str, Any] | None:
         if isinstance(link, str):
@@ -1516,7 +1532,7 @@ class NativeReportPipeline:
         runtime: dict[str, Any],
     ) -> tuple[str, str, str, str, list[dict[str, Any]], dict[str, Any]]:
         if not articles:
-            summary = "未命中足够候选文章，请检查 Brave、Firecrawl、OpenRouter 配置和来源规则。"
+            summary = "未命中足够候选文章，请检查 Brave、Jina、OpenRouter 配置和来源规则。"
             markdown = "\n".join(
                 [
                     f"# {settings.report_title}（{target_date.isoformat()}）",

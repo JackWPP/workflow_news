@@ -84,8 +84,11 @@ LEGACY_STATIC_DIR = Path("static")
 
 async def scheduled_report_run():
     logger.info("Starting scheduled native report run.")
-    with session_scope() as session:
-        await pipeline.run(session, shadow_mode=None)
+    if isinstance(pipeline, DailyReportAgent):
+        await pipeline.run(shadow_mode=None)
+    else:
+        with session_scope() as session:
+            await pipeline.run(session, shadow_mode=None)
     logger.info("Scheduled native report run finished.")
 
 
@@ -203,7 +206,7 @@ async def run_report(payload: ReportRunRequest):
     with session_scope() as session:
         from app.models import AgentRun
         run_record = RetrievalRun(
-            run_date=now_local().date(),
+            run_date=now_local(),
             status="running",
         )
         session.add(run_record)
@@ -217,18 +220,25 @@ async def run_report(payload: ReportRunRequest):
     async def _run_pipeline():
         global _running_task, _running_agent_run_id
         try:
-            with session_scope() as session:
+            if isinstance(pipeline, DailyReportAgent):
                 report = await pipeline.run(
-                    session,
+                    run_id=run_id,
                     shadow_mode=payload.shadow_mode,
                     mode=payload.mode,
-                    **({"event_queue": event_queue} if hasattr(pipeline, '_llm_client') else {}),
+                    event_queue=event_queue,
                 )
-                event_queue.put_nowait({
-                    "type": "complete",
-                    "report_id": report.id,
-                    "status": report.status,
-                })
+            else:
+                with session_scope() as session:
+                    report = await pipeline.run(
+                        session,
+                        shadow_mode=payload.shadow_mode,
+                        mode=payload.mode,
+                    )
+            event_queue.put_nowait({
+                "type": "complete",
+                "report_id": report.id,
+                "status": report.status,
+            })
         except Exception as exc:
             logger.error("Pipeline failed: %s", exc, exc_info=True)
             event_queue.put_nowait({"type": "error", "message": str(exc)[:500]})
@@ -613,13 +623,8 @@ async def read_news_by_date(report_date: str):
 
 @app.post("/api/regenerate")
 async def regenerate_news():
-    report = await run_report(ReportRunRequest(shadow_mode=False))
-    return {
-        "status": "success",
-        "message": "Native report regenerated successfully",
-        "report_id": report.id,
-        "report_status": report.status,
-    }
+    result = await run_report(ReportRunRequest(shadow_mode=False))
+    return result
 
 
 

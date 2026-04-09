@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.services.working_memory import ImageCandidate
+from app.utils import extract_domain, normalize_external_url
 
 if TYPE_CHECKING:
     from app.services.tools import Tool
@@ -38,6 +39,9 @@ class ArticleCard:
     summary: str
     section: str              # academic / industry / policy / rejected
     key_finding: str
+    resolved_url: str | None = None
+    scrape_layer: str | None = None
+    scrape_status: str | None = None
     image_url: str | None = None
     image_caption: str | None = None
     evaluation_reason: str = ""
@@ -52,7 +56,7 @@ class ArticleHarness:
     """单篇文章处理子 Agent 的轻量预算。"""
     max_steps: int = 8
     max_llm_calls: int = 3    # evaluate + verify + retry
-    max_duration_seconds: float = 60.0
+    max_duration_seconds: float = 120.0
 
 
 class ArticleAgent:
@@ -70,7 +74,6 @@ class ArticleAgent:
         tools: dict[str, "Tool"],
         harness: ArticleHarness | None = None,
         agent_run_id: int | None = None,
-        session: Any | None = None,
     ) -> None:
         self.url = url
         self.context = context
@@ -78,7 +81,6 @@ class ArticleAgent:
         self.tools = tools
         self.harness = harness or ArticleHarness()
         self.agent_run_id = agent_run_id
-        self.session = session
 
     async def run(self) -> ArticleCard:
         """执行文章处理流水线。"""
@@ -91,11 +93,24 @@ class ArticleAgent:
         )
         steps += 1
         if not read_result.success:
+            soft_reject = any(
+                read_result.summary.startswith(prefix)
+                for prefix in (
+                    "页面类型不适合直接作为正文",
+                    "页面质量不符合正文标准",
+                    "页面发布时间过旧",
+                )
+            )
+            logger.info(
+                "[ArticleAgent] SCRAPE_FAILED %s → %s",
+                self.url[:80], read_result.summary[:100],
+            )
             return ArticleCard(
-                url=self.url, title="", domain="", source_name="",
+                url=normalize_external_url(self.url), title="", domain=extract_domain(self.url), source_name="",
                 published_at=None, summary="", section="rejected",
-                key_finding="", success=False,
-                error=f"read_page 失败: {read_result.summary}",
+                key_finding="", success=soft_reject,
+                evaluation_reason=read_result.summary,
+                error=None if soft_reject else f"read_page 失败: {read_result.summary}",
                 steps_used=steps,
             )
 
@@ -103,20 +118,39 @@ class ArticleAgent:
         title = page_data.get("title", "")
         domain = page_data.get("domain", "")
         content_summary = page_data.get("content_summary", "")
-        inline_image = page_data.get("image_url")
+        inline_image = normalize_external_url(page_data.get("image_url") or "") or None
         published_at = page_data.get("published_at")
+        resolved_url = normalize_external_url(page_data.get("resolved_url") or self.url)
+        scrape_layer = page_data.get("scrape_layer")
+        scrape_status = page_data.get("scrape_status")
+        page_kind = page_data.get("page_kind")
 
         # Step 2: evaluate_article（含一次重试）
-        eval_result = await self._evaluate_with_retry(title, content_summary, domain, published_at)
+        eval_result = await self._evaluate_with_retry(
+            title,
+            content_summary,
+            domain,
+            published_at,
+            resolved_url=resolved_url,
+            page_kind=page_kind,
+        )
         steps += 1
 
         if not eval_result.data.get("worthy", False):
+            reason = eval_result.data.get("reason", "评估未通过")
+            logger.info(
+                "[ArticleAgent] REJECTED %s → reason: %s",
+                self.url[:80], reason,
+            )
             return ArticleCard(
                 url=self.url, title=title, domain=domain,
                 source_name=domain, published_at=published_at,
                 summary=content_summary[:200], section="rejected",
                 key_finding="", success=True,
                 evaluation_reason=eval_result.data.get("reason", "评估未通过"),
+                resolved_url=resolved_url,
+                scrape_layer=scrape_layer,
+                scrape_status=scrape_status,
                 steps_used=steps,
             )
 
@@ -182,7 +216,7 @@ class ArticleAgent:
         )
 
         return ArticleCard(
-            url=self.url,
+            url=normalize_external_url(self.url),
             title=zh_title,
             domain=domain,
             source_name=domain,
@@ -190,6 +224,9 @@ class ArticleAgent:
             summary=zh_summary,
             section=section,
             key_finding=key_finding,
+            resolved_url=resolved_url,
+            scrape_layer=scrape_layer,
+            scrape_status=scrape_status,
             image_url=image_url,
             image_caption=image_caption,
             evaluation_reason=eval_result.data.get("reason", ""),
@@ -198,7 +235,13 @@ class ArticleAgent:
         )
 
     async def _evaluate_with_retry(
-        self, title: str, content: str, domain: str, published_at: str | None,
+        self,
+        title: str,
+        content: str,
+        domain: str,
+        published_at: str | None,
+        resolved_url: str | None = None,
+        page_kind: str | None = None,
     ):
         """evaluate_article 带一次重试，防御 LLM 限流等瞬态失败。"""
         eval_result = await self.tools["evaluate_article"].execute(
@@ -208,6 +251,8 @@ class ArticleAgent:
             url=self.url,
             domain=domain,
             published_at=published_at or "",
+            resolved_url=resolved_url or "",
+            page_kind=page_kind or "",
         )
         if eval_result.success:
             return eval_result
@@ -222,4 +267,6 @@ class ArticleAgent:
             url=self.url,
             domain=domain,
             published_at=published_at or "",
+            resolved_url=resolved_url or "",
+            page_kind=page_kind or "",
         )

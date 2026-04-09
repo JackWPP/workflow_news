@@ -14,8 +14,36 @@ def now_local() -> datetime:
     return datetime.now(settings.timezone)
 
 
+def normalize_external_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("//"):
+        raw = f"https:{raw}"
+    elif "://" not in raw and raw.startswith("www."):
+        raw = f"https://{raw}"
+
+    parsed = urlparse(raw)
+    scheme = parsed.scheme.lower() or "https"
+    netloc = parsed.netloc.lower()
+    if not netloc and parsed.path and raw.startswith("https://") is False and raw.startswith("http://") is False:
+        parsed = urlparse(f"https://{raw}")
+        scheme = parsed.scheme.lower() or "https"
+        netloc = parsed.netloc.lower()
+
+    hostname = parsed.hostname.lower() if parsed.hostname else netloc
+    port = parsed.port
+    if hostname:
+        if port and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+            netloc = f"{hostname}:{port}"
+        else:
+            netloc = hostname
+    normalized = parsed._replace(scheme=scheme, netloc=netloc)
+    return urlunparse(normalized)
+
+
 def canonicalize_url(url: str) -> str:
-    parsed = urlparse(url.strip())
+    parsed = urlparse(normalize_external_url(url))
     query = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if not key.startswith("utm_")]
     normalized = parsed._replace(
         scheme=parsed.scheme.lower() or "https",
@@ -27,7 +55,9 @@ def canonicalize_url(url: str) -> str:
 
 
 def extract_domain(url: str) -> str:
-    return urlparse(url).netloc.lower().removeprefix("www.")
+    normalized = normalize_external_url(url)
+    parsed = urlparse(normalized)
+    return (parsed.hostname or parsed.netloc).lower().removeprefix("www.")
 
 
 def normalize_title(value: str) -> str:

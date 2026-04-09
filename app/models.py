@@ -168,7 +168,12 @@ class Report(TimestampMixin, Base):
 
     @property
     def publish_grade(self) -> str:
-        return self.status
+        mapping = {
+            "complete_auto_publish": "complete",
+            "partial_auto_publish": "partial",
+            "hold_for_missing_quality": "degraded",
+        }
+        return mapping.get(self.status, self.status)
 
     @property
     def round_count(self) -> int:
@@ -242,6 +247,7 @@ class ReportItem(TimestampMixin, Base):
     window_bucket: Mapped[str] = mapped_column(String(32), default="primary_24h", nullable=False)
     citations: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     combined_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    decision_trace: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     report: Mapped["Report"] = relationship(back_populates="items")
 

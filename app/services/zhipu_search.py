@@ -30,6 +30,10 @@ class ZhipuSearchClient:
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or settings.zhipu_api_key
+        self._request_count = 0
+        self._failure_count = 0
+        self._consecutive_failures = 0
+        self._last_error = ""
 
     @property
     def enabled(self) -> bool:
@@ -39,7 +43,7 @@ class ZhipuSearchClient:
         self,
         query: str,
         count: int | None = None,
-        recency: str = "oneMonth",
+        recency: str = "oneWeek",
     ) -> list[dict[str, Any]]:
         """
         搜索并返回统一格式的结果列表。
@@ -70,9 +74,13 @@ class ZhipuSearchClient:
         }
 
         try:
+            self._request_count += 1
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(_BASE_URL, json=payload, headers=headers)
                 if resp.status_code != 200:
+                    self._failure_count += 1
+                    self._consecutive_failures += 1
+                    self._last_error = f"http_{resp.status_code}"
                     logger.warning(
                         "ZhipuSearch returned %d for '%s': %s",
                         resp.status_code, query, resp.text[:300],
@@ -80,14 +88,20 @@ class ZhipuSearchClient:
                     return []
                 data = resp.json()
         except Exception as exc:
+            self._failure_count += 1
+            self._consecutive_failures += 1
+            self._last_error = str(exc)[:200]
             logger.warning("ZhipuSearch request failed for '%s': %s", query, exc)
             return []
 
         raw_results: list[dict[str, Any]] = data.get("search_result") or []
         if not raw_results:
+            self._consecutive_failures = 0
             logger.info("ZhipuSearch '%s' → 0 results (empty search_result)", query)
             return []
 
+        self._consecutive_failures = 0
+        self._last_error = ""
         results: list[dict[str, Any]] = []
         for item in raw_results:
             url = item.get("link") or ""
@@ -103,11 +117,31 @@ class ZhipuSearchClient:
                 "published_at": published_at,
                 "domain": domain,
                 "search_type": "news",
+                "result_type": "news",
+                "provider": "zhipu",
                 "metadata": item,
             })
 
         logger.info("ZhipuSearch '%s' → %d results", query, len(results))
         return results
+
+    def health_snapshot(self) -> dict[str, Any]:
+        if not self.enabled:
+            health_state = "disabled"
+        elif self._consecutive_failures >= 2:
+            health_state = "network_failed"
+        else:
+            health_state = "healthy"
+        return {
+            "provider": "zhipu",
+            "enabled": self.enabled,
+            "request_count": self._request_count,
+            "failure_count": self._failure_count,
+            "consecutive_failures": self._consecutive_failures,
+            "last_error": self._last_error,
+            "state": "degraded" if self._consecutive_failures >= 2 else "healthy",
+            "health_state": health_state,
+        }
 
 
 def _parse_date(value: str | None) -> datetime | None:

@@ -52,15 +52,15 @@ def _extract_html_meta(html: str) -> tuple[str, str | None, Any]:
 
 
 class ScraperClient:
-    """三层降级抓取：Trafilatura → Jina Reader → Firecrawl。
+    """三层降级抓取：Trafilatura → Jina Reader → direct_http。
 
-    每层独立失败，绝不级联。返回格式与 FirecrawlClient.scrape() 兼容。
+    每层独立失败，绝不级联。
     """
 
     def __init__(
         self,
         jina_client: Any = None,
-        firecrawl_client: Any = None,
+        browser_fallback: Any = None,
     ) -> None:
         # Lazy import to avoid circular dependency at module level
         if jina_client is not None:
@@ -68,7 +68,7 @@ class ScraperClient:
         else:
             from app.services.jina_reader import JinaReaderClient
             self._jina = JinaReaderClient()
-        self._firecrawl = firecrawl_client
+        self._browser_fallback = browser_fallback
 
     @property
     def enabled(self) -> bool:
@@ -89,22 +89,13 @@ class ScraperClient:
         # 第二层：Jina Reader
         try:
             result = await self._jina.scrape(url, timeout_seconds=timeout)
-            if result.get("status") != "error":
+            if result.get("status") != "error" and result.get("markdown"):
                 logger.debug("scraper: Jina success for %s", url)
                 return result
         except Exception as exc:
             logger.debug("scraper: Jina failed for %s: %s", url, exc)
 
-        # 第三层：Firecrawl（最终兜底）
-        if self._firecrawl and self._firecrawl.enabled:
-            try:
-                result = await self._firecrawl.scrape(url, timeout_seconds=timeout)
-                logger.debug("scraper: Firecrawl success for %s", url)
-                return result
-            except Exception as exc:
-                logger.debug("scraper: Firecrawl failed for %s: %s", url, exc)
-
-        # 全部失败 → httpx fallback
+        # 第三层：direct_http fallback
         try:
             result = await self._jina._fallback_scrape(url, timeout)
             logger.debug("scraper: httpx fallback for %s", url)
@@ -113,6 +104,7 @@ class ScraperClient:
             logger.warning("scraper: all layers failed for %s: %s", url, exc)
             return {
                 "url": url,
+                "resolved_url": url,
                 "domain": extract_domain(url),
                 "title": "",
                 "markdown": "",
@@ -122,6 +114,7 @@ class ScraperClient:
                 "published_at": None,
                 "status": "error",
                 "error": str(exc),
+                "scrape_layer": "none",
             }
 
     async def _trafilatura_scrape(self, url: str) -> dict[str, Any] | None:
@@ -153,6 +146,7 @@ class ScraperClient:
 
         return {
             "url": url,
+            "resolved_url": url,
             "domain": extract_domain(url),
             "title": title,
             "markdown": markdown,
@@ -161,6 +155,7 @@ class ScraperClient:
             "image_url": image_url,
             "published_at": published_at,
             "status": "success",
+            "scrape_layer": "trafilatura",
         }
 
 

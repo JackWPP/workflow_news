@@ -257,13 +257,13 @@ class TestCoverageState:
         assert cov.is_complete
 
     def test_partial_detection(self):
-        cov = CoverageState(industry_count=4, policy_count=2)
+        cov = CoverageState(industry_count=2, policy_count=1)
         assert cov.is_publishable
-        assert not cov.is_complete  # no verified images
+        assert not cov.is_complete
 
     def test_not_publishable(self):
         cov = CoverageState(industry_count=3)
-        assert not cov.is_publishable  # only 1 section, < 6 articles
+        assert not cov.is_publishable
 
     def test_gaps_reported(self):
         cov = CoverageState(industry_count=1)
@@ -349,7 +349,7 @@ class TestAgentCore:
             harness=harness,
         )
 
-        result = await core.run(task="Generate daily report", session=None)
+        result = await core.run(task="Generate daily report")
         # finish is extracted from LLM response directly, not via tool.execute()
         assert result.finished_reason == "finish_tool"
 
@@ -370,7 +370,7 @@ class TestAgentCore:
         harness = make_harness(max_steps=3)
         core = AgentCore(tools=[mock], llm_client=llm, harness=harness)
 
-        result = await core.run(task="test", session=None)
+        result = await core.run(task="test")
         assert result.finished_reason in {"budget_exhausted", "timeout"}
 
     @pytest.mark.asyncio
@@ -394,7 +394,7 @@ class TestAgentCore:
         harness = make_harness(max_steps=10, blocked_domains=["spam.com"])
         core = AgentCore(tools=[mock], llm_client=llm, harness=harness)
 
-        await core.run(task="test", session=None)
+        await core.run(task="test")
         # mock_tool should have been blocked, so call_count should be 0
         assert mock.call_count == 0
         assert len(harness.violations) == 1
@@ -416,5 +416,22 @@ class TestAgentCore:
         core = AgentCore(tools=[], llm_client=llm, harness=harness)
 
         # Should not raise
-        result = await core.run(task="test", session=None)
+        result = await core.run(task="test")
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_no_tool_stall_finishes_early(self):
+        llm = MockLLMClient(
+            responses=[
+                LLMResponse(content="thinking 1", tool_calls=[], is_finish=False),
+                LLMResponse(content="thinking 2", tool_calls=[], is_finish=False),
+                LLMResponse(content="thinking 3", tool_calls=[], is_finish=False),
+            ]
+        )
+        harness = make_harness(max_steps=20, max_duration_seconds=300.0)
+        core = AgentCore(tools=[], llm_client=llm, harness=harness)
+
+        result = await core.run(task="test")
+
+        assert result.finished_reason == "llm_no_tool_stall"
+        assert result.diagnostics["llm_no_tool_stall_count"] == 1

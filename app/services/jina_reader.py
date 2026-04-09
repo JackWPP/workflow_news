@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 import httpx
@@ -26,6 +27,8 @@ class JinaReaderClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
         self.api_key = api_key or settings.jina_api_key
         self.base_url = (base_url or settings.jina_base_url).rstrip("/")
+        self._skip_direct_http_domains: dict[str, float] = {}
+        self._skip_ttl_seconds = 1800.0
 
     @property
     def enabled(self) -> bool:
@@ -35,14 +38,29 @@ class JinaReaderClient:
         timeout = timeout_seconds or settings.scrape_timeout_seconds
         try:
             return await self._jina_scrape(url, timeout)
-        except Exception:
-            pass
+        except Exception as exc:
+            if self._should_skip_direct_http(url, exc):
+                return {
+                    "url": url,
+                    "resolved_url": url,
+                    "domain": extract_domain(url),
+                    "title": "",
+                    "markdown": "",
+                    "html": "",
+                    "metadata": {},
+                    "image_url": None,
+                    "published_at": None,
+                    "status": "error",
+                    "error": str(exc),
+                    "scrape_layer": "jina",
+                }
         # Fallback to direct HTTP
         try:
             return await self._fallback_scrape(url, timeout)
         except Exception as exc:
             return {
                 "url": url,
+                "resolved_url": url,
                 "domain": extract_domain(url),
                 "title": "",
                 "markdown": "",
@@ -52,6 +70,7 @@ class JinaReaderClient:
                 "published_at": None,
                 "status": "error",
                 "error": str(exc),
+                "scrape_layer": "direct_http",
             }
 
     async def _jina_scrape(self, url: str, timeout: int) -> dict[str, Any]:
@@ -97,6 +116,7 @@ class JinaReaderClient:
 
         return {
             "url": url,
+            "resolved_url": url,
             "domain": extract_domain(url),
             "title": title,
             "markdown": markdown,
@@ -105,6 +125,7 @@ class JinaReaderClient:
             "image_url": image_url,
             "published_at": published_at,
             "status": "success",
+            "scrape_layer": "jina",
         }
 
     async def _fallback_scrape(self, url: str, timeout: int | None = None) -> dict[str, Any]:
@@ -145,6 +166,7 @@ class JinaReaderClient:
 
         return {
             "url": url,
+            "resolved_url": str(response.url),
             "domain": extract_domain(url),
             "title": title,
             "markdown": markdown,
@@ -153,7 +175,28 @@ class JinaReaderClient:
             "image_url": image_url,
             "published_at": published_at,
             "status": "fallback",
+            "scrape_layer": "direct_http",
         }
+
+    def _should_skip_direct_http(self, url: str, exc: Exception) -> bool:
+        domain = extract_domain(url)
+        expires_at = self._skip_direct_http_domains.get(domain, 0.0)
+        if expires_at and expires_at > time.time():
+            return True
+        if expires_at and expires_at <= time.time():
+            self._skip_direct_http_domains.pop(domain, None)
+
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code
+            if status in {403, 451}:
+                self._skip_direct_http_domains[domain] = time.time() + self._skip_ttl_seconds
+                return True
+
+        text = str(exc).lower()
+        if "certificate verify failed" in text or "hostname mismatch" in text or "tls" in text:
+            self._skip_direct_http_domains[domain] = time.time() + self._skip_ttl_seconds
+            return True
+        return False
 
     @staticmethod
     def _parse_published_time(data: dict[str, Any]):

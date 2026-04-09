@@ -62,12 +62,17 @@ class Settings:
     kimi_base_url: str = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
     report_primary_model: str = os.getenv("REPORT_PRIMARY_MODEL", "kimi-k2.5")
     report_fallback_model: str = os.getenv("REPORT_FALLBACK_MODEL", "minimax/minimax-m2.7")
+    strict_primary_model_for_tool_use: bool = _as_bool(os.getenv("STRICT_PRIMARY_MODEL_FOR_TOOL_USE"), default=True)
+    strict_primary_model_for_all_llm: bool = _as_bool(os.getenv("STRICT_PRIMARY_MODEL_FOR_ALL_LLM"), default=True)
+    tool_use_fallback_mode: str = os.getenv("TOOL_USE_FALLBACK_MODE", "disabled")
 
     report_hour: int = int(os.getenv("REPORT_HOUR", "10"))
     report_minute: int = int(os.getenv("REPORT_MINUTE", "0"))
     retrieval_window_hours: int = int(os.getenv("RETRIEVAL_WINDOW_HOURS", "24"))
     max_extractions_per_run: int = int(os.getenv("MAX_EXTRACTIONS_PER_RUN", "18"))
     max_items_per_section: int = int(os.getenv("MAX_ITEMS_PER_SECTION", "3"))
+    report_min_formal_topics: int = int(os.getenv("REPORT_MIN_FORMAL_TOPICS", "3"))
+    report_target_items: int = int(os.getenv("REPORT_TARGET_ITEMS", "4"))
     pipeline_version: str = os.getenv("PIPELINE_VERSION", "native-v2")
 
     shadow_mode: bool = _as_bool(os.getenv("SHADOW_MODE"), default=True)

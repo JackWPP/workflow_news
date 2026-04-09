@@ -20,12 +20,12 @@ if TYPE_CHECKING:
 
 # ── 默认工具超时（秒） ──────────────────────────────────────
 DEFAULT_TOOL_TIMEOUTS: dict[str, float] = {
-    "web_search": 30.0,
+    "web_search": 45.0,
     "read_page": 25.0,
     "search_images": 20.0,
     "evaluate_article": 25.0,
     "write_section": 45.0,
-    "compare_sources": 30.0,
+    "compare_sources": 45.0,
     "verify_image": 15.0,
     "follow_references": 5.0,
     "check_coverage": 5.0,
@@ -56,6 +56,13 @@ DEFAULT_BLOCKED_DOMAINS: list[str] = [
     "baike.baidu.com", "zhuanlan.zhihu.com", "bilibili.com",
     # ── 财经 / 投资类（非行业内容）──
     "cn.investing.com",
+    "investing.com",
+    # ── B2B 电商平台（非新闻来源）──
+    "made-in-china.com",
+    "alibaba.com",
+    "1688.com",
+    "globalsources.com",
+    "indiamart.com",
     # ── 台湾媒体 ──
     "digitimes.com.tw", "udn.com", "ltn.com.tw", "chinatimes.com",
     "yahoo.com.tw", "tw.news.yahoo.com", "ctee.com.tw", "money.udn.com",
