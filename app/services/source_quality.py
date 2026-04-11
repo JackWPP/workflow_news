@@ -59,14 +59,47 @@ LOW_VALUE_DOMAINS = {
     "yiqi.com": "aggregator",
     "zhuansushijie.com": "aggregator",
     "marketsandmarkets.com": "marketing",
+    "hbsztv.com": "aggregator",
+    "jdzj.com": "ecommerce",
+    "b2b168.com": "ecommerce",
+    "stockstar.com": "marketing",
+    "eastmoney.com": "marketing",
+    "10jqka.com.cn": "marketing",
+    "china-packcon.com": "marketing",
+    "china-ipif.com": "marketing",
 }
 
-NEWS_PATH_PARTS = ("news", "press", "media", "announcement", "announcements", "corporate")
-PRODUCT_PATH_PARTS = ("product", "products", "service", "services", "solutions", "catalog", "chanpin")
+NEWS_PATH_PARTS = (
+    "news",
+    "press",
+    "media",
+    "announcement",
+    "announcements",
+    "corporate",
+)
+PRODUCT_PATH_PARTS = (
+    "product",
+    "products",
+    "service",
+    "services",
+    "solutions",
+    "catalog",
+    "chanpin",
+)
 ABOUT_PATH_PARTS = ("about", "company", "profile", "introduction")
 DOWNLOAD_HINTS = ("download", "attachment", "export", ".pdf")
 SEARCH_HINTS = ("search", "query", "keyword", "tag")
-PRICE_HINTS = ("price", "quote", "qihuo", "futures", "jiage", "detail/pp", "/pe/", "/pom")
+SITEMAP_HINTS = ("sitemap", "site-map", "/sitemap")
+PRICE_HINTS = (
+    "price",
+    "quote",
+    "qihuo",
+    "futures",
+    "jiage",
+    "detail/pp",
+    "/pe/",
+    "/pom",
+)
 NEWSROOM_HINTS = (
     "/corporate/news",
     "/company/news",
@@ -89,11 +122,22 @@ ANTI_BOT_PATTERNS = (
     "security verification",
     "unavailable for legal reasons",
 )
-NUMERIC_FACT_RE = re.compile(r"(\d+(?:\.\d+)?\s*(?:%|亿|万|kg|吨|t|亿元|亿美元|million|billion))", re.IGNORECASE)
-PRICE_CONTEXT_RE = re.compile(r"(涨|跌|均价|报价|现货|期货|供需|价差|库存|成本|开工|price|demand|supply)", re.IGNORECASE)
+NUMERIC_FACT_RE = re.compile(
+    r"(\d+(?:\.\d+)?\s*(?:%|亿|万|kg|吨|t|亿元|亿美元|million|billion))", re.IGNORECASE
+)
+PRICE_CONTEXT_RE = re.compile(
+    r"(涨|跌|均价|报价|现货|期货|供需|价差|库存|成本|开工|price|demand|supply)",
+    re.IGNORECASE,
+)
 DATE_RE = re.compile(r"(20\d{2}[-/年.]\d{1,2}[-/月.]\d{1,2}日?)")
-MATERIAL_RE = re.compile(r"(pp|pe|pvc|pet|pom|abs|pla|pha|树脂|聚丙烯|聚乙烯|聚甲醛|工程塑料|原料)", re.IGNORECASE)
-PRICE_MOVE_RE = re.compile(r"(上涨|下跌|走高|走低|波动|回落|上调|下调|涨|跌|increase|decrease|rose|fell)", re.IGNORECASE)
+MATERIAL_RE = re.compile(
+    r"(pp|pe|pvc|pet|pom|abs|pla|pha|树脂|聚丙烯|聚乙烯|聚甲醛|工程塑料|原料)",
+    re.IGNORECASE,
+)
+PRICE_MOVE_RE = re.compile(
+    r"(上涨|下跌|走高|走低|波动|回落|上调|下调|涨|跌|increase|decrease|rose|fell)",
+    re.IGNORECASE,
+)
 
 
 def classify_source(
@@ -104,12 +148,27 @@ def classify_source(
 ) -> dict[str, Any]:
     domain = extract_domain(url)
     page_kind = detect_page_kind(url, title=title, content=content)
-    source_kind = detect_source_kind(domain, page_kind, url=url, title=title, content=content)
+    source_kind = detect_source_kind(
+        domain, page_kind, url=url, title=title, content=content
+    )
     source_tier = infer_source_tier(domain, page_kind, source_kind, url=url)
-    is_primary_source = source_kind in {"government", "academic_journal", "official_company_newsroom", "standards"}
-    supports_numeric_claims = source_tier in {"A", "B"} and contains_numeric_facts(f"{title}\n{content}")
-    evidence_strength = infer_evidence_strength(source_tier, page_kind, is_primary_source)
-    allowed_for_trend_summary = source_tier in {"A", "B"} and page_kind not in {"price_snapshot", "download", "anti_bot"}
+    is_primary_source = source_kind in {
+        "government",
+        "academic_journal",
+        "official_company_newsroom",
+        "standards",
+    }
+    supports_numeric_claims = source_tier in {"A", "B"} and contains_numeric_facts(
+        f"{title}\n{content}"
+    )
+    evidence_strength = infer_evidence_strength(
+        source_tier, page_kind, is_primary_source
+    )
+    allowed_for_trend_summary = source_tier in {"A", "B"} and page_kind not in {
+        "price_snapshot",
+        "download",
+        "anti_bot",
+    }
     requires_observation_only = source_tier == "C"
     publish_block_reason = None
 
@@ -149,7 +208,11 @@ def detect_page_kind(url: str, title: str = "", content: str = "") -> str:
         return "download"
     if path.endswith(".pdf"):
         return "download"
-    if any(hint in path for hint in DOWNLOAD_HINTS) or any(hint in query for hint in DOWNLOAD_HINTS):
+    if any(hint in path for hint in SITEMAP_HINTS):
+        return "navigation"
+    if any(hint in path for hint in DOWNLOAD_HINTS) or any(
+        hint in query for hint in DOWNLOAD_HINTS
+    ):
         return "download"
     if any(pattern in content_signals for pattern in ANTI_BOT_PATTERNS):
         return "anti_bot"
@@ -163,7 +226,11 @@ def detect_page_kind(url: str, title: str = "", content: str = "") -> str:
         return "price_snapshot"
     if path in {"", "/"}:
         return "homepage"
-    if any(part in path for part in NEWS_PATH_PARTS) or "/article/" in path or "/articles/" in path:
+    if (
+        any(part in path for part in NEWS_PATH_PARTS)
+        or "/article/" in path
+        or "/articles/" in path
+    ):
         return "news"
     if looks_like_navigation_page(title_lower, content_head):
         return "navigation"
@@ -172,7 +239,9 @@ def detect_page_kind(url: str, title: str = "", content: str = "") -> str:
     return "article"
 
 
-def detect_source_kind(domain: str, page_kind: str, *, url: str = "", title: str = "", content: str = "") -> str:
+def detect_source_kind(
+    domain: str, page_kind: str, *, url: str = "", title: str = "", content: str = ""
+) -> str:
     url_lower = url.lower()
     if domain.endswith(".gov.cn") or domain.endswith(".gov"):
         return "government"
@@ -209,21 +278,44 @@ def detect_source_kind(domain: str, page_kind: str, *, url: str = "", title: str
     return "general_site"
 
 
-def infer_source_tier(domain: str, page_kind: str, source_kind: str, *, url: str = "") -> str:
-    if page_kind in {"download", "anti_bot", "binary", "search", "navigation", "product", "about", "homepage"}:
+def infer_source_tier(
+    domain: str, page_kind: str, source_kind: str, *, url: str = ""
+) -> str:
+    if page_kind in {
+        "download",
+        "anti_bot",
+        "binary",
+        "search",
+        "navigation",
+        "product",
+        "about",
+        "homepage",
+    }:
         return "D"
     if source_kind in {"ecommerce", "marketing", "aggregator"}:
         return "D"
     if source_kind in {"government", "academic_journal", "top_industry_media"}:
         return "A"
-    if source_kind in {"official_company_newsroom", "vertical_media", "mainstream_media", "academic"}:
+    if source_kind in {
+        "official_company_newsroom",
+        "vertical_media",
+        "mainstream_media",
+        "academic",
+    }:
         return "B"
-    if source_kind in {"technical_blog", "content_platform", "general_site", "company_site"}:
+    if source_kind in {
+        "technical_blog",
+        "content_platform",
+        "general_site",
+        "company_site",
+    }:
         return "C"
     return "C"
 
 
-def infer_evidence_strength(source_tier: str, page_kind: str, is_primary_source: bool) -> str:
+def infer_evidence_strength(
+    source_tier: str, page_kind: str, is_primary_source: bool
+) -> str:
     if source_tier == "A" and is_primary_source:
         return "high"
     if source_tier in {"A", "B"} and page_kind in {"news", "article", "price_snapshot"}:
@@ -250,7 +342,17 @@ def is_valid_price_content(title: str, content: str) -> bool:
 def looks_like_navigation_page(title: str, content: str) -> bool:
     if not content:
         return False
-    nav_terms = ["首页", "上一页", "下一页", "相关阅读", "推荐阅读", "更多内容", "登录", "注册", "频道"]
+    nav_terms = [
+        "首页",
+        "上一页",
+        "下一页",
+        "相关阅读",
+        "推荐阅读",
+        "更多内容",
+        "登录",
+        "注册",
+        "频道",
+    ]
     hits = sum(1 for term in nav_terms if term in content)
     return hits >= 4 or (title in {"搜索", "资讯", "新闻"} and hits >= 2)
 

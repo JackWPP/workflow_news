@@ -13,6 +13,7 @@ agent_core.py — Agent Loop 引擎
   - 旧 pipeline：每一步做什么由代码决定（确定性）
   - Agent Loop：每一步做什么由 LLM 决定（自主性）
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentResult:
     """一次 Agent 运行的最终结果。"""
+
     success: bool
     title: str
     summary: str
@@ -47,7 +49,7 @@ class AgentResult:
     editorial: str = ""
     memory_snapshot: dict[str, Any] = field(default_factory=dict)
     harness_status: dict[str, Any] = field(default_factory=dict)
-    finished_reason: str = "unknown"   # "complete" | "budget_exhausted" | "timeout" | "error" | "finish_tool"
+    finished_reason: str = "unknown"  # "complete" | "budget_exhausted" | "timeout" | "error" | "finish_tool"
     step_count: int = 0
     total_tokens: int = 0
     diagnostics: dict[str, Any] = field(default_factory=dict)
@@ -112,6 +114,7 @@ class AgentCore:
         step_index = 0
         consecutive_finish_rejects = 0
         consecutive_no_tool_responses = 0
+        consecutive_failed_steps = 0
         llm_no_tool_stall_count = 0
         _wind_down_warned = False
 
@@ -123,7 +126,9 @@ class AgentCore:
 
         logger.info("[AgentCore] Starting agent run. Task: %s", task[:100])
 
-        while self.harness.effective_budget_remaining > 0 and not self.harness.timed_out:
+        while (
+            self.harness.effective_budget_remaining > 0 and not self.harness.timed_out
+        ):
             step_index += 1
             step_start = time.time()
 
@@ -135,7 +140,11 @@ class AgentCore:
             # 记录 LLM 的思考
             if llm_response.thought:
                 memory.record_thought(llm_response.thought)
-                logger.debug("[AgentCore] Step %d thought: %s", step_index, llm_response.thought[:200])
+                logger.debug(
+                    "[AgentCore] Step %d thought: %s",
+                    step_index,
+                    llm_response.thought[:200],
+                )
 
             # === Step 2: 检查是否结束 ===
             if llm_response.is_finish or not llm_response.has_tool_calls:
@@ -144,8 +153,14 @@ class AgentCore:
                     finish_result = self._extract_finish_result(llm_response, memory)
                 except StopIteration as e:
                     consecutive_finish_rejects += 1
-                    if consecutive_finish_rejects > self.harness.max_consecutive_finish_rejects:
-                        logger.info("[AgentCore] Force-accepting finish after %d consecutive rejects", consecutive_finish_rejects)
+                    if (
+                        consecutive_finish_rejects
+                        > self.harness.max_consecutive_finish_rejects
+                    ):
+                        logger.info(
+                            "[AgentCore] Force-accepting finish after %d consecutive rejects",
+                            consecutive_finish_rejects,
+                        )
                         # 提取 finish 参数（放宽限制）
                         for tc in llm_response.tool_calls:
                             if tc.tool_name == "finish":
@@ -154,44 +169,67 @@ class AgentCore:
                         else:
                             finish_result = {}
                     else:
-                        logger.info("[AgentCore] Intercepted premature finish (%d/%d): %s",
-                                    consecutive_finish_rejects, self.harness.max_consecutive_finish_rejects, e)
-                        messages.append({
-                            "role": "user",
-                            "content": f"系统提示：你试图调用 finish，但是被拒绝。原因：{str(e)} 请继续使用 web_search 探索新方向并使用 evaluate_article 评估文章。"
-                        })
+                        logger.info(
+                            "[AgentCore] Intercepted premature finish (%d/%d): %s",
+                            consecutive_finish_rejects,
+                            self.harness.max_consecutive_finish_rejects,
+                            e,
+                        )
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": f"系统提示：你试图调用 finish，但是被拒绝。原因：{str(e)} 请继续使用 web_search 探索新方向并使用 evaluate_article 评估文章。",
+                            }
+                        )
                         continue
 
                 if finish_result:
-                    logger.info("[AgentCore] Agent finished via finish tool at step %d", step_index)
+                    logger.info(
+                        "[AgentCore] Agent finished via finish tool at step %d",
+                        step_index,
+                    )
                     return self._build_result(
                         memory,
                         finish_result,
                         "finish_tool",
                         step_index,
                         total_tokens,
-                        diagnostics={"llm_no_tool_stall_count": llm_no_tool_stall_count},
+                        diagnostics={
+                            "llm_no_tool_stall_count": llm_no_tool_stall_count
+                        },
                     )
                 # 纯文本回复（没有工具调用），继续循环但记录
                 # 注意：必须携带 reasoning_content，否则 kimi-k2.5 在后续请求中会报 400
                 consecutive_no_tool_responses += 1
-                messages.append({
-                    "role": "assistant",
-                    "content": llm_response.content,
-                    "reasoning_content": llm_response.reasoning_content or llm_response.content or "[assistant response]",
-                })
-                logger.debug("[AgentCore] LLM gave text response without tool calls at step %d", step_index)
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": llm_response.content,
+                        "reasoning_content": llm_response.reasoning_content
+                        or llm_response.content
+                        or "[assistant response]",
+                    }
+                )
+                logger.debug(
+                    "[AgentCore] LLM gave text response without tool calls at step %d",
+                    step_index,
+                )
                 if consecutive_no_tool_responses >= 3:
                     llm_no_tool_stall_count += 1
-                    logger.warning("[AgentCore] Agent stalled with %d consecutive no-tool replies", consecutive_no_tool_responses)
+                    logger.warning(
+                        "[AgentCore] Agent stalled with %d consecutive no-tool replies",
+                        consecutive_no_tool_responses,
+                    )
                     if self._event_queue:
                         try:
-                            self._event_queue.put_nowait({
-                                "type": "warning",
-                                "warning_code": "llm_no_tool_stall",
-                                "message": "LLM 连续多轮未调用工具，已提前收敛。",
-                                "step_index": step_index,
-                            })
+                            self._event_queue.put_nowait(
+                                {
+                                    "type": "warning",
+                                    "warning_code": "llm_no_tool_stall",
+                                    "message": "LLM 连续多轮未调用工具，已提前收敛。",
+                                    "step_index": step_index,
+                                }
+                            )
                         except Exception:
                             pass
                     return self._build_fallback_result(
@@ -199,14 +237,18 @@ class AgentCore:
                         "llm_no_tool_stall",
                         step_index,
                         total_tokens,
-                        diagnostics={"llm_no_tool_stall_count": llm_no_tool_stall_count},
+                        diagnostics={
+                            "llm_no_tool_stall_count": llm_no_tool_stall_count
+                        },
                     )
                 # 如果连续没有工具调用，给出提示
                 if step_index > 3:
-                    messages.append({
-                        "role": "user",
-                        "content": "请记得使用可用的工具继续探索，或者调用 finish 完成报告。"
-                    })
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": "请记得使用可用的工具继续探索，或者调用 finish 完成报告。",
+                        }
+                    )
                 continue
 
             # === Step 3: 执行工具调用 ===
@@ -228,7 +270,11 @@ class AgentCore:
                 # Harness 检查
                 allowed, deny_reason = self.harness.allows(tool_call)
                 if not allowed:
-                    logger.info("[AgentCore] Harness blocked %s: %s", tool_call.tool_name, deny_reason)
+                    logger.info(
+                        "[AgentCore] Harness blocked %s: %s",
+                        tool_call.tool_name,
+                        deny_reason,
+                    )
                     tool_result = ToolResult(
                         success=False,
                         summary=f"[Harness 拦截] {deny_reason}",
@@ -256,7 +302,7 @@ class AgentCore:
                         # 更新计数器（搜索/阅读分类计数）
                         if tool_call.tool_name in {"web_search", "search_images"}:
                             self.harness.record_search()
-                        elif tool_call.tool_name in {"read_page", "follow_references"}:
+                        elif tool_call.tool_name == "read_page":
                             self.harness.record_read()
 
                         try:
@@ -266,37 +312,60 @@ class AgentCore:
                                 timeout=timeout,
                             )
                         except asyncio.TimeoutError:
-                            logger.warning("[AgentCore] Tool %s timed out (%.0fs)", tool_call.tool_name, timeout)
+                            logger.warning(
+                                "[AgentCore] Tool %s timed out (%.0fs)",
+                                tool_call.tool_name,
+                                timeout,
+                            )
                             tool_result = ToolResult(
                                 success=False,
                                 summary=f"工具超时({tool_call.tool_name}, 限制{timeout:.0f}秒)",
-                                data={"error_type": "timeout", "tool": tool_call.tool_name},
+                                data={
+                                    "error_type": "timeout",
+                                    "tool": tool_call.tool_name,
+                                },
                             )
                         except httpx.HTTPStatusError as exc:
                             status = exc.response.status_code
                             error_type = "rate_limit" if status == 429 else "http_error"
-                            logger.warning("[AgentCore] Tool %s HTTP %d", tool_call.tool_name, status)
+                            logger.warning(
+                                "[AgentCore] Tool %s HTTP %d",
+                                tool_call.tool_name,
+                                status,
+                            )
                             tool_result = ToolResult(
                                 success=False,
                                 summary=f"HTTP错误 {status}",
                                 data={"error_type": error_type, "status": status},
                             )
                         except httpx.TimeoutException:
-                            logger.warning("[AgentCore] Tool %s network timeout", tool_call.tool_name)
+                            logger.warning(
+                                "[AgentCore] Tool %s network timeout",
+                                tool_call.tool_name,
+                            )
                             tool_result = ToolResult(
                                 success=False,
                                 summary="网络请求超时",
                                 data={"error_type": "network_timeout"},
                             )
                         except json.JSONDecodeError as exc:
-                            logger.warning("[AgentCore] Tool %s JSON parse error: %s", tool_call.tool_name, exc)
+                            logger.warning(
+                                "[AgentCore] Tool %s JSON parse error: %s",
+                                tool_call.tool_name,
+                                exc,
+                            )
                             tool_result = ToolResult(
                                 success=False,
                                 summary="返回格式解析错误",
                                 data={"error_type": "parse_error"},
                             )
                         except Exception as exc:
-                            logger.error("[AgentCore] Tool %s unexpected error: %s", tool_call.tool_name, exc, exc_info=True)
+                            logger.error(
+                                "[AgentCore] Tool %s unexpected error: %s",
+                                tool_call.tool_name,
+                                exc,
+                                exc_info=True,
+                            )
                             tool_result = ToolResult(
                                 success=False,
                                 summary=f"工具异常: {exc}",
@@ -334,24 +403,77 @@ class AgentCore:
 
                 # 检查 finish 工具
                 if tool_call.tool_name == "finish" and tool_result.success:
-                    logger.info("[AgentCore] finish tool executed at step %d", step_index)
+                    logger.info(
+                        "[AgentCore] finish tool executed at step %d", step_index
+                    )
                     return self._build_result(
                         memory,
                         tool_result.data,
                         "finish_tool",
                         step_index,
                         total_tokens,
-                        diagnostics={"llm_no_tool_stall_count": llm_no_tool_stall_count},
+                        diagnostics={
+                            "llm_no_tool_stall_count": llm_no_tool_stall_count
+                        },
                     )
 
-                logger.debug("[AgentCore] Step %d [%s]: %s", step_index, tool_call.tool_name, tool_result.summary[:100])
+                if tool_result.success:
+                    consecutive_failed_steps = 0
+                else:
+                    consecutive_failed_steps += 1
+                    if consecutive_failed_steps >= 5:
+                        logger.warning(
+                            "[AgentCore] Agent stalled with %d consecutive failed tool steps",
+                            consecutive_failed_steps,
+                        )
+                        return self._build_fallback_result(
+                            memory,
+                            "no_progress_stall",
+                            step_index,
+                            total_tokens,
+                            diagnostics={
+                                "llm_no_tool_stall_count": llm_no_tool_stall_count,
+                                "consecutive_failed_steps": consecutive_failed_steps,
+                            },
+                        )
+
+                if (
+                    tool_call.tool_name in {"web_search", "search_images"}
+                    and memory.consecutive_empty_searches >= 5
+                ):
+                    logger.warning(
+                        "[AgentCore] Empty-search stall: %d consecutive empty searches, widening to %dh",
+                        memory.consecutive_empty_searches,
+                        memory.current_recency_hours,
+                    )
+                    if self._event_queue:
+                        try:
+                            self._event_queue.put_nowait(
+                                {
+                                    "type": "warning",
+                                    "warning_code": "empty_search_stall",
+                                    "message": f"连续 {memory.consecutive_empty_searches} 次搜索无可用结果，已将时效窗口扩大到 {memory.current_recency_hours}h。",
+                                    "step_index": step_index,
+                                }
+                            )
+                        except Exception:
+                            pass
+
+                logger.debug(
+                    "[AgentCore] Step %d [%s]: %s",
+                    step_index,
+                    tool_call.tool_name,
+                    tool_result.summary[:100],
+                )
 
             messages.extend(tool_result_messages)
 
             # 动态预算感知：资源即将耗尽时注入收尾提示（只提示一次）
             if self.harness.should_wind_down and not _wind_down_warned:
                 _wind_down_warned = True
-                remaining_time = max(0, self.harness.max_duration_seconds - self.harness.elapsed_seconds)
+                remaining_time = max(
+                    0, self.harness.max_duration_seconds - self.harness.elapsed_seconds
+                )
                 wind_down_msg = (
                     f"⚠️ 资源即将耗尽（剩余约 {self.harness.effective_budget_remaining} 步，"
                     f"{remaining_time:.0f}s）。"
@@ -361,7 +483,9 @@ class AgentCore:
 
         # === Budget 耗尽或超时 ===
         finished_reason = "timeout" if self.harness.timed_out else "budget_exhausted"
-        logger.info("[AgentCore] Agent stopped: %s at step %d", finished_reason, step_index)
+        logger.info(
+            "[AgentCore] Agent stopped: %s at step %d", finished_reason, step_index
+        )
 
         # 尝试用当前 memory 生成兜底报告
         return self._build_fallback_result(
@@ -414,7 +538,9 @@ class AgentCore:
         # 保留: system + task + 最近 N 条
         system = messages[0] if messages else None
         task = messages[1] if len(messages) > 1 else None
-        recent = messages[-keep_recent:] if len(messages) > keep_recent else messages[2:]
+        recent = (
+            messages[-keep_recent:] if len(messages) > keep_recent else messages[2:]
+        )
 
         # 压缩中间消息
         middle = messages[2:-keep_recent] if len(messages) > keep_recent + 2 else []
@@ -424,19 +550,23 @@ class AgentCore:
             content = msg.get("content", "")
             if role == "tool" and len(content) > 200:
                 # 工具结果压缩
-                compressed.append({
-                    "role": role,
-                    "tool_call_id": msg.get("tool_call_id", ""),
-                    "content": content[:200] + "...[已截断]",
-                })
+                compressed.append(
+                    {
+                        "role": role,
+                        "tool_call_id": msg.get("tool_call_id", ""),
+                        "content": content[:200] + "...[已截断]",
+                    }
+                )
             elif role == "assistant" and msg.get("tool_calls"):
                 # 保留 assistant 消息但截断长内容
                 compressed.append(msg)
             elif role == "user" and len(content) > 200:
-                compressed.append({
-                    "role": role,
-                    "content": content[:200] + "...[已截断]",
-                })
+                compressed.append(
+                    {
+                        "role": role,
+                        "content": content[:200] + "...[已截断]",
+                    }
+                )
             else:
                 compressed.append(msg)
 
@@ -479,7 +609,9 @@ class AgentCore:
 
         # 始终携带 reasoning_content（即使是空字符串），避免 kimi-k2.5 报错：
         # "thinking is enabled but reasoning_content is missing"
-        msg["reasoning_content"] = llm_response.reasoning_content or llm_response.content or "[tool planning]"
+        msg["reasoning_content"] = (
+            llm_response.reasoning_content or llm_response.content or "[tool planning]"
+        )
 
         if llm_response.tool_calls:
             msg["tool_calls"] = [
@@ -504,9 +636,16 @@ class AgentCore:
                 min_searches = self.harness.min_searches_before_finish
                 min_articles = self.harness.min_articles_before_finish
                 if min_searches > 0 and len(memory.searched_queries) < min_searches:
-                    raise StopIteration(f"搜索次数不足（{len(memory.searched_queries)}/{min_searches}），请继续搜索更多方向。")
-                if min_articles > 0 and len(memory.publishable_articles()) < min_articles:
-                    raise StopIteration(f"可发布文章不足（{len(memory.publishable_articles())}/{min_articles}），请继续阅读和评估文章。")
+                    raise StopIteration(
+                        f"搜索次数不足（{len(memory.searched_queries)}/{min_searches}），请继续搜索更多方向。"
+                    )
+                if (
+                    min_articles > 0
+                    and len(memory.publishable_articles()) < min_articles
+                ):
+                    raise StopIteration(
+                        f"可发布文章不足（{len(memory.publishable_articles())}/{min_articles}），请继续阅读和评估文章。"
+                    )
                 return tc.arguments
         return None
 
@@ -536,8 +675,13 @@ class AgentCore:
         # 再用 finish 参数覆盖/补充（如果 LLM 也传了的话）
         sections_from_memory = memory.get_all_sections_content()
         raw_sections = finish_data.get("sections_content", {})
-        sections_from_finish: dict[str, str] = raw_sections if isinstance(raw_sections, dict) else {}
-        merged_sections: dict[str, str] = {**sections_from_memory, **sections_from_finish}
+        sections_from_finish: dict[str, str] = (
+            raw_sections if isinstance(raw_sections, dict) else {}
+        )
+        merged_sections: dict[str, str] = {
+            **sections_from_memory,
+            **sections_from_finish,
+        }
 
         return AgentResult(
             success=True,
@@ -605,15 +749,22 @@ class AgentCore:
                 step = AgentStep(
                     agent_run_id=agent_run_id,
                     stage_name=step_record.tool_name,
-                    status="completed" if not step_record.harness_blocked else "blocked",
+                    status="completed"
+                    if not step_record.harness_blocked
+                    else "blocked",
                     round_index=step_record.step_index,
                     decision_type="tool_call",
                     decision_summary=step_record.result_summary[:500],
                     duration_seconds=step_record.duration_seconds,
                     fallback_triggered=step_record.harness_blocked,
-                    input_payload={"arguments": step_record.arguments, "thought": thought[:1000] if thought else ""},
+                    input_payload={
+                        "arguments": step_record.arguments,
+                        "thought": thought[:1000] if thought else "",
+                    },
                     output_payload={"result_summary": step_record.result_summary[:500]},
-                    error_message=step_record.block_reason if step_record.harness_blocked else None,
+                    error_message=step_record.block_reason
+                    if step_record.harness_blocked
+                    else None,
                 )
                 step_session.add(step)
                 step_session.flush()
@@ -623,14 +774,16 @@ class AgentCore:
         # 推送实时事件到 SSE 队列
         if self._event_queue:
             try:
-                self._event_queue.put_nowait({
-                    "type": "step",
-                    "tool_name": step_record.tool_name,
-                    "thought": (thought or "")[:200],
-                    "result_summary": step_record.result_summary[:300],
-                    "duration": round(step_record.duration_seconds, 2),
-                    "step_index": step_record.step_index,
-                    "harness_blocked": step_record.harness_blocked,
-                })
+                self._event_queue.put_nowait(
+                    {
+                        "type": "step",
+                        "tool_name": step_record.tool_name,
+                        "thought": (thought or "")[:200],
+                        "result_summary": step_record.result_summary[:300],
+                        "duration": round(step_record.duration_seconds, 2),
+                        "step_index": step_record.step_index,
+                        "harness_blocked": step_record.harness_blocked,
+                    }
+                )
             except Exception:
                 pass  # 不影响主流程

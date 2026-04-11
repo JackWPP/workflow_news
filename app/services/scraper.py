@@ -28,6 +28,14 @@ _ARTICLE_PUBLISHED_RE_ALT = re.compile(
     re.IGNORECASE,
 )
 _TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_JINA_FIRST_DOMAINS = (
+    "toutiao.com",
+    "qq.com",
+    "weixin.qq.com",
+    "mp.weixin.qq.com",
+    "36kr.com",
+    "baijiahao.baidu.com",
+)
 
 
 def _extract_html_meta(html: str) -> tuple[str, str | None, Any]:
@@ -67,6 +75,7 @@ class ScraperClient:
             self._jina = jina_client
         else:
             from app.services.jina_reader import JinaReaderClient
+
             self._jina = JinaReaderClient()
         self._browser_fallback = browser_fallback
 
@@ -74,8 +83,19 @@ class ScraperClient:
     def enabled(self) -> bool:
         return True  # Trafilatura 始终可用
 
-    async def scrape(self, url: str, timeout_seconds: int | None = None) -> dict[str, Any]:
+    async def scrape(
+        self, url: str, timeout_seconds: int | None = None
+    ) -> dict[str, Any]:
         timeout = timeout_seconds or settings.scrape_timeout_seconds
+
+        if self._prefer_jina_first(url):
+            try:
+                result = await self._jina.scrape(url, timeout_seconds=timeout)
+                if result.get("status") != "error" and result.get("markdown"):
+                    logger.debug("scraper: Jina-first success for %s", url)
+                    return result
+            except Exception as exc:
+                logger.debug("scraper: Jina-first failed for %s: %s", url, exc)
 
         # 第一层：Trafilatura（本地，最快）
         try:
@@ -116,6 +136,14 @@ class ScraperClient:
                 "error": str(exc),
                 "scrape_layer": "none",
             }
+
+    @staticmethod
+    def _prefer_jina_first(url: str) -> bool:
+        domain = extract_domain(url)
+        return any(
+            domain == candidate or domain.endswith(f".{candidate}")
+            for candidate in _JINA_FIRST_DOMAINS
+        )
 
     async def _trafilatura_scrape(self, url: str) -> dict[str, Any] | None:
         """用 Trafilatura 提取正文+内联图片，用 HTML meta 补充 title/og:image/date。"""

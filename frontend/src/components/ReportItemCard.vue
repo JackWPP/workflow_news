@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { ReportItem } from '../types'
 import { ExternalLink, Image as ImageIcon, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-vue-next'
+import { cardBrief, evidenceLabel, presentSourceName, sourceKindLabel, trustLabel } from '../lib/reportPresentation'
 
 const props = defineProps<{ item: ReportItem }>()
 
@@ -31,6 +32,27 @@ const cardStyle = computed(() => {
                    props.item.section === 'policy' ? 'var(--glow-purple)' : 'var(--glow-blue)'
   }
 })
+
+const friendlySourceName = computed(() => {
+  return presentSourceName(props.item.source_name, props.item.source_url)
+})
+
+const sourceTrust = computed(() => trustLabel(props.item.decision_trace))
+const evidenceText = computed(() => evidenceLabel(props.item.decision_trace))
+const sourceKindText = computed(() => sourceKindLabel(props.item.decision_trace))
+const brief = computed(() => cardBrief(props.item))
+
+const publishedLabel = computed(() => {
+  if (!props.item.published_at) return '时间待确认'
+  const publishedAt = new Date(props.item.published_at)
+  if (Number.isNaN(publishedAt.getTime())) return '时间待确认'
+  const diffMs = Date.now() - publishedAt.getTime()
+  const diffHours = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60)))
+  if (diffHours < 1) return '1小时内'
+  if (diffHours < 24) return `${diffHours}小时前`
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays}天前`
+})
 </script>
 
 <template>
@@ -39,14 +61,15 @@ const cardStyle = computed(() => {
     <div class="absolute top-0 left-0 w-full h-1 bg-[var(--card-accent)] opacity-50 group-hover:opacity-100 transition-opacity"></div>
 
     <!-- Image Area -->
-    <div v-if="item.image_url" class="relative max-h-48 overflow-hidden bg-black/40 border-b border-white/5">
-      <img :src="item.image_url" :alt="item.image_caption || item.title" loading="lazy" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
-      <div v-if="item.has_verified_image" class="absolute top-2 right-2 bg-black/60 backdrop-blur-md rounded-full px-2 py-1 flex items-center gap-1 text-[10px] text-[var(--status-ok)] border border-[var(--status-ok)]/30">
-        <CheckCircle2 class="w-3 h-3" /> 已验证配图
+      <div v-if="item.image_url" class="relative max-h-48 overflow-hidden bg-black/40 border-b border-white/5">
+        <img :src="item.image_url" :alt="item.image_caption || item.title" loading="lazy" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+        <div v-if="item.has_verified_image" class="absolute top-2 right-2 bg-black/60 backdrop-blur-md rounded-full px-2 py-1 flex items-center gap-1 text-[10px] text-[var(--status-ok)] border border-[var(--status-ok)]/30">
+          <CheckCircle2 class="w-3 h-3" /> 高质量配图
+        </div>
       </div>
-    </div>
-    <div v-else class="h-16 flex items-center justify-center bg-black/20 border-b border-white/5 text-[var(--text-muted)] border-dashed">
+    <div v-else class="h-16 flex items-center justify-center gap-2 bg-black/20 border-b border-white/5 text-[var(--text-muted)] border-dashed text-xs">
       <ImageIcon class="w-5 h-5 opacity-50" />
+      <span>本条暂无合适配图</span>
     </div>
 
     <!-- Content Area -->
@@ -60,8 +83,15 @@ const cardStyle = computed(() => {
         </span>
       </div>
 
+      <div class="flex flex-wrap items-center gap-2 text-[10px]">
+        <span class="px-2 py-1 rounded-full bg-white/5 text-[var(--text-muted)] border border-white/10">{{ sourceTrust }}</span>
+        <span class="px-2 py-1 rounded-full bg-[var(--card-accent)]/10 text-[var(--card-accent)] border border-[var(--card-accent)]/20">{{ evidenceText }}</span>
+        <span class="px-2 py-1 rounded-full bg-white/5 text-white/80 border border-white/10">{{ sourceKindText }}</span>
+        <span v-if="item.decision_trace?.supports_numeric_claims" class="px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-400/20">数字可引</span>
+      </div>
+
       <p class="text-[var(--text-secondary)] text-sm line-clamp-3 leading-relaxed">
-        {{ item.summary }}
+        {{ brief }}
       </p>
 
       <div class="mt-auto pt-4 flex flex-col gap-3">
@@ -73,8 +103,8 @@ const cardStyle = computed(() => {
 
         <div class="flex items-center justify-between text-xs mt-2">
           <div class="flex items-center gap-2 text-[var(--text-muted)]">
-            <span class="px-2 py-1 rounded bg-white/5">{{ item.source_name }}</span>
-            <span>{{ item.published_at ? new Date(item.published_at).toLocaleDateString() : '近期' }}</span>
+            <span class="px-2 py-1 rounded bg-white/5">{{ friendlySourceName }}</span>
+            <span>{{ publishedLabel }}</span>
           </div>
 
           <div class="flex items-center gap-3">

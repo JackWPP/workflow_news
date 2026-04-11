@@ -14,6 +14,7 @@ working_memory.py — Agent 的工作记忆
 WorkingMemory 是 Agent 的认知状态——它让 Agent 知道
 "我已经知道了什么"、"我还需要探索什么"。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -28,14 +29,15 @@ from app.utils import canonicalize_url, normalize_external_url
 @dataclass
 class ArticleSummary:
     """Agent 发现的一篇文章的摘要信息。"""
+
     title: str
     url: str
     domain: str
     source_name: str
     published_at: str | None
     summary: str
-    section: str          # academic / industry / policy
-    key_finding: str      # Agent 从这篇文章提炼的核心洞察
+    section: str  # academic / industry / policy
+    key_finding: str  # Agent 从这篇文章提炼的核心洞察
     has_image: bool = False
     image_url: str | None = None
     worth_publishing: bool = True
@@ -93,11 +95,12 @@ class ArticleSummary:
 @dataclass
 class ImageCandidate:
     """Agent 找到的图片候选。"""
+
     image_url: str
     source_url: str
     caption: str
-    relevance_score: float        # 0-1
-    origin_type: str              # article_inline / search_result / og_image
+    relevance_score: float  # 0-1
+    origin_type: str  # article_inline / search_result / og_image
     verified: bool = False
     verification_reason: str = ""
 
@@ -116,15 +119,17 @@ class ImageCandidate:
 @dataclass
 class ExplorationLead:
     """从已读内容中发现的值得探索的新线索。"""
+
     url: str
     title: str
-    reason: str         # 为什么值得探索
-    priority: float     # 0-1，越高越优先
+    reason: str  # 为什么值得探索
+    priority: float  # 0-1，越高越优先
 
 
 @dataclass
 class CoverageState:
     """当前覆盖状态检查。"""
+
     academic_count: int = 0
     industry_count: int = 0
     policy_count: int = 0
@@ -134,11 +139,13 @@ class CoverageState:
 
     @property
     def section_count(self) -> int:
-        return sum([
-            1 if self.academic_count > 0 else 0,
-            1 if self.industry_count > 0 else 0,
-            1 if self.policy_count > 0 else 0,
-        ])
+        return sum(
+            [
+                1 if self.academic_count > 0 else 0,
+                1 if self.industry_count > 0 else 0,
+                1 if self.policy_count > 0 else 0,
+            ]
+        )
 
     @property
     def total_articles(self) -> int:
@@ -146,22 +153,20 @@ class CoverageState:
 
     @property
     def is_publishable(self) -> bool:
-        """至少 3 个正式主题 + 2 个板块。"""
         topic_count = self.formal_topic_count or self.total_articles
-        return topic_count >= 3 and self.section_count >= 2
+        return topic_count >= 4 and self.section_count >= 2
 
     @property
     def is_complete(self) -> bool:
-        """至少 4 个正式主题 + 2 个板块。"""
         topic_count = self.formal_topic_count or self.total_articles
-        return topic_count >= 4 and self.section_count >= 2
+        return topic_count >= 6 and self.section_count >= 2
 
     def gaps(self) -> list[str]:
         gaps = []
         topic_count = self.formal_topic_count or self.total_articles
-        if topic_count < 3:
+        if topic_count < 4:
             label = "正式主题" if self.formal_topic_count else "高质量条目"
-            gaps.append(f"{label}不足（{topic_count}/3）")
+            gaps.append(f"{label}不足（{topic_count}/4）")
         if self.section_count < 2:
             missing = []
             if self.industry_count == 0:
@@ -192,6 +197,7 @@ class CoverageState:
 @dataclass
 class StepRecord:
     """一次工具调用的执行记录。"""
+
     step_index: int
     tool_name: str
     arguments: dict[str, Any]
@@ -285,6 +291,86 @@ class WorkingMemory:
         self.domain_failures: dict[str, dict[str, Any]] = {}
         self.search_provider_health: dict[str, dict[str, Any]] = {}
 
+        # 搜索空结果追踪（用于 stall detection）
+        self.consecutive_empty_searches: int = 0
+        self.current_recency_hours: int = 36
+
+        # ── 分层时效窗口 ──
+        # 不同板块对时效的容忍度不同：产业快讯需要最新，政策和学术可放宽
+        self._section_recency_hours: dict[str, int] = {
+            "industry": 36,  # 产业动态/价格/设备：36h 主窗口
+            "policy": 72,  # 政策标准/监管：72h
+            "academic": 168,  # 学术前沿/高校成果：7天
+        }
+        # 板块→关键词映射（与 _SECTION_HINT_KEYWORDS 对齐）
+        self._recency_section_keywords: dict[str, list[str]] = {
+            "policy": [
+                "政策",
+                "法规",
+                "标准",
+                "cbam",
+                "epr",
+                "限塑",
+                "监管",
+                "compliance",
+                "tariff",
+                "recycling",
+                "循环",
+                "禁塑",
+                "regulation",
+                "standard",
+                "directive",
+                "ppwr",
+                "packaging",
+                "food contact",
+            ],
+            "academic": [
+                "研究",
+                "突破",
+                "大学",
+                "实验室",
+                "期刊",
+                "paper",
+                "journal",
+                "polymerization",
+                "synthesis",
+                "novel",
+                "discovery",
+                "材料科学",
+                "高分子材料",
+                "university",
+                "research",
+                "breakthrough",
+                "lab",
+                "study",
+            ],
+            "industry": [
+                "注塑",
+                "挤出",
+                "设备",
+                "machine",
+                "plant",
+                "产能",
+                "扩产",
+                "工厂",
+                "量产",
+                "automotive",
+                "medical",
+                "价格",
+                "行情",
+                "树脂",
+                "助剂",
+                "添加剂",
+                "涨价",
+                "供应",
+                "injection",
+                "extrusion",
+                "price",
+                "market",
+                "resin",
+            ],
+        }
+
     # ── 搜索记录 ──────────────────────────────────────────
 
     def has_searched(self, query: str) -> bool:
@@ -310,7 +396,9 @@ class WorkingMemory:
             if normalized.get("url"):
                 normalized["url"] = normalize_external_url(str(normalized["url"]))
             if normalized.get("image_url"):
-                normalized["image_url"] = normalize_external_url(str(normalized["image_url"]))
+                normalized["image_url"] = normalize_external_url(
+                    str(normalized["image_url"])
+                )
             result_type = row.get("result_type") or row.get("search_type") or "web"
             if result_type == "images":
                 self.image_search_results.append(normalized)
@@ -321,7 +409,9 @@ class WorkingMemory:
                 article_urls.append(url)
         self.record_search_result_urls(query, article_urls)
 
-    def record_search_provider_health(self, provider: str, snapshot: dict[str, Any]) -> None:
+    def record_search_provider_health(
+        self, provider: str, snapshot: dict[str, Any]
+    ) -> None:
         if provider:
             self.search_provider_health[provider] = dict(snapshot)
 
@@ -392,17 +482,34 @@ class WorkingMemory:
         for article in self.discovered_articles:
             article_url = canonicalize_url(article.url)
             article_resolved = canonicalize_url(article.resolved_url or "")
-            if card_url not in {article_url, article_resolved} and resolved_url not in {article_url, article_resolved}:
+            if card_url not in {article_url, article_resolved} and resolved_url not in {
+                article_url,
+                article_resolved,
+            }:
                 continue
 
             article.title = getattr(card, "title", article.title) or article.title
-            article.source_name = getattr(card, "source_name", article.source_name) or article.source_name
+            article.source_name = (
+                getattr(card, "source_name", article.source_name) or article.source_name
+            )
             article.domain = getattr(card, "domain", article.domain) or article.domain
-            article.published_at = getattr(card, "published_at", article.published_at) or article.published_at
-            article.summary = getattr(card, "summary", article.summary) or article.summary
-            article.section = getattr(card, "section", article.section) or article.section
-            article.key_finding = getattr(card, "key_finding", article.key_finding) or article.key_finding
-            article.resolved_url = getattr(card, "resolved_url", article.resolved_url) or article.resolved_url
+            article.published_at = (
+                getattr(card, "published_at", article.published_at)
+                or article.published_at
+            )
+            article.summary = (
+                getattr(card, "summary", article.summary) or article.summary
+            )
+            article.section = (
+                getattr(card, "section", article.section) or article.section
+            )
+            article.key_finding = (
+                getattr(card, "key_finding", article.key_finding) or article.key_finding
+            )
+            article.resolved_url = (
+                getattr(card, "resolved_url", article.resolved_url)
+                or article.resolved_url
+            )
             article.image_url = image_url
             article.has_image = bool(image_url)
             return
@@ -442,7 +549,9 @@ class WorkingMemory:
         if candidate.verified:
             self.coverage.verified_image_count += 1
 
-    def mark_image_verified(self, article_url: str, image_url: str, reason: str) -> None:
+    def mark_image_verified(
+        self, article_url: str, image_url: str, reason: str
+    ) -> None:
         for candidate in self.image_candidates.get(article_url, []):
             if candidate.image_url == image_url and not candidate.verified:
                 candidate.verified = True
@@ -467,6 +576,9 @@ class WorkingMemory:
         if any(l.url == lead.url for l in self.exploration_queue):
             return
         self.exploration_queue.append(lead)
+        self.exploration_queue.sort(key=lambda l: l.priority, reverse=True)
+        if len(self.exploration_queue) > 20:
+            self.exploration_queue = self.exploration_queue[:20]
 
     def pop_best_lead(self) -> ExplorationLead | None:
         if not self.exploration_queue:
@@ -495,7 +607,9 @@ class WorkingMemory:
         self.thoughts.append(thought)
 
     def record_candidate_rejection(self, reason: str) -> None:
-        self.candidate_rejection_reasons[reason] = self.candidate_rejection_reasons.get(reason, 0) + 1
+        self.candidate_rejection_reasons[reason] = (
+            self.candidate_rejection_reasons.get(reason, 0) + 1
+        )
 
     def record_scrape_layer(self, layer: str) -> None:
         if not layer:
@@ -511,6 +625,27 @@ class WorkingMemory:
         if reason and reason not in reasons:
             reasons.append(reason[:120])
 
+    def record_empty_search(self) -> None:
+        self.consecutive_empty_searches += 1
+        if self.consecutive_empty_searches >= 3 and self.current_recency_hours < 48:
+            self.current_recency_hours = 48
+        elif self.consecutive_empty_searches >= 5 and self.current_recency_hours < 72:
+            self.current_recency_hours = 72
+
+    def record_productive_search(self) -> None:
+        self.consecutive_empty_searches = 0
+
+    def get_recency_hours_for_query(self, query: str) -> int:
+        """Given a search query, return the appropriate recency window based on
+        which section it targets.  Policy queries get 72h, academic get 168h,
+        everything else falls back to the global current_recency_hours (starts 36h)."""
+        ql = query.lower()
+        for section, hours in self._section_recency_hours.items():
+            keywords = self._recency_section_keywords.get(section, [])
+            if any(kw in ql for kw in keywords):
+                return hours
+        return self.current_recency_hours
+
     # ── 板块内容缓存 ──────────────────────────────────────
 
     def cache_section_content(self, section: str, content: str) -> None:
@@ -524,7 +659,9 @@ class WorkingMemory:
     def get_compiled_topics(self, section: str) -> list[dict[str, Any]]:
         return list(self.compiled_topics.get(section, []))
 
-    def record_section_generation(self, section: str, mode: str, timed_out: bool = False) -> None:
+    def record_section_generation(
+        self, section: str, mode: str, timed_out: bool = False
+    ) -> None:
         if section:
             self.section_generation_mode[section] = mode
         if timed_out and section and section not in self.section_write_timeouts:
@@ -545,16 +682,18 @@ class WorkingMemory:
         article_count = len(self.publishable_articles())
         written_sections = list(self.sections_content.keys())
 
-        if search_count < 6:
+        if search_count < 8:
             phase = "广度搜索"
-        elif article_count < 4:
+        elif article_count < 6:
             phase = "深度评估"
         else:
             phase = "撰写收尾"
         parts.append(f"📍 当前阶段：{phase}")
 
         if self.searched_queries:
-            parts.append(f"已搜索 {search_count} 个查询：{', '.join(self.searched_queries[-5:])}")
+            parts.append(
+                f"已搜索 {search_count} 个查询：{', '.join(self.searched_queries[-5:])}"
+            )
 
         if self.attempted_urls:
             parts.append(f"已尝试抓取 {len(self.attempted_urls)} 个页面")
@@ -566,14 +705,18 @@ class WorkingMemory:
             for a in pub_articles:
                 section_info.setdefault(a.section, []).append(a.title)
             section_parts = [f"{s}: {len(t)} 条" for s, t in section_info.items()]
-            parts.append(f"已确认 {article_count} 篇有价值的文章（{', '.join(section_parts)}）")
+            parts.append(
+                f"已确认 {article_count} 篇有价值的文章（{', '.join(section_parts)}）"
+            )
         if self.coverage.formal_topic_count > 0:
             parts.append(f"规则层正式主题 {self.coverage.formal_topic_count} 条")
 
         if written_sections:
             unwritten = {"industry", "academic", "policy"} - set(written_sections)
-            parts.append(f"已写板块：{', '.join(written_sections)}"
-                         + (f" | 待写：{', '.join(unwritten)}" if unwritten else ""))
+            parts.append(
+                f"已写板块：{', '.join(written_sections)}"
+                + (f" | 待写：{', '.join(unwritten)}" if unwritten else "")
+            )
 
         if self.coverage.verified_image_count > 0:
             parts.append(f"已验证 {self.coverage.verified_image_count} 张配图")
@@ -588,11 +731,19 @@ class WorkingMemory:
         if self.key_findings:
             parts.append(f"关键发现：{'; '.join(self.key_findings[-3:])}")
 
+        if self.consecutive_empty_searches >= 2:
+            parts.append(
+                f"⚠️ 连续 {self.consecutive_empty_searches} 次搜索无可用结果，"
+                f"时效窗口已扩大到 {self.current_recency_hours}h"
+            )
+
         # 阶段性建议
         if phase == "广度搜索":
             parts.append("💡 建议：继续搜索不同维度，覆盖产业/技术/政策")
         elif phase == "深度评估":
-            parts.append("💡 建议：用 read_page 阅读有价值的搜索结果并评估，补足缺口板块")
+            parts.append(
+                "💡 建议：用 read_page 阅读有价值的搜索结果并评估，补足缺口板块"
+            )
         elif phase == "撰写收尾":
             parts.append("💡 建议：调用 write_section 撰写各板块内容，然后调用 finish")
 
@@ -627,6 +778,8 @@ class WorkingMemory:
             "compiled_topics": dict(self.compiled_topics),
             "section_generation_mode": dict(self.section_generation_mode),
             "section_write_timeouts": list(self.section_write_timeouts),
+            "consecutive_empty_searches": self.consecutive_empty_searches,
+            "current_recency_hours": self.current_recency_hours,
         }
 
     def to_json(self) -> str:

@@ -7,6 +7,7 @@ tests/test_agent_core.py — Agent Core 单元测试
   - AgentCore 工具路由
   - 兜底结果构建
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -28,6 +29,7 @@ from app.services.working_memory import (
 
 
 # ── Fixtures ──────────────────────────────────────────────
+
 
 def make_article(section: str = "industry", url: str | None = None) -> ArticleSummary:
     return ArticleSummary(
@@ -62,7 +64,9 @@ class MockTool(Tool):
     parameters: dict = {"type": "object", "properties": {}, "required": []}
 
     def __init__(self, result: ToolResult | None = None) -> None:
-        self._result = result or ToolResult(success=True, summary="Mock OK", data={"mock": True})
+        self._result = result or ToolResult(
+            success=True, summary="Mock OK", data={"mock": True}
+        )
         self.call_count = 0
 
     async def execute(self, memory: WorkingMemory, **kwargs: Any) -> ToolResult:
@@ -77,7 +81,9 @@ class MockLLMClient:
         self._responses = list(responses)
         self._idx = 0
 
-    async def chat_with_tools(self, messages, tool_definitions, temperature=0.3) -> LLMResponse:
+    async def chat_with_tools(
+        self, messages, tool_definitions, temperature=0.3
+    ) -> LLMResponse:
         if self._idx < len(self._responses):
             resp = self._responses[self._idx]
             self._idx += 1
@@ -90,6 +96,7 @@ class MockLLMClient:
 
 
 # ── Harness Tests ─────────────────────────────────────────
+
 
 class TestHarness:
     def test_initial_budget(self):
@@ -110,7 +117,9 @@ class TestHarness:
 
     def test_blocked_domain_denied(self):
         h = make_harness(blocked_domains=["spam.com"])
-        tc = ToolCall(tool_name="web_search", arguments={"query": "polymer from spam.com"})
+        tc = ToolCall(
+            tool_name="web_search", arguments={"query": "polymer from spam.com"}
+        )
         allowed, reason = h.allows(tc)
         assert not allowed
         assert "spam.com" in reason
@@ -157,6 +166,7 @@ class TestHarness:
 
 
 # ── WorkingMemory Tests ───────────────────────────────────
+
 
 class TestWorkingMemory:
     def test_search_deduplication(self):
@@ -220,6 +230,7 @@ class TestWorkingMemory:
 
     def test_snapshot_serializable(self):
         import json
+
         mem = WorkingMemory()
         mem.add_article(make_article("policy"))
         snapshot = mem.snapshot()
@@ -229,8 +240,14 @@ class TestWorkingMemory:
 
     def test_exploration_queue(self):
         from app.services.working_memory import ExplorationLead
+
         mem = WorkingMemory()
-        lead = ExplorationLead(url="https://x.com/paper", title="Important Paper", reason="cited often", priority=0.9)
+        lead = ExplorationLead(
+            url="https://x.com/paper",
+            title="Important Paper",
+            reason="cited often",
+            priority=0.9,
+        )
         mem.add_exploration_lead(lead)
         assert len(mem.exploration_queue) == 1
         picked = mem.pop_best_lead()
@@ -246,6 +263,7 @@ class TestWorkingMemory:
 
 # ── CoverageState Tests ───────────────────────────────────
 
+
 class TestCoverageState:
     def test_complete_detection(self):
         cov = CoverageState(
@@ -257,7 +275,7 @@ class TestCoverageState:
         assert cov.is_complete
 
     def test_partial_detection(self):
-        cov = CoverageState(industry_count=2, policy_count=1)
+        cov = CoverageState(industry_count=2, policy_count=1, academic_count=1)
         assert cov.is_publishable
         assert not cov.is_complete
 
@@ -272,6 +290,7 @@ class TestCoverageState:
 
 
 # ── AgentResult Tests ─────────────────────────────────────
+
 
 class TestAgentResult:
     def test_publishable_with_articles(self):
@@ -311,6 +330,7 @@ class TestAgentResult:
 
 # ── AgentCore Integration Tests (no API calls) ────────────
 
+
 class TestAgentCore:
     @pytest.mark.asyncio
     async def test_finish_tool_stops_loop(self):
@@ -333,11 +353,13 @@ class TestAgentCore:
         )
         llm = MockLLMClient(responses=[finish_response])
 
-        mock_finish = MockTool(result=ToolResult(
-            success=True,
-            summary="Report complete",
-            data={**finish_data, "is_finish": True},
-        ))
+        mock_finish = MockTool(
+            result=ToolResult(
+                success=True,
+                summary="Report complete",
+                data={**finish_data, "is_finish": True},
+            )
+        )
         mock_finish.name = "finish"
 
         harness = make_harness(max_steps=20)
@@ -405,7 +427,9 @@ class TestAgentCore:
         bad_tool_response = LLMResponse(
             content="Using nonexistent tool",
             tool_calls=[
-                ToolCallRequest(tool_name="nonexistent_tool", arguments={}, call_id="c_bad")
+                ToolCallRequest(
+                    tool_name="nonexistent_tool", arguments={}, call_id="c_bad"
+                )
             ],
             is_finish=False,
         )

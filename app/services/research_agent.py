@@ -15,6 +15,7 @@ research_agent.py — 研究型 Agent
   4. 追踪引用（FollowReferencesTool）
   5. 多步综合分析，带引用输出
 """
+
 from __future__ import annotations
 
 import logging
@@ -60,6 +61,7 @@ RESEARCH_SYSTEM_PROMPT = """你是高分子材料加工领域的专业研究助�
 
 
 # ── Local Corpus Search Tool ──────────────────────────────
+
 
 class LocalCorpusSearchTool(Tool):
     """搜索本地日报库，找到过去整理的相关文章。"""
@@ -133,22 +135,28 @@ class LocalCorpusSearchTool(Tool):
             formatted = []
             results_data = []
             for item in items:
-                date_str = item.report.report_date.isoformat() if item.report else "未知"
+                date_str = (
+                    item.report.report_date.isoformat() if item.report else "未知"
+                )
                 formatted.append(
                     f"- [{item.title}]({item.source_url})\n"
                     f"  来源: {item.source_name} | 日期: {date_str}\n"
                     f"  摘要: {item.summary[:150]}"
                 )
-                results_data.append({
-                    "title": item.title,
-                    "url": item.source_url,
-                    "source_name": item.source_name,
-                    "summary": item.summary,
-                    "date": date_str,
-                    "section": item.section,
-                })
+                results_data.append(
+                    {
+                        "title": item.title,
+                        "url": item.source_url,
+                        "source_name": item.source_name,
+                        "summary": item.summary,
+                        "date": date_str,
+                        "section": item.section,
+                    }
+                )
 
-            summary = f"本地库找到 {len(items)} 条相关内容：\n\n" + "\n\n".join(formatted)
+            summary = f"本地库找到 {len(items)} 条相关内容：\n\n" + "\n\n".join(
+                formatted
+            )
             return ToolResult(
                 success=True,
                 summary=summary,
@@ -160,6 +168,7 @@ class LocalCorpusSearchTool(Tool):
 
 
 # ── Research Finish Tool ──────────────────────────────────
+
 
 class ResearchFinishTool(Tool):
     """完成研究，输出带引用的回答。"""
@@ -218,9 +227,11 @@ class ResearchFinishTool(Tool):
 
 # ── Result Dataclass ──────────────────────────────────────
 
+
 @dataclass
 class ResearchResult:
     """研究 Agent 的输出结果。"""
+
     answer: str
     citations: list[dict[str, str]] = field(default_factory=list)
     mode: str = "agent"
@@ -232,6 +243,7 @@ class ResearchResult:
 
 
 # ── Main Agent Class ──────────────────────────────────────
+
 
 class ResearchAgent:
     """
@@ -248,7 +260,11 @@ class ResearchAgent:
         self._llm_client = LLMClient()
 
     def _build_harness(self) -> Harness:
-        from app.services.harness import DEFAULT_BLOCKED_DOMAINS, DEFAULT_DOMAIN_KEYWORDS
+        from app.services.harness import (
+            DEFAULT_BLOCKED_DOMAINS,
+            DEFAULT_DOMAIN_KEYWORDS,
+        )
+
         return Harness(
             max_steps=25,
             max_search_calls=10,
@@ -263,6 +279,7 @@ class ResearchAgent:
     def _build_tools(self) -> list[Tool]:
         from app.services.brave import BraveSearchClient
         from app.services.scraper import ScraperClient
+
         brave = BraveSearchClient()
         scraper = ScraperClient()
         return [
@@ -292,7 +309,7 @@ class ResearchAgent:
         task = f"用户问题：{question}\n\n请先搜索本地日报库，再决定是否需要外搜。给出完整的带引用回答后，调用 finish 输出。"
 
         try:
-            agent_result = await agent.run(task=task, session=self._session)
+            agent_result = await agent.run(task=task)
             return self._extract_research_result(agent_result)
         except Exception as exc:
             logger.error("[ResearchAgent] Failed: %s", exc, exc_info=True)
@@ -316,15 +333,20 @@ class ResearchAgent:
         citations = []
         for article in agent_result.articles[:5]:
             if article.get("url") and article.get("title"):
-                citations.append({
-                    "label": article.get("source_name") or article.get("domain", ""),
-                    "url": article.get("url", ""),
-                    "title": article.get("title", ""),
-                })
+                citations.append(
+                    {
+                        "label": article.get("source_name")
+                        or article.get("domain", ""),
+                        "url": article.get("url", ""),
+                        "title": article.get("title", ""),
+                    }
+                )
 
         return ResearchResult(
             answer=answer,
             citations=citations,
-            mode="agent" if agent_result.finished_reason == "finish_tool" else "agent_partial",
+            mode="agent"
+            if agent_result.finished_reason == "finish_tool"
+            else "agent_partial",
             step_count=step_count,
         )

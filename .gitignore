@@ -12,3 +12,4 @@ frontend/dist
 temp.out
 .gitignore
 templog.log
+workflow_news_smoke_check.db

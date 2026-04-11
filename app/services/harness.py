@@ -8,6 +8,7 @@ Harness 的设计哲学：
 
 不是 Rails（严格轨道），而是 Harness（安全操场）。
 """
+
 from __future__ import annotations
 
 import time
@@ -36,24 +37,51 @@ DEFAULT_TOOL_TIMEOUT = 30.0
 
 # Default domain keywords — Agent 的内容必须与这些领域相关
 DEFAULT_DOMAIN_KEYWORDS: list[str] = [
-    "高分子", "塑料", "橡胶", "复合材料", "树脂", "改性",
-    "薄膜", "包装", "注塑", "挤出", "吹塑", "成型",
-    "回收", "再生", "生物基", "降解",
-    "polymer", "plastic", "rubber", "composite", "resin",
-    "recycling", "biodegradable", "processing",
-    "injection molding", "extrusion", "additive manufacturing",
+    "高分子",
+    "塑料",
+    "橡胶",
+    "复合材料",
+    "树脂",
+    "改性",
+    "薄膜",
+    "包装",
+    "注塑",
+    "挤出",
+    "吹塑",
+    "成型",
+    "回收",
+    "再生",
+    "生物基",
+    "降解",
+    "polymer",
+    "plastic",
+    "rubber",
+    "composite",
+    "resin",
+    "recycling",
+    "biodegradable",
+    "processing",
+    "injection molding",
+    "extrusion",
+    "additive manufacturing",
 ]
 
 # Default blocked domains (safety/quality boundary)
 # 合并了质量低劣来源（PR、百科）和台湾地区媒体
 DEFAULT_BLOCKED_DOMAINS: list[str] = [
     # ── PR / 营销类 ──
-    "openpr.com", "prnewswire.com", "prnasia.com",
-    "businesswire.com", "globenewswire.com",
-    "coherentmarketinsights.com", "gminsights.com",
+    "openpr.com",
+    "prnewswire.com",
+    "prnasia.com",
+    "businesswire.com",
+    "globenewswire.com",
+    "coherentmarketinsights.com",
+    "gminsights.com",
     "grandviewresearch.com",
     # ── 百科 / 社区 ──
-    "baike.baidu.com", "zhuanlan.zhihu.com", "bilibili.com",
+    "baike.baidu.com",
+    "zhuanlan.zhihu.com",
+    "bilibili.com",
     # ── 财经 / 投资类（非行业内容）──
     "cn.investing.com",
     "investing.com",
@@ -63,17 +91,37 @@ DEFAULT_BLOCKED_DOMAINS: list[str] = [
     "1688.com",
     "globalsources.com",
     "indiamart.com",
+    "b2b168.com",
+    "jdzj.com",
+    "hbsztv.com",
+    "stockstar.com",
+    "eastmoney.com",
+    "10jqka.com.cn",
+    "china-packcon.com",
+    "china-ipif.com",
     # ── 台湾媒体 ──
-    "digitimes.com.tw", "udn.com", "ltn.com.tw", "chinatimes.com",
-    "yahoo.com.tw", "tw.news.yahoo.com", "ctee.com.tw", "money.udn.com",
-    "technews.tw", "bnext.com.tw", "ettoday.net", "setn.com",
-    "storm.mg", "cna.com.tw", "taiwannews.com.tw",
+    "digitimes.com.tw",
+    "udn.com",
+    "ltn.com.tw",
+    "chinatimes.com",
+    "yahoo.com.tw",
+    "tw.news.yahoo.com",
+    "ctee.com.tw",
+    "money.udn.com",
+    "technews.tw",
+    "bnext.com.tw",
+    "ettoday.net",
+    "setn.com",
+    "storm.mg",
+    "cna.com.tw",
+    "taiwannews.com.tw",
 ]
 
 
 @dataclass
 class HarnessViolation:
     """记录一次 Harness 拦截事件。"""
+
     tool_name: str
     argument_key: str
     argument_value: str
@@ -110,7 +158,7 @@ class Harness:
     """最多搜索多少次（web_search + search_images 合计）。"""
 
     max_page_reads: int = 12
-    """最多深度阅读多少个页面（read_page + follow_references 合计）。"""
+    """最多深度阅读多少个页面（仅 read_page 计数）。"""
 
     max_duration_seconds: float = 300.0
     """最长运行时间（秒）。超时后结束当前步骤并尝试输出。"""
@@ -118,14 +166,20 @@ class Harness:
     max_llm_calls: int = 25
     """最多 LLM 调用次数（含工具选择和工具内部 LLM 调用）。"""
 
-    tool_timeouts: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_TOOL_TIMEOUTS))
+    tool_timeouts: dict[str, float] = field(
+        default_factory=lambda: dict(DEFAULT_TOOL_TIMEOUTS)
+    )
     """每个工具的超时时间（秒）。未列出的工具使用 DEFAULT_TOOL_TIMEOUT。"""
 
     # ── 领域边界 ──────────────────────────────────────────
-    domain_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_DOMAIN_KEYWORDS))
+    domain_keywords: list[str] = field(
+        default_factory=lambda: list(DEFAULT_DOMAIN_KEYWORDS)
+    )
     """内容必须与这些关键词之一相关（逐 URL 内容检查在工具层完成）。"""
 
-    blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))
+    blocked_domains: list[str] = field(
+        default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS)
+    )
     """禁止访问这些域名（无论 Agent 想不想）。"""
 
     # ── 质量底线 ──────────────────────────────────────────
@@ -226,32 +280,49 @@ class Harness:
         """
         # 1. 步数预算
         if self._step_count >= self.max_steps:
-            return False, f"Budget exhausted: {self._step_count}/{self.max_steps} steps used"
+            return (
+                False,
+                f"Budget exhausted: {self._step_count}/{self.max_steps} steps used",
+            )
 
         # 2. 超时
         if self.timed_out:
-            return False, f"Timeout: {self.elapsed_seconds:.0f}s elapsed (limit {self.max_duration_seconds}s)"
+            return (
+                False,
+                f"Timeout: {self.elapsed_seconds:.0f}s elapsed (limit {self.max_duration_seconds}s)",
+            )
 
         # 3. 搜索配额
         if tool_call.tool_name in {"web_search", "search_images"}:
             if self._search_count >= self.max_search_calls:
-                return False, f"Search quota exhausted: {self._search_count}/{self.max_search_calls}"
+                return (
+                    False,
+                    f"Search quota exhausted: {self._search_count}/{self.max_search_calls}",
+                )
 
         # 4. 阅读配额
         if tool_call.tool_name in {"read_page", "follow_references"}:
             if self._read_count >= self.max_page_reads:
-                return False, f"Read quota exhausted: {self._read_count}/{self.max_page_reads}"
+                return (
+                    False,
+                    f"Read quota exhausted: {self._read_count}/{self.max_page_reads}",
+                )
 
         # 5. LLM 调用配额
-        if tool_call.tool_name in {"evaluate_article", "compare_sources", "write_section"}:
+        if tool_call.tool_name in {
+            "evaluate_article",
+            "compare_sources",
+            "write_section",
+        }:
             if self._llm_call_count >= self.max_llm_calls:
-                return False, f"LLM call quota exhausted: {self._llm_call_count}/{self.max_llm_calls}"
+                return (
+                    False,
+                    f"LLM call quota exhausted: {self._llm_call_count}/{self.max_llm_calls}",
+                )
 
         # 6. Blocked domain 检查
         url_or_query = (
-            tool_call.arguments.get("url")
-            or tool_call.arguments.get("query")
-            or ""
+            tool_call.arguments.get("url") or tool_call.arguments.get("query") or ""
         )
         blocked = self._check_blocked_domain(url_or_query)
         if blocked:
@@ -293,7 +364,10 @@ class Harness:
 
 def make_daily_report_harness() -> Harness:
     """日报生成 Agent 的 Harness 配置。"""
-    from app.services.daily_report_agent import DAILY_REPORT_SYSTEM_PROMPT  # lazy import
+    from app.services.daily_report_agent import (
+        DAILY_REPORT_SYSTEM_PROMPT,
+    )  # lazy import
+
     return Harness(
         max_steps=40,
         max_search_calls=15,
@@ -307,6 +381,7 @@ def make_daily_report_harness() -> Harness:
 def make_research_harness() -> Harness:
     """研究型 Agent 的 Harness 配置。"""
     from app.services.research_agent import RESEARCH_SYSTEM_PROMPT  # lazy import
+
     return Harness(
         max_steps=25,
         max_search_calls=10,
