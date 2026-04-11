@@ -550,7 +550,11 @@ class DailyReportAgent:
                 seeded_count,
             )
         search_tools: list = [
-            WebSearchTool(brave_client=brave, zhipu_client=zhipu),
+            WebSearchTool(
+                brave_client=brave,
+                zhipu_client=zhipu,
+                tavily_api_key=settings.tavily_api_key,
+            ),
             CheckCoverageTool(),
             FinishTool(),
         ]
@@ -1092,7 +1096,11 @@ class DailyReportAgent:
         ]
         if search_enabled:
             fallback_tools = [
-                WebSearchTool(brave_client=brave, zhipu_client=zhipu),
+                WebSearchTool(
+                    brave_client=brave,
+                    zhipu_client=zhipu,
+                    tavily_api_key=settings.tavily_api_key,
+                ),
                 FollowReferencesTool(),
                 *fallback_tools,
             ]

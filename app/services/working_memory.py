@@ -415,6 +415,15 @@ class WorkingMemory:
         if provider:
             self.search_provider_health[provider] = dict(snapshot)
 
+    def get_raw_content_for_url(self, url: str) -> str:
+        normalized_url = canonicalize_url(url)
+        for row in self.search_results:
+            if row.get("url") == normalized_url:
+                raw = row.get("raw_content") or ""
+                if raw:
+                    return raw
+        return ""
+
     # ── 阅读记录 ──────────────────────────────────────────
 
     def has_read(self, url: str) -> bool:

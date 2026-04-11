@@ -47,6 +47,8 @@ class Settings:
     brave_search_lang: str = os.getenv("BRAVE_SEARCH_LANG", "zh-hans")
     brave_fallback_lang: str = os.getenv("BRAVE_FALLBACK_LANG", "en")
 
+    tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
+
     firecrawl_api_key: str = os.getenv("FIRECRAWL_API_KEY", "")
     firecrawl_base_url: str = os.getenv(
         "FIRECRAWL_BASE_URL", "https://api.firecrawl.dev/v2"

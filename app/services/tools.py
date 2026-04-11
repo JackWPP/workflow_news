@@ -27,6 +27,8 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+import httpx
+
 from app.services.source_quality import (
     classify_source,
     detect_page_kind,
@@ -213,9 +215,15 @@ class WebSearchTool(Tool):
         "required": ["query"],
     }
 
-    def __init__(self, brave_client: Any = None, zhipu_client: Any = None) -> None:
+    def __init__(
+        self,
+        brave_client: Any = None,
+        zhipu_client: Any = None,
+        tavily_api_key: str = "",
+    ) -> None:
         self._brave = brave_client
         self._zhipu = zhipu_client
+        self._tavily_key = tavily_api_key
 
     @staticmethod
     def _normalize_query(query: str) -> str:
@@ -253,7 +261,6 @@ class WebSearchTool(Tool):
         results: list[dict[str, Any]] = []
 
         if language == "zh" and self._zhipu and self._zhipu.enabled:
-            # 中文搜索：智谱 Web Search 为主（多引擎协作，中文覆盖率高）
             try:
                 results = await self._zhipu.search(normalized_query)
                 logger.info(
@@ -266,6 +273,16 @@ class WebSearchTool(Tool):
             finally:
                 memory.record_search_provider_health(
                     "zhipu", self._zhipu.health_snapshot()
+                )
+
+        if not results and self._tavily_key:
+            tavily_results = await self._search_tavily(normalized_query)
+            if tavily_results:
+                results = tavily_results
+                logger.info(
+                    "web_search [tavily] '%s' → %d results",
+                    normalized_query,
+                    len(results),
                 )
 
         if (
@@ -425,6 +442,61 @@ class WebSearchTool(Tool):
             },
         )
 
+    async def _search_tavily(self, query: str) -> list[dict[str, Any]]:
+        if not self._tavily_key:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(
+                    "https://api.tavily.com/search",
+                    headers={
+                        "Authorization": f"Bearer {self._tavily_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "query": query,
+                        "topic": "general",
+                        "time_range": "day",
+                        "max_results": 10,
+                        "search_depth": "basic",
+                        "include_raw_content": True,
+                        "country": "china",
+                    },
+                )
+                if resp.status_code != 200:
+                    logger.warning(
+                        "Tavily search failed for '%s': HTTP %d",
+                        query,
+                        resp.status_code,
+                    )
+                    return []
+                data = resp.json()
+                raw_results = data.get("results", [])
+                parsed = []
+                for r in raw_results:
+                    url = r.get("url", "")
+                    domain = extract_domain(url)
+                    raw_content = r.get("raw_content") or ""
+                    parsed.append(
+                        {
+                            "title": r.get("title", ""),
+                            "url": url,
+                            "snippet": r.get("content", "")[:500],
+                            "domain": domain,
+                            "published_at": None,
+                            "result_type": "web",
+                            "search_type": "web",
+                            "source_type": "web",
+                            "source_name": "tavily",
+                            "score": r.get("score", 0),
+                            "raw_content": raw_content,
+                        }
+                    )
+                return parsed
+        except Exception as exc:
+            logger.warning("Tavily search failed for '%s': %s", query, exc)
+            return []
+
 
 # ── 2. read_page ─────────────────────────────────────────
 
@@ -469,6 +541,50 @@ class ReadPageTool(Tool):
             )
 
         domain = extract_domain(url)
+
+        raw_content = memory.get_raw_content_for_url(url)
+        if raw_content and len(raw_content) > 200:
+            scrape_layer = "tavily_raw"
+            title = raw_content.split("\n", 1)[0].strip()[:120] or "Tavily Raw Content"
+            markdown = raw_content
+            image_url = None
+            published_dt = None
+            pub_str = "未知"
+            links = self._extract_links(markdown, url)
+            memory.record_page_attempt(
+                url,
+                "readable",
+                links=links,
+                metadata={
+                    "scrape_layer": scrape_layer,
+                    "content_available": True,
+                    "from_tavily_raw": True,
+                },
+            )
+            memory.record_scrape_layer(scrape_layer)
+            content_for_summary = self._extract_content(markdown, max_chars=8000)
+            content_summary = summarize_markdown(content_for_summary) or markdown[:500]
+            summary = f"📄 {title}\n来源: {domain} (tavily raw) | 发布: {pub_str}\n内容: {content_summary}\n"
+            if links:
+                summary += f"页内链接 {len(links)} 条（可用 follow_references 追踪）"
+            return ToolResult(
+                success=True,
+                summary=summary,
+                data={
+                    "url": url,
+                    "title": title,
+                    "domain": domain,
+                    "markdown": markdown[:8000],
+                    "content_summary": content_summary,
+                    "image_url": None,
+                    "published_at": None,
+                    "resolved_url": url,
+                    "scrape_layer": scrape_layer,
+                    "scrape_status": "success",
+                    "page_kind": "article",
+                    "links": links[:10],
+                },
+            )
 
         if self._scraper is None or not self._scraper.enabled:
             memory.record_page_attempt(
