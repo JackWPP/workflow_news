@@ -8,7 +8,9 @@ import {
   Settings, 
   LogOut,
   User,
-  Activity
+  Activity,
+  Menu,
+  X
 } from 'lucide-vue-next'
 
 import { useSessionStore } from '../stores/session'
@@ -19,6 +21,11 @@ const router = useRouter()
 const session = useSessionStore()
 const bgCanvas = ref<HTMLCanvasElement | null>(null)
 let particles: ParticleSystem | null = null
+
+const isMobileMenuOpen = ref(false)
+function toggleMobileMenu() {
+  isMobileMenuOpen.value = !isMobileMenuOpen.value
+}
 
 const navItems = computed(() => [
   { to: '/', label: '今日日报', icon: LayoutDashboard },
@@ -46,18 +53,37 @@ async function handleLogout() {
 </script>
 
 <template>
-  <div class="h-screen w-full flex overflow-hidden bg-[var(--bg-primary)]">
+  <div class="h-screen w-full flex overflow-hidden bg-[var(--bg-primary)] mobile-app-container">
     <!-- Particles Background -->
     <canvas ref="bgCanvas" class="fixed inset-0 pointer-events-none z-0 mix-blend-screen opacity-40"></canvas>
     
+    <!-- Mobile Header -->
+    <header class="mobile-header p-4 items-center justify-between glass-panel border-b border-[var(--line)] z-20 w-full flex-shrink-0">
+      <div class="flex items-center gap-3">
+        <Activity class="w-6 h-6 text-[var(--accent-primary)] animate-pulse-glow" />
+        <h1 class="text-base font-bold tracking-tight text-white leading-tight">高分子视野</h1>
+      </div>
+      <button @click="toggleMobileMenu" class="text-white p-2 flex items-center justify-center">
+        <Menu class="w-6 h-6" />
+      </button>
+    </header>
+
+    <!-- Overlay -->
+    <div v-if="isMobileMenuOpen" class="mobile-overlay fixed inset-0 z-20 bg-black/50 backdrop-blur-sm" @click="toggleMobileMenu"></div>
+
     <!-- Sidebar Navigation -->
-    <aside class="sidebar w-64 flex-shrink-0 flex flex-col z-10 glass-panel border-y-0 border-l-0 rounded-none h-full relative">
-      <div class="p-6 flex items-center gap-3">
-        <Activity class="w-8 h-8 text-[var(--accent-primary)] animate-pulse-glow" />
-        <div>
-          <h1 class="text-lg font-bold tracking-tight text-white leading-tight">高分子视野</h1>
-          <p class="text-[10px] text-[var(--accent-academic)] tracking-widest uppercase">Agent Console</p>
+    <aside :class="['sidebar flex flex-col z-30 glass-panel border-y-0 border-l-0 rounded-none relative', isMobileMenuOpen ? 'mobile-open' : '']">
+      <div class="p-4 md:p-6 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <Activity class="w-8 h-8 text-[var(--accent-primary)] animate-pulse-glow" />
+          <div>
+            <h1 class="text-lg font-bold tracking-tight text-white leading-tight">高分子视野</h1>
+            <p class="text-[10px] text-[var(--accent-academic)] tracking-widest uppercase">Agent Console</p>
+          </div>
         </div>
+        <button @click="toggleMobileMenu" class="mobile-close-btn text-white p-2 flex items-center justify-center md:hidden">
+          <X class="w-5 h-5" />
+        </button>
       </div>
 
       <nav class="flex-1 px-4 py-4 space-y-2 overflow-y-auto">
@@ -65,6 +91,7 @@ async function handleLogout() {
           v-for="item in navItems"
           :key="item.to"
           :to="item.to"
+          @click="isMobileMenuOpen = false"
           class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300"
           :class="[route.path === item.to ? 'active-link' : 'text-[var(--text-secondary)] hover:text-white hover:bg-[rgba(255,255,255,0.05)]']"
         >
@@ -90,7 +117,7 @@ async function handleLogout() {
             <LogOut class="w-4 h-4" /> 退出系统
           </button>
         </div>
-        <div v-else class="flex justify-center">
+        <div v-else-if="false" class="flex justify-center">
           <RouterLink to="/login" class="btn-primary w-full text-center py-2.5">
             系统登录
           </RouterLink>
@@ -110,6 +137,49 @@ async function handleLogout() {
 <style scoped>
 .sidebar {
   box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
+}
+
+.mobile-header {
+  display: none;
+}
+.mobile-overlay {
+  display: none;
+  background-color: rgba(0, 0, 0, 0.6);
+}
+
+@media (max-width: 767px) {
+  .mobile-app-container {
+    flex-direction: column;
+  }
+  .mobile-header {
+    display: flex;
+  }
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 16rem; /* equivalent to w-64 */
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+  .mobile-overlay {
+    display: block;
+  }
+}
+
+@media (min-width: 768px) {
+  .sidebar {
+    width: 16rem;
+    flex-shrink: 0;
+    height: 100%;
+  }
+  .mobile-close-btn {
+    display: none;
+  }
 }
 
 .active-link {
