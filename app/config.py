@@ -95,7 +95,7 @@ class Settings:
         os.getenv("AGENT_FALLBACK_TO_PIPELINE"), default=True
     )
 
-    report_title: str = os.getenv("REPORT_TITLE", "高分子加工全视界日报")
+    report_title: str = os.getenv("REPORT_TITLE", "英蓝云展智能日报")
     admin_email: str = os.getenv("ADMIN_EMAIL", "admin@example.com")
     admin_password: str = os.getenv("ADMIN_PASSWORD", "admin123456")
     session_days: int = int(os.getenv("SESSION_DAYS", "7"))

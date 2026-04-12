@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Bot, User, Database, Globe, CheckCircle2, Search, BrainCircuit } from 'lucide-vue-next'
+import { User, Database, Globe, CheckCircle2, Search, BrainCircuit } from 'lucide-vue-next'
 import type { Message } from '../types'
 
 const props = defineProps<{ message: Message }>()
@@ -24,7 +24,7 @@ const mockSteps = [
     <div class="w-10 h-10 shrink-0 rounded-full flex flex-col items-center justify-center border transition-all duration-300 shadow-md"
          :class="isUser ? 'bg-[rgba(100,180,255,0.1)] border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'bg-black/40 border-[var(--accent-policy)]/50 text-[var(--accent-policy)] glow-avatar'">
       <User v-if="isUser" class="w-5 h-5" />
-      <Bot v-else class="w-5 h-5" />
+      <img v-else src="/logo.png" alt="Logo" class="w-full h-full rounded-full object-cover bg-white p-0.5" />
     </div>
 
     <!-- Bubble Wrapper -->

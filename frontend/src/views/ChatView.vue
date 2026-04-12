@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
-import { Plus, MessageSquare, Send, Sparkles, Loader2 } from 'lucide-vue-next'
+import { Plus, MessageSquare, Send, Loader2 } from 'lucide-vue-next'
 
 import { api } from '../lib/api'
 import { useSessionStore } from '../stores/session'
@@ -96,8 +96,8 @@ onMounted(() => {
       <div class="flex items-center justify-between pb-4 border-b border-[var(--line)]">
         <div>
           <h2 class="text-xl font-bold text-white flex items-center gap-2">
-            <Sparkles class="w-5 h-5 text-[var(--accent-policy)]" />
-            研究助手
+            <img src="/logo.png" alt="Logo" class="w-6 h-6 bg-white p-0.5 rounded object-cover shadow-[0_0_10px_rgba(167,139,250,0.4)]" />
+            英蓝Claw
           </h2>
         </div>
         <button @click="newConversation" class="p-2 rounded-lg bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20 transition-colors border border-[var(--accent-primary)]/20 shadow-[0_0_10px_rgba(100,180,255,0.1)]">
@@ -152,11 +152,11 @@ onMounted(() => {
         <template v-else>
           <!-- Empty State -->
           <div class="h-full flex flex-col items-center justify-center text-center opacity-70">
-            <div class="w-16 h-16 rounded-2xl bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 flex items-center justify-center mb-4 shadow-[0_0_20px_rgba(100,180,255,0.15)]">
-              <Bot class="w-8 h-8 text-[var(--accent-primary)]" />
+            <div class="w-16 h-16 rounded-2xl bg-white border border-[var(--accent-primary)]/20 flex items-center justify-center mb-4 shadow-[0_0_20px_rgba(100,180,255,0.15)]">
+              <img src="/logo.png" alt="Logo" class="w-12 h-12 object-cover" />
             </div>
-            <h4 class="text-xl font-bold text-white mb-2">研究助手在等待指示</h4>
-            <p class="text-[var(--text-secondary)] text-sm max-w-sm">我会通过多轮 Agent 思维模式自动检索文献、新闻和政策，来解答您的高分子专业问题。</p>
+            <h4 class="text-xl font-bold text-white mb-2">英蓝Claw在等待指示</h4>
+            <p class="text-[var(--text-secondary)] text-sm max-w-sm">我会通过多轮 Agent 思维模式自动检索文献、新闻和政策，来解答您的专业问题。</p>
           </div>
         </template>
         
@@ -320,7 +320,7 @@ onMounted(() => {
 .focus\:outline-none:focus { outline: 2px solid transparent; outline-offset: 2px; }
 .focus\:border-\[var\(--accent-primary\)\]:focus { border-color: var(--accent-primary); }
 .focus\:bg-\[rgba\(255\,255\,255\,0\.06\)\]:focus { background-color: rgba(255, 255, 255, 0.06); }
-.placeholder-\[var\(--text-muted\)\]:placeholder { color: var(--text-muted); }
+.placeholder-\[var\(--text-muted\)\]\:\:placeholder { color: var(--text-muted); }
 .disabled\:opacity-50:disabled { opacity: 0.5; }
 .disabled\:cursor-not-allowed:disabled { cursor: not-allowed; }
 

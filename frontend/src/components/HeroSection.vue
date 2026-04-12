@@ -49,13 +49,13 @@ const supervisorSummary = computed(() => {
 </script>
 
 <template>
-  <div class="glass-panel overflow-hidden relative min-h-[300px] flex group mb-8">
+  <div class="glass-panel hero-wrapper relative flex group mb-8" style="overflow: hidden; min-height: 280px; position: relative;">
     <!-- Parallax/Hero Background -->
-    <div class="absolute inset-0 z-0">
-      <img v-if="heroItem?.image_url" :src="heroItem.image_url" class="w-full h-full object-cover opacity-20 transition-transform duration-1000 group-hover:scale-105" />
-      <div v-else class="w-full h-full bg-gradient-to-br from-[#0a0e1a] to-[#1a2640]"></div>
+    <div class="absolute inset-0 z-0" style="position: absolute; inset: 0; overflow: hidden;">
+      <img v-if="heroItem?.image_url" :src="heroItem.image_url" @error="($event.target as HTMLImageElement).style.display='none'" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.2;" />
+      <div v-else style="width: 100%; height: 100%; background: linear-gradient(to bottom right, #0a0e1a, #1a2640);"></div>
       <!-- Gradient Overlay -->
-      <div class="absolute inset-0 bg-gradient-to-r from-[var(--bg-surface)] via-[var(--bg-surface)]/80 to-transparent"></div>
+      <div style="position: absolute; inset: 0; background: linear-gradient(to right, var(--bg-surface), rgba(15, 20, 40, 0.85), transparent);"></div>
     </div>
 
     <!-- Content -->
@@ -75,7 +75,7 @@ const supervisorSummary = computed(() => {
         </div>
         
         <h2 class="text-4xl font-bold text-white mb-4 leading-tight tracking-tight drop-shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
-          {{ report?.title || '高分子材料加工智能日报' }}
+          {{ report?.title || '英蓝云展智能日报' }}
         </h2>
         
         <p class="text-[var(--text-secondary)] text-lg leading-relaxed line-clamp-3 md:line-clamp-none max-w-xl">
@@ -126,7 +126,24 @@ const supervisorSummary = computed(() => {
 </template>
 
 <style scoped>
-.min-h-\[300px\] { min-height: 300px; }
+/* Hero Section constraints */
+.hero-wrapper {
+  overflow: hidden !important;
+  min-height: 280px;
+  position: relative;
+}
+
+@media (max-width: 767px) {
+  .hero-wrapper {
+    min-height: 200px;
+  }
+  .text-4xl { font-size: 1.5rem; line-height: 2rem; }
+  .p-8 { padding: 1.25rem; }
+  .mt-8 { margin-top: 1rem; }
+  .mb-8 { margin-bottom: 1rem; }
+  .line-clamp-3 { -webkit-line-clamp: 2; }
+}
+
 .relative { position: relative; }
 .absolute { position: absolute; }
 .inset-0 { inset: 0; }
@@ -146,15 +163,7 @@ const supervisorSummary = computed(() => {
 .opacity-20 { opacity: 0.2; }
 .group:hover .group-hover\:scale-105 { transform: scale(1.05); }
 .transition-transform { transition-property: transform; transition-duration: 1000ms; }
-.bg-gradient-to-br { background-image: linear-gradient(to bottom right, var(--tw-gradient-stops)); }
-.bg-gradient-to-r { background-image: linear-gradient(to right, var(--tw-gradient-stops)); }
-.from-\[\#0a0e1a\] { --tw-gradient-from: #0a0e1a; --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
-.to-\[\#1a2640\] { --tw-gradient-to: #1a2640; }
-.from-\[var\(--bg-surface\)\] { --tw-gradient-from: var(--bg-surface); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
-.via-\[var\(--bg-surface\)\]\/80 { --tw-gradient-stops: var(--tw-gradient-from), rgba(15, 20, 40, 0.68), var(--tw-gradient-to); }
-.to-transparent { --tw-gradient-to: transparent; }
 .p-8 { padding: 2rem; }
-.md\:p-12 { padding: 3rem; }
 .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
 .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
 .px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
@@ -164,6 +173,7 @@ const supervisorSummary = computed(() => {
 .mb-4 { margin-bottom: 1rem; }
 .mb-8 { margin-bottom: 2rem; }
 .mt-8 { margin-top: 2rem; }
+.mt-4 { margin-top: 1rem; }
 .ml-2 { margin-left: 0.5rem; }
 .gap-1 { gap: 0.25rem; }
 .gap-2 { gap: 0.5rem; }
@@ -171,6 +181,7 @@ const supervisorSummary = computed(() => {
 .gap-4 { gap: 1rem; }
 .gap-6 { gap: 1.5rem; }
 .bg-white\/10 { background-color: rgba(255, 255, 255, 0.1); }
+.bg-white\/5 { background-color: rgba(255, 255, 255, 0.05); }
 .bg-\[var\(--accent-academic\)\]\/10 { background-color: rgba(108, 180, 255, 0.1); }
 .bg-\[var\(--accent-primary\)\] { background-color: var(--accent-primary); }
 .hover\:bg-\[var\(--accent-primary\)\]\/90:hover { background-color: rgba(108, 180, 255, 0.9); }
@@ -185,6 +196,7 @@ const supervisorSummary = computed(() => {
 .text-lg { font-size: 1.125rem; line-height: 1.75rem; }
 .text-4xl { font-size: 2.25rem; line-height: 2.5rem; }
 .text-\[10px\] { font-size: 0.625rem; }
+.text-\[11px\] { font-size: 0.6875rem; }
 .font-semibold { font-weight: 600; }
 .font-bold { font-weight: 700; }
 .font-medium { font-weight: 500; }
@@ -213,4 +225,9 @@ const supervisorSummary = computed(() => {
 .transition-all { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 300ms; }
 .disabled\:opacity-50:disabled { opacity: 0.5; }
 .disabled\:cursor-not-allowed:disabled { cursor: not-allowed; }
+
+@media (min-width: 768px) {
+  .md\:p-12 { padding: 3rem; }
+  .md\:line-clamp-none { -webkit-line-clamp: unset; display: block; overflow: visible; }
+}
 </style>

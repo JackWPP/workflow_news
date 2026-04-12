@@ -61,8 +61,8 @@ const publishedLabel = computed(() => {
     <div class="absolute top-0 left-0 w-full h-1 bg-[var(--card-accent)] opacity-50 group-hover:opacity-100 transition-opacity"></div>
 
     <!-- Image Area -->
-      <div v-if="item.image_url" class="relative max-h-48 overflow-hidden bg-black/40 border-b border-white/5">
-        <img :src="item.image_url" :alt="item.image_caption || item.title" loading="lazy" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+      <div v-if="item.image_url" class="relative border-b border-white/5" style="max-height: 192px; overflow: hidden; background: rgba(0,0,0,0.4);">
+        <img :src="item.image_url" :alt="item.image_caption || item.title" loading="lazy" @error="($event.target as HTMLImageElement).style.display='none'" style="width: 100%; height: 192px; object-fit: cover; display: block;" />
         <div v-if="item.has_verified_image" class="absolute top-2 right-2 bg-black/60 backdrop-blur-md rounded-full px-2 py-1 flex items-center gap-1 text-[10px] text-[var(--status-ok)] border border-[var(--status-ok)]/30">
           <CheckCircle2 class="w-3 h-3" /> 高质量配图
         </div>
