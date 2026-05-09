@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 def _ensure_sqlite_schema() -> None:
+    # NOTE: This function handles historical schema migrations for SQLite.
+    # Going forward, all new schema changes should be managed via Alembic
+    # (see alembic/ directory).  Run `alembic upgrade head` to apply them.
     if engine.dialect.name != "sqlite":
         return
 
@@ -105,6 +108,12 @@ def _ensure_sqlite_schema() -> None:
             for name, statement in article_image_statements.items():
                 if name not in article_image_columns:
                     connection.execute(text(statement))
+
+        if "evaluation_runs" not in tables:
+            Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["evaluation_runs"]])
+
+        if "article_pool" not in tables:
+            Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["article_pool"]])
 
 
 def init_db() -> None:

@@ -41,20 +41,6 @@ class Settings:
     zhipu_search_engine: str = os.getenv("ZHIPU_SEARCH_ENGINE", "search_pro_sogou")
     zhipu_search_count: int = int(os.getenv("ZHIPU_SEARCH_COUNT", "15"))
 
-    brave_api_key: str = os.getenv("BRAVE_API_KEY", "")
-    brave_base_url: str = os.getenv("BRAVE_BASE_URL", "https://api.search.brave.com")
-    brave_country: str = os.getenv("BRAVE_COUNTRY", "CN")
-    brave_search_lang: str = os.getenv("BRAVE_SEARCH_LANG", "zh-hans")
-    brave_fallback_lang: str = os.getenv("BRAVE_FALLBACK_LANG", "en")
-
-    tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
-
-    firecrawl_api_key: str = os.getenv("FIRECRAWL_API_KEY", "")
-    firecrawl_base_url: str = os.getenv(
-        "FIRECRAWL_BASE_URL", "https://api.firecrawl.dev/v2"
-    )
-    firecrawl_location: str = os.getenv("FIRECRAWL_LOCATION", "Hong Kong")
-    firecrawl_country: str = os.getenv("FIRECRAWL_COUNTRY", "HK")
     jina_api_key: str = os.getenv("JINA_API_KEY", "")
     jina_base_url: str = os.getenv("JINA_BASE_URL", "https://r.jina.ai")
     scrape_timeout_seconds: int = int(os.getenv("SCRAPE_TIMEOUT_SECONDS", "20"))

@@ -24,7 +24,6 @@ from fastapi.testclient import TestClient
 from app.bootstrap import init_db
 from app.database import Base, engine, session_scope
 from app.models import Article, Report, RetrievalRun, Source
-from app.services.firecrawl import FirecrawlClient
 from app.services.llm import (
     ArticleDecision,
     PlannerOutput,
@@ -160,7 +159,7 @@ class ImageRichBraveClient(FakeBraveClient):
         return enriched
 
 
-class FakeFirecrawlClient:
+class FakeJinaClient:
     enabled = True
 
     async def scrape(self, url: str, timeout_seconds: int | None = None):
@@ -204,11 +203,7 @@ class FakeFirecrawlClient:
         return []
 
 
-# Alias: pipeline.scraper is used for scraping now, same fake works
-FakeJinaClient = FakeFirecrawlClient
-
-
-class DirectSourceMapFirecrawlClient(FakeFirecrawlClient):
+class DirectSourceMapJinaClient(FakeJinaClient):
     async def scrape(self, url: str, timeout_seconds: int | None = None):
         if "86pla.com/news/detail/90001.html" in url:
             return {
@@ -239,14 +234,14 @@ class DirectSourceMapFirecrawlClient(FakeFirecrawlClient):
         ]
 
 
-class TimeoutFirecrawlClient(FakeFirecrawlClient):
+class TimeoutJinaClient(FakeJinaClient):
     async def scrape(self, url: str, timeout_seconds: int | None = None):
         if "industry-launch" in url:
             raise httpx.ReadTimeout("timeout")
         return await super().scrape(url, timeout_seconds=timeout_seconds)
 
 
-class VerificationWallFirecrawlClient(FakeFirecrawlClient):
+class VerificationWallJinaClient(FakeJinaClient):
     async def scrape(self, url: str, timeout_seconds: int | None = None):
         if "3dprint.com" in url:
             return {
@@ -261,16 +256,6 @@ class VerificationWallFirecrawlClient(FakeFirecrawlClient):
                 "status": "success",
             }
         return await super().scrape(url, timeout_seconds=timeout_seconds)
-
-
-class OldIndustryFirecrawlClient(FakeFirecrawlClient):
-    async def scrape(self, url: str, timeout_seconds: int | None = None):
-        payload = await super().scrape(url, timeout_seconds=timeout_seconds)
-        if "industry-launch" in url:
-            payload["published_at"] = now_local().replace(
-                hour=8, minute=0, second=0, microsecond=0
-            ) - timedelta(days=3)
-        return payload
 
 
 class FakeReportLLM:
@@ -475,7 +460,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_pipeline_generates_structured_report(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
-        pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.firecrawl = None
         pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
@@ -506,7 +491,7 @@ class NativePipelineTestCase(unittest.TestCase):
 
     def test_api_compatibility_endpoints(self):
         main.pipeline.brave = FakeBraveClient()
-        main.pipeline.firecrawl = FakeFirecrawlClient()
+        main.pipeline.firecrawl = None
         main.pipeline.scraper = FakeJinaClient()
         main.pipeline.llm = FakeReportLLM()
 
@@ -563,7 +548,7 @@ class NativePipelineTestCase(unittest.TestCase):
 
     def test_admin_quality_feedback_endpoints(self):
         main.pipeline.brave = FakeBraveClient()
-        main.pipeline.firecrawl = FakeFirecrawlClient()
+        main.pipeline.firecrawl = None
         main.pipeline.scraper = FakeJinaClient()
         main.pipeline.llm = FakeReportLLM()
 
@@ -656,7 +641,7 @@ class NativePipelineTestCase(unittest.TestCase):
         original_pipeline = main.pipeline
         native_pipeline = NativeReportPipeline()
         native_pipeline.brave = FakeBraveClient()
-        native_pipeline.firecrawl = FakeFirecrawlClient()
+        native_pipeline.firecrawl = None
         native_pipeline.scraper = FakeJinaClient()
         native_pipeline.llm = FakeReportLLM()
         main.pipeline = native_pipeline
@@ -737,7 +722,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_pipeline_degrades_when_writer_falls_back(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
-        pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.firecrawl = None
         pipeline.scraper = FakeJinaClient()
         pipeline.llm = FallbackWriterLLM()
 
@@ -758,8 +743,8 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_pipeline_handles_scrape_timeout(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
-        pipeline.firecrawl = TimeoutFirecrawlClient()
-        pipeline.scraper = TimeoutFirecrawlClient()
+        pipeline.firecrawl = None
+        pipeline.scraper = TimeoutJinaClient()
         pipeline.llm = FakeReportLLM()
 
         async def _run():
@@ -782,8 +767,8 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_pipeline_uses_search_metadata_fallback_for_high_tier_blocked_page(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = MetadataFallbackBraveClient()
-        pipeline.firecrawl = VerificationWallFirecrawlClient()
-        pipeline.scraper = VerificationWallFirecrawlClient()
+        pipeline.firecrawl = None
+        pipeline.scraper = VerificationWallJinaClient()
         pipeline.llm = FakeReportLLM()
 
         import asyncio
@@ -807,7 +792,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_pipeline_exposes_duplicate_ratio_and_section_metrics(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
-        pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.firecrawl = None
         pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
@@ -1108,7 +1093,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_pipeline_rejects_old_articles_outside_24h(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = OldIndustryBraveClient()
-        pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.firecrawl = None
         pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
@@ -1131,8 +1116,8 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_direct_source_listing_map_entries_are_consumed(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = DisabledBraveClient()
-        pipeline.firecrawl = DirectSourceMapFirecrawlClient()
-        pipeline.scraper = DirectSourceMapFirecrawlClient()
+        pipeline.firecrawl = None
+        pipeline.scraper = DirectSourceMapJinaClient()
         pipeline.llm = FakeReportLLM()
 
         with session_scope() as session:
@@ -1161,7 +1146,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_partial_status_for_single_section_without_runtime_errors(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = SingleSectionBraveClient()
-        pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.firecrawl = None
         pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
@@ -1271,7 +1256,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_native_pipeline_can_reach_complete_with_three_image_backed_items(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = ImageRichBraveClient()
-        pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.firecrawl = None
         pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
@@ -1301,7 +1286,7 @@ class NativePipelineTestCase(unittest.TestCase):
     def test_pipeline_rejects_bad_candidates_before_extraction(self):
         pipeline = NativeReportPipeline()
         pipeline.brave = FakeBraveClient()
-        pipeline.firecrawl = FakeFirecrawlClient()
+        pipeline.firecrawl = None
         pipeline.scraper = FakeJinaClient()
         pipeline.llm = FakeReportLLM()
 
@@ -1600,22 +1585,6 @@ class NativePipelineTestCase(unittest.TestCase):
         self.assertGreater(
             result.decisions[0].combined_score, result.decisions[1].combined_score
         )
-
-    def test_firecrawl_extracts_published_at_from_title_window(self):
-        client = FirecrawlClient(api_key="dummy")
-        html = """
-        <div class="article">
-          <h1>2025年橡塑十大技术趋势之多层多腔吹塑及配套技术篇</h1>
-          <div>来源：雅式橡塑网 <span>日期 ：2025-03-31</span></div>
-          <div>正文内容</div>
-        </div>
-        """
-        published_at = client._extract_published_at(
-            {}, "2025年橡塑十大技术趋势之多层多腔吹塑及配套技术篇", "", html
-        )
-        self.assertIsNotNone(published_at)
-        self.assertEqual(published_at.date().isoformat(), "2025-03-31")
-
 
 if __name__ == "__main__":
     unittest.main()

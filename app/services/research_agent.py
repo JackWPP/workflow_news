@@ -277,14 +277,14 @@ class ResearchAgent:
         )
 
     def _build_tools(self) -> list[Tool]:
-        from app.services.brave import BraveSearchClient
+        from app.services.zhipu_search import ZhipuSearchClient
         from app.services.scraper import ScraperClient
 
-        brave = BraveSearchClient()
+        zhipu = ZhipuSearchClient()
         scraper = ScraperClient()
         return [
             LocalCorpusSearchTool(session=self._session),
-            WebSearchTool(brave_client=brave),
+            WebSearchTool(zhipu_client=zhipu),
             ReadPageTool(scraper_client=scraper),
             FollowReferencesTool(),
             EvaluateArticleTool(llm_client=self._llm_client),

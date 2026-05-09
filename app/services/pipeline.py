@@ -21,7 +21,7 @@ from app.models import (
     RetrievalRun,
     Source,
 )
-from app.services.brave import BraveSearchClient
+from app.services.zhipu_search import ZhipuSearchClient
 from app.services.jina_reader import JinaReaderClient
 from app.services.scraper import ScraperClient
 from app.services.llm import PlannerOutput, ReportLLMService, ScorerOutput, WriterOutput
@@ -339,8 +339,8 @@ SOURCE_TIER_THRESHOLDS = {
 
 class NativeReportPipeline:
     def __init__(self):
-        self.brave = BraveSearchClient()
-        self.firecrawl = None  # compatibility placeholder; Firecrawl is no longer part of the runtime path
+        self.zhipu = ZhipuSearchClient()
+
         self.scraper = ScraperClient(jina_client=JinaReaderClient())
         self.llm = ReportLLMService()
 
@@ -589,8 +589,7 @@ class NativeReportPipeline:
                 "query_error_count": query_error_count,
                 "fallbacks_triggered": fallbacks_triggered,
                 "sources_enabled": len(sources),
-                "brave_enabled": self.brave.enabled,
-                "firecrawl_enabled": False,
+                "zhipu_enabled": self.zhipu.enabled,
             }
             session.flush()
             session.commit()
@@ -695,9 +694,6 @@ class NativeReportPipeline:
                 {
                     "section": section,
                     "language": language,
-                    "search_lang": settings.brave_search_lang
-                    if language == "zh"
-                    else settings.brave_fallback_lang,
                     "query": query,
                     "rationale": row.rationale[:240],
                 }
@@ -716,9 +712,9 @@ class NativeReportPipeline:
                     {
                         "section": section,
                         "language": language,
-                        "search_lang": settings.brave_search_lang
+                        "search_lang": "zh"
                         if language == "zh"
-                        else settings.brave_fallback_lang,
+                        else "en",
                         "query": query,
                         "rationale": f"Static slot query for {meta_item['report_name']} coverage.",
                     }
@@ -766,8 +762,7 @@ class NativeReportPipeline:
                 query_text=spec["query"],
                 target_type="mixed",
                 filters={
-                    "goggles": spec.get("goggles"),
-                    "rationale": spec.get("rationale"),
+                                        "rationale": spec.get("rationale"),
                 },
             )
             session.add(query_row)
@@ -777,14 +772,12 @@ class NativeReportPipeline:
             provider_counts: dict[str, int] = {}
             results: list[dict[str, Any]] = []
             try:
-                if self.brave.enabled:
-                    brave_results = await self.brave.search_all(
-                        spec["query"], spec["search_lang"], goggles=spec.get("goggles")
-                    )
-                    provider_counts["brave"] = len(brave_results)
-                    results.extend(brave_results)
+                if self.zhipu.enabled:
+                    zhipu_results = await self.zhipu.search(spec["query"], count=15)
+                    provider_counts["zhipu"] = len(zhipu_results)
+                    results.extend(zhipu_results)
             except Exception as exc:
-                provider_errors.append(f"brave:{exc}")
+                provider_errors.append(f"zhipu:{exc}")
 
             if not results and provider_errors:
                 query_row.response_status = "error"
@@ -863,9 +856,9 @@ class NativeReportPipeline:
                     {
                         "section": section,
                         "language": language,
-                        "search_lang": settings.brave_search_lang
+                        "search_lang": "zh"
                         if language == "zh"
-                        else settings.brave_fallback_lang,
+                        else "en",
                         "query": query,
                         "rationale": "Static fallback query set.",
                     }

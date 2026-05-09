@@ -16,6 +16,7 @@ const loading = ref(false)
 const generating = ref(false)
 const error = ref('')
 const viewMode = ref<'cards' | 'markdown'>('cards')
+const reportType = ref<'global' | 'lab'>('global')
 const progressPanel = ref<InstanceType<typeof AgentProgressPanel> | null>(null)
 let activeES: EventSource | null = null
 
@@ -27,6 +28,19 @@ const groupedItems = computed(() => {
     buckets[item.section] = [...(buckets[item.section] ?? []), item]
   }
   return buckets
+})
+
+const langGroupedItems = computed(() => {
+  const result: Record<string, { zh: Report['items']; en: Report['items'] }> = {
+    industry: { zh: [], en: [] },
+    academic: { zh: [], en: [] },
+    policy: { zh: [], en: [] },
+  }
+  for (const item of report.value?.items ?? []) {
+    const lang = (item as any).language === 'en' ? 'en' : 'zh'
+    result[item.section]?.[lang]?.push(item)
+  }
+  return result
 })
 
 const stats = computed(() => ({
@@ -128,6 +142,20 @@ onUnmounted(() => {
     <AgentProgressPanel ref="progressPanel" :active="generating" />
 
     <template v-if="report && !generating">
+      <!-- 日报类型切换 -->
+      <div class="flex items-center gap-2 bg-black/40 p-1 rounded-xl border border-white/10 w-max">
+        <button
+          @click="reportType = 'global'"
+          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          :class="reportType === 'global' ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
+        >全球日报</button>
+        <button
+          @click="reportType = 'lab'"
+          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          :class="reportType === 'lab' ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
+        >实验室日报</button>
+      </div>
+
       <!-- Toolbar & Analytics Row -->
       <div class="flex flex-col lg:flex-row gap-6 items-end justify-between mb-2">
         <!-- Coverage Gauge Analytics -->
@@ -170,13 +198,19 @@ onUnmounted(() => {
 
       <!-- Main Content Flow -->
       <div v-if="viewMode === 'cards'" class="flex flex-col gap-4 mt-6">
-        <template v-for="section in ['industry', 'academic', 'policy']" :key="section">
+        <template v-for="section in (['industry', 'academic', 'policy'] as const)" :key="section">
           <div v-show="groupedItems[section]?.length > 0">
             <SectionDivider :section="section" :count="groupedItems[section].length" />
-            
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              <ReportItemCard v-for="item in groupedItems[section]" :key="item.id" :item="item" />
-            </div>
+            <template v-for="lang in (['zh', 'en'] as const)" :key="`${section}-${lang}`">
+              <div v-if="langGroupedItems[section]?.[lang]?.length > 0" class="mb-4">
+                <div class="text-xs text-[var(--text-secondary)] uppercase tracking-wider mb-2 px-1">
+                  {{ lang === 'zh' ? '中文来源' : 'English Sources' }}
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <ReportItemCard v-for="item in langGroupedItems[section][lang]" :key="item.id" :item="item" />
+                </div>
+              </div>
+            </template>
           </div>
         </template>
       </div>

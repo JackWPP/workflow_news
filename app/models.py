@@ -165,6 +165,7 @@ class Report(TimestampMixin, Base):
 
     retrieval_run: Mapped["RetrievalRun | None"] = relationship(back_populates="report")
     items: Mapped[list["ReportItem"]] = relationship(back_populates="report", cascade="all, delete-orphan")
+    evaluations: Mapped[list["EvaluationRun"]] = relationship(back_populates="report", cascade="all, delete-orphan")
 
     @property
     def publish_grade(self) -> str:
@@ -433,3 +434,56 @@ class QualityFeedback(TimestampMixin, Base):
     reason: Mapped[str | None] = mapped_column(String(255))
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+
+
+class EvaluationRun(TimestampMixin, Base):
+    __tablename__ = "evaluation_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("reports.id"), nullable=False)
+    judge_model: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    faithfulness_score: Mapped[float | None] = mapped_column(Float)
+    coverage_score: Mapped[float | None] = mapped_column(Float)
+    dedup_score: Mapped[float | None] = mapped_column(Float)
+    fluency_score: Mapped[float | None] = mapped_column(Float)
+    research_value_score: Mapped[float | None] = mapped_column(Float)
+    weighted_total: Mapped[float | None] = mapped_column(Float)
+
+    total_claims: Mapped[int] = mapped_column(Integer, default=0)
+    supported_claims: Mapped[int] = mapped_column(Integer, default=0)
+    faithfulness_ratio: Mapped[float | None] = mapped_column(Float)
+
+    precision_at_k: Mapped[float | None] = mapped_column(Float)
+    recall_at_k: Mapped[float | None] = mapped_column(Float)
+
+    judge_raw_output: Mapped[dict | None] = mapped_column(JSON)
+    top_issues: Mapped[list | None] = mapped_column(JSON, default=list)
+
+    report: Mapped["Report"] = relationship(back_populates="evaluations")
+
+
+class ArticlePool(TimestampMixin, Base):
+    __tablename__ = "article_pool"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    url: Mapped[str] = mapped_column(String(2048), nullable=False, unique=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    domain: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    language: Mapped[str] = mapped_column(String(8), nullable=False)
+    raw_content: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
+    )
+    quality_score: Mapped[float | None] = mapped_column(Float)
+    section: Mapped[str | None] = mapped_column(String(32))
+    category: Mapped[str | None] = mapped_column(String(32))
+    eval_metadata: Mapped[dict | None] = mapped_column(JSON)

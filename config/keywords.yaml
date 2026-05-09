@@ -1,0 +1,189 @@
+# 高分子材料加工领域关键词配置
+# 修改此文件不需要重启应用（下次日报生成时自动加载）
+#
+# 来源：提取自 app/services/daily_report_agent.py (_POSITIVE_KEYWORDS, _NEGATIVE_KEYWORDS,
+#   _SECTION_HINT_KEYWORDS, _NON_ARTICLE_URL_PATTERNS, _NON_ARTICLE_DOMAIN_SUFFIXES)
+#  和 app/services/harness.py (DEFAULT_DOMAIN_KEYWORDS, DEFAULT_BLOCKED_DOMAINS)
+
+# ============================================================================
+# 正向关键词：内容必须与至少一个关键词相关
+# ============================================================================
+positive_keywords:
+  zh:
+    - 高分子
+    - 塑料
+    - 橡胶
+    - 复合材料
+    - 树脂
+    - 改性
+    - 薄膜
+    - 包装
+    - 注塑
+    - 挤出
+    - 吹塑
+    - 成型
+    - 回收
+    - 再生
+    - 生物基
+    - 降解
+  en:
+    - polymer
+    - plastic
+    - plastics
+    - rubber
+    - composite
+    - resin
+    - recycling
+    - biodegradable
+    - processing
+    - injection
+    - injection molding
+    - extrusion
+    - additive manufacturing
+
+# ============================================================================
+# 负向关键词：命中任何一条则排除
+# ============================================================================
+negative_keywords:
+  zh:
+    - 财经
+    - 股价
+    - 财报
+    - 马拉松
+    - 足球
+    - 战争
+    - 导弹
+    - 医药
+  en:
+    - market forecast
+    - cagr
+    - stock
+    - earnings
+    - marathon
+    - football
+    - soccer
+    - war
+    - missile
+    - ophthalmology
+    - biogen
+    - apellis
+    - pharma
+
+# ============================================================================
+# 板块提示词：用于将文章自动归类到日报板块
+# ============================================================================
+section_hints:
+  industry:
+    zh:
+      - 注塑
+      - 挤出
+      - 设备
+      - 产能
+      - 扩产
+      - 工厂
+      - 量产
+    en:
+      - machine
+      - plant
+      - automotive
+      - packaging
+      - medical
+  policy:
+    zh:
+      - 政策
+      - 法规
+      - 标准
+      - 限塑
+      - 监管
+    en:
+      - cbam
+      - epr
+      - compliance
+      - tariff
+  academic:
+    zh:
+      - 论文
+      - 研究
+      - 聚合物
+      - 复合材料
+      - 机理
+    en:
+      - journal
+      - study
+      - materials science
+      - polymer
+
+# ============================================================================
+# 封禁域名：这些域名永远不会被访问或收录
+# ============================================================================
+blocked_domains:
+  # ── PR / 营销类 ──
+  - openpr.com
+  - prnewswire.com
+  - prnasia.com
+  - businesswire.com
+  - globenewswire.com
+  - coherentmarketinsights.com
+  - gminsights.com
+  - grandviewresearch.com
+  # ── 百科 / 社区 ──
+  - baike.baidu.com
+  - zhuanlan.zhihu.com
+  - bilibili.com
+  # ── 财经 / 投资类（非行业内容）──
+  - cn.investing.com
+  - investing.com
+  # ── B2B 电商平台（非新闻来源）──
+  - made-in-china.com
+  - alibaba.com
+  - 1688.com
+  - globalsources.com
+  - indiamart.com
+  - b2b168.com
+  - jdzj.com
+  - hbsztv.com
+  - stockstar.com
+  - eastmoney.com
+  - 10jqka.com.cn
+  - china-packcon.com
+  - china-ipif.com
+  # ── 台湾媒体 ──
+  - digitimes.com.tw
+  - udn.com
+  - ltn.com.tw
+  - chinatimes.com
+  - yahoo.com.tw
+  - tw.news.yahoo.com
+  - ctee.com.tw
+  - money.udn.com
+  - technews.tw
+  - bnext.com.tw
+  - ettoday.net
+  - setn.com
+  - storm.mg
+  - cna.com.tw
+  - taiwannews.com.tw
+
+# ============================================================================
+# 非文章 URL 模式：命中任意模式则跳过内容提取
+# ============================================================================
+non_article_url_patterns:
+  - /course/
+  - /site/menu/
+  - /list.asp
+  - /firm/
+  - /ask/view/
+  - /ch/reader/view_abstract.aspx
+  - /info/996
+  - /info/detail/
+  - /issue/
+
+# ============================================================================
+# 非文章域名后缀：这些域名整体跳过内容提取
+# ============================================================================
+non_article_domain_suffixes:
+  - zhihuishu.com
+  - qcc.com
+  - 11467.com
+  - bohe.cn
+  - 100ppi.com

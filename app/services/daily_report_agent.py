@@ -7,10 +7,10 @@ from datetime import date, datetime
 from typing import Any
 
 from app.config import settings
-from app.models import AgentRun, Report, ReportItem, RetrievalRun
+from app.models import AgentRun, ArticlePool, Report, ReportItem, RetrievalRun
+from sqlalchemy import select
 from app.services.agent_core import AgentCore, AgentResult
 from app.services.article_agent import ArticleAgent, ArticleCard, ArticleHarness
-from app.services.brave import BraveSearchClient
 from app.services.jina_reader import JinaReaderClient
 from app.services.scraper import ScraperClient
 from app.services.zhipu_search import ZhipuSearchClient
@@ -531,7 +531,6 @@ class DailyReportAgent:
     ) -> Report:
         """Phase B: 所有异步 I/O 操作，不持有任何 DB session。"""
         # 初始化共享资源
-        brave = BraveSearchClient()
         jina = JinaReaderClient()
         scraper = ScraperClient(jina_client=jina)
         zhipu = ZhipuSearchClient()
@@ -539,58 +538,43 @@ class DailyReportAgent:
         llm_client = self._build_runtime_llm_client(runtime)
         synthesis_llm_client = self._build_synthesis_llm_client(runtime)
 
-        # ============ Phase 1: 搜索发现 ============
-        logger.info("[DailyReportAgent] Phase 1: Search Discovery")
+        # ============ Phase 1: 拉取 + 去重 + 评估（Composer） ============
+        logger.info("[DailyReportAgent] Phase 1: Composer gather + dedup + evaluate")
         if event_queue:
-            event_queue.put_nowait({"type": "phase", "phase": 1, "name": "搜索发现"})
-        seeded_count = await self._seed_trusted_source_candidates(memory)
-        if seeded_count:
-            logger.info(
-                "[DailyReportAgent] Seeded %d trusted-source candidates before search",
-                seeded_count,
-            )
-        search_tools: list = [
-            WebSearchTool(
-                brave_client=brave,
-                zhipu_client=zhipu,
-                tavily_api_key=settings.tavily_api_key,
-            ),
-            CheckCoverageTool(),
-            FinishTool(),
-        ]
-        search_harness = self._build_search_harness()
-        search_agent = AgentCore(
-            tools=search_tools,
-            llm_client=llm_client,
-            harness=search_harness,
-            event_queue=event_queue,
-        )
+            event_queue.put_nowait({"type": "phase", "phase": 1, "name": "拉取与评估"})
 
-        search_prompt = self._build_search_prompt(
-            target_date, seeded_count=seeded_count
-        )
-        search_result = await search_agent.run(
-            task=search_prompt,
-            agent_run_id=agent_run_id,
-            memory=memory,
-        )
+        from app.services.composer import DailyComposer
+        composer = DailyComposer(llm_client=llm_client)
+        candidates = await composer.gather_candidates(target_date)
+        if candidates:
+            for c in candidates:
+                memory.search_results.append({
+                    "url": c.get("url", ""),
+                    "title": c.get("title", ""),
+                    "snippet": c.get("snippet", ""),
+                    "domain": c.get("domain", ""),
+                    "published_at": c.get("published_at"),
+                    "search_type": "article_pool",
+                    "source_name": c.get("domain", ""),
+                    "source_type": "article_pool",
+                    "metadata": {
+                        "quality_score": c.get("quality_score"),
+                        "section": c.get("section"),
+                        "category": c.get("category"),
+                        "language": c.get("language"),
+                    },
+                })
         logger.info(
-            "[DailyReportAgent] Phase 1 done: %d search results, %d queries, reason=%s",
-            len(memory.search_results),
-            len(memory.searched_queries),
-            search_result.finished_reason,
+            "[DailyReportAgent] Phase 1 done: %d candidates after dedup+evaluate",
+            len(candidates),
         )
         if event_queue:
-            event_queue.put_nowait(
-                {
-                    "type": "stats",
-                    "phase": 1,
-                    "query_count": len(memory.searched_queries),
-                    "search_result_count": len(memory.search_results),
-                    "image_search_result_count": len(memory.image_search_results),
-                    "seeded_candidate_count": seeded_count,
-                }
-            )
+            event_queue.put_nowait({
+                "type": "stats",
+                "phase": 1,
+                "search_result_count": len(candidates),
+                "seeded_candidate_count": len(candidates),
+            })
 
         # ============ Phase 2: 并发文章处理 ============
         logger.info("[DailyReportAgent] Phase 2: Parallel Article Processing")
@@ -606,7 +590,7 @@ class DailyReportAgent:
                 target_date,
                 run_id,
                 agent_run_id,
-                brave,
+                zhipu,
                 scraper,
                 memory,
                 shadow_mode,
@@ -623,7 +607,7 @@ class DailyReportAgent:
             ),
             "evaluate_article": EvaluateArticleTool(llm_client=llm_client),
             "search_images": SearchImagesTool(
-                brave_client=brave, scraper_client=scraper
+                scraper_client=scraper
             ),
             "verify_image": VerifyImageTool(llm_client=llm_client),
         }
@@ -646,10 +630,6 @@ class DailyReportAgent:
             max_concurrency=runtime["scrape_concurrency"],
             domain_failure_threshold=runtime["domain_failure_threshold"],
         )
-        supervisor_actions: list[dict[str, Any]] = []
-        supplement_candidates_found = 0
-        supplement_agents_launched = 0
-        supplement_successful_articles = 0
         total_attempted_articles = len(cards)
 
         successful = [c for c in cards if c.success and c.section != "rejected"]
@@ -684,130 +664,13 @@ class DailyReportAgent:
                 }
             )
 
-        # ============ Phase 2.5 (A): 补充搜索 / supervisor loop ============
-        supplement_round = 0
-        stalled_supervisor_rounds = 0
-        while self._should_run_supervisor_round(
-            memory, successful, supplement_round, runtime
-        ):
-            supplement_round += 1
-            action = self._build_supervisor_action(memory, successful, supplement_round)
-            supervisor_actions.append(action)
-            logger.info(
-                "[DailyReportAgent] Supervisor round %d triggered: %s",
-                supplement_round,
-                action["reason"],
-            )
-            supplement_harness = Harness(
-                max_steps=16,
-                max_search_calls=10,
-                max_page_reads=0,
-                max_llm_calls=12,
-                max_duration_seconds=240.0,
-                min_searches_before_finish=4,
-                min_articles_before_finish=0,
-                system_prompt=SEARCH_PHASE_SYSTEM_PROMPT,
-            )
-            supplement_prompt = self._build_supplement_search_prompt(
-                target_date, memory
-            )
-            supplement_agent = AgentCore(
-                tools=search_tools,
-                llm_client=llm_client,
-                harness=supplement_harness,
-            )
-            await supplement_agent.run(
-                task=supplement_prompt,
-                agent_run_id=agent_run_id,
-                memory=memory,
-            )
-            # 提取新候选 URL，按已成功产出的条目数量而不是首轮候选数计算剩余额度
-            processed_success_count = len(successful)
-            remaining_slots = max(
-                0, runtime["max_extractions_per_run"] - processed_success_count
-            )
-            new_candidates = self._extract_candidate_urls(
-                memory, runtime, limit=remaining_slots
-            )
-            supplement_candidates_found += len(new_candidates)
-            if new_candidates and remaining_slots > 0:
-                launched_this_round = min(len(new_candidates), remaining_slots)
-                supplement_agents_launched += launched_this_round
-                logger.info(
-                    "[DailyReportAgent] Supplement search round %d found %d new candidates, launching %d agents",
-                    supplement_round,
-                    len(new_candidates),
-                    launched_this_round,
-                )
-                new_agents = [
-                    ArticleAgent(
-                        url=url,
-                        context=context,
-                        memory=memory,
-                        tools=article_tools,
-                        harness=ArticleHarness(),
-                        agent_run_id=agent_run_id,
-                    )
-                    for url, context in new_candidates[:remaining_slots]
-                ]
-                new_cards = await self._run_article_agents(
-                    new_agents,
-                    memory=memory,
-                    max_concurrency=runtime["scrape_concurrency"],
-                    domain_failure_threshold=runtime["domain_failure_threshold"],
-                )
-                total_attempted_articles += len(new_cards)
-                phase2_rejected_missing_date_count += sum(
-                    1
-                    for c in new_cards
-                    if c.section == "rejected"
-                    and "发布时间缺失" in (c.evaluation_reason or "")
-                )
-                phase2_rejected_stale_count += sum(
-                    1
-                    for c in new_cards
-                    if c.section == "rejected"
-                    and "发布时间过旧" in (c.evaluation_reason or "")
-                )
-                new_successful = [
-                    c for c in new_cards if c.success and c.section != "rejected"
-                ]
-                if new_successful:
-                    stalled_supervisor_rounds = 0
-                else:
-                    stalled_supervisor_rounds += 1
-                supplement_successful_articles += len(new_successful)
-                successful.extend(new_successful)
-                phase2_soft_accepted_unknown_date_count = sum(
-                    1
-                    for a in memory.publishable_articles()
-                    if getattr(a, "recency_status", "") == "unknown"
-                )
-                logger.info(
-                    "[DailyReportAgent] After supervisor round %d: %d total successful articles",
-                    supplement_round,
-                    len(successful),
-                )
-                if stalled_supervisor_rounds >= 2:
-                    logger.info(
-                        "[DailyReportAgent] Supervisor stagnation detected after %d rounds with no new successful articles",
-                        stalled_supervisor_rounds,
-                    )
-                    break
-            else:
-                logger.info(
-                    "[DailyReportAgent] Supervisor round %d found no launchable candidates",
-                    supplement_round,
-                )
-                break
-
         if not successful:
             logger.warning("[DailyReportAgent] All article agents failed, falling back")
             return await self._run_fallback(
                 target_date,
                 run_id,
                 agent_run_id,
-                brave,
+                zhipu,
                 scraper,
                 memory,
                 shadow_mode,
@@ -905,7 +768,7 @@ class DailyReportAgent:
                 target_date,
                 run_id,
                 agent_run_id,
-                brave,
+                zhipu,
                 scraper,
                 memory,
                 shadow_mode,
@@ -947,15 +810,11 @@ class DailyReportAgent:
         )
         final_result.diagnostics.update(
             {
-                "supplement_candidates_found": supplement_candidates_found,
-                "supplement_agents_launched": supplement_agents_launched,
-                "supplement_successful_articles": supplement_successful_articles,
                 "phase2_attempted_articles": total_attempted_articles,
                 "phase2_successful_articles": len(successful),
                 "phase2_rejected_missing_date_count": phase2_rejected_missing_date_count,
                 "phase2_rejected_stale_count": phase2_rejected_stale_count,
                 "phase2_soft_accepted_unknown_date_count": phase2_soft_accepted_unknown_date_count,
-                "supervisor_actions": supervisor_actions,
             }
         )
         logger.info(
@@ -999,7 +858,6 @@ class DailyReportAgent:
         target_date: date,
         run_id: int,
         agent_run_id: int,
-        brave: BraveSearchClient,
         scraper: ScraperClient,
         memory: WorkingMemory,
         shadow_mode: bool | None,
@@ -1016,7 +874,7 @@ class DailyReportAgent:
         skip_for_scrape = self._should_skip_fallback_for_scrape_health(memory)
         provider_health = {
             provider: self._provider_health_state(memory, provider)
-            for provider in ["zhipu", "brave"]
+            for provider in ["zhipu", "zhipu"]
             if (memory.search_provider_health or {}).get(provider)
         }
         if not search_enabled and not fallback_candidates:
@@ -1088,7 +946,7 @@ class DailyReportAgent:
             ),
             EvaluateArticleTool(llm_client=llm_client),
             CompareSourcesTool(llm_client=llm_client),
-            SearchImagesTool(brave_client=brave, scraper_client=scraper),
+            SearchImagesTool(scraper_client=scraper),
             VerifyImageTool(llm_client=llm_client),
             WriteSectionTool(llm_client=llm_client),
             CheckCoverageTool(),
@@ -1097,9 +955,7 @@ class DailyReportAgent:
         if search_enabled:
             fallback_tools = [
                 WebSearchTool(
-                    brave_client=brave,
-                    zhipu_client=zhipu,
-                    tavily_api_key=settings.tavily_api_key,
+                                        zhipu_client=zhipu,
                 ),
                 FollowReferencesTool(),
                 *fallback_tools,
@@ -1863,68 +1719,6 @@ class DailyReportAgent:
         snapshot = (memory.search_provider_health or {}).get(provider, {})
         return str(snapshot.get("health_state") or snapshot.get("state") or "unknown")
 
-    def _should_run_supervisor_round(
-        self,
-        memory: WorkingMemory,
-        successful: list[ArticleCard],
-        round_index: int,
-        runtime: dict[str, Any],
-    ) -> bool:
-        if round_index >= 4:
-            return False
-        current_success_count = max(len(successful), memory.coverage.total_articles)
-        target_items = max(int(runtime.get("report_target_items", 4) or 4), 1)
-        target_sections = 3 if target_items >= 4 else 2
-        if (
-            current_success_count >= target_items
-            and memory.coverage.section_count >= target_sections
-        ):
-            return False
-        if current_success_count >= runtime["max_extractions_per_run"]:
-            return False
-        if memory.coverage.gaps():
-            return True
-        if current_success_count < target_items:
-            return True
-        if memory.coverage.section_count < target_sections:
-            return True
-        return False
-
-    def _build_supervisor_action(
-        self,
-        memory: WorkingMemory,
-        successful: list[ArticleCard],
-        round_index: int,
-    ) -> dict[str, Any]:
-        gaps = memory.coverage.gaps()
-        target_sections: list[str] = []
-        query_strategy: list[str] = []
-        joined_gaps = "；".join(gaps)
-        if "政策" in joined_gaps:
-            target_sections.append("policy")
-            query_strategy.append("政策标准/监管更新/标准发布/EPR/CBAM")
-        if "学术" in joined_gaps:
-            target_sections.append("academic")
-            query_strategy.append("期刊论文/研究进展/材料机理/加工突破")
-        if "产业" in joined_gaps:
-            target_sections.append("industry")
-            query_strategy.append("设备新品/企业扩产/材料应用/工艺升级")
-        provider_health = {
-            provider: self._provider_health_state(memory, provider)
-            for provider in ["zhipu", "brave"]
-        }
-        reason = "；".join(gaps) if gaps else "需要扩展更多高质量主题"
-        return {
-            "round": round_index,
-            "reason": reason,
-            "successful_articles": len(successful),
-            "section_count": memory.coverage.section_count,
-            "target_sections": target_sections or ["industry", "policy", "academic"],
-            "query_strategy": query_strategy or ["广覆盖补洞"],
-            "provider_health_snapshot": provider_health,
-            "searched_queries": list(memory.searched_queries[-6:]),
-        }
-
     def _candidate_score(
         self,
         row: dict[str, Any],
@@ -2093,6 +1887,24 @@ class DailyReportAgent:
 
         return seeded
 
+    async def _fetch_article_pool(self, target_date: date) -> list[ArticlePool]:
+        from datetime import timedelta
+        articles: list[ArticlePool] = []
+        try:
+            with session_scope() as session:
+                since = target_date - timedelta(hours=72)
+                articles = list(
+                    session.scalars(
+                        select(ArticlePool)
+                        .where(ArticlePool.ingested_at >= since)
+                        .order_by(ArticlePool.ingested_at.desc())
+                        .limit(200)
+                    ).all()
+                )
+        except Exception as exc:
+            logger.warning("Failed to fetch ArticlePool: %s", exc)
+        return articles
+
     def _seed_row_is_relevant(self, row: dict[str, Any]) -> bool:
         title = str(row.get("title") or "")
         snippet = str(row.get("snippet") or "")
@@ -2149,7 +1961,7 @@ class DailyReportAgent:
         provider_health = memory.search_provider_health or {}
         return self._provider_is_unhealthy(
             provider_health.get("zhipu", {})
-        ) and self._provider_is_unhealthy(provider_health.get("brave", {}))
+        ) and self._provider_is_unhealthy(provider_health.get("zhipu", {}))
 
     @staticmethod
     def _scrape_failure_rate(memory: WorkingMemory) -> float:
@@ -2194,33 +2006,6 @@ class DailyReportAgent:
             f"请确保搜索词覆盖至少 5 个不同子话题（如设备新品、原料行情、政策法规、学术研究、下游应用），中英文各半，避免重复搜索同一主题的近义词。\n"
             f"时效要求：优先收录过去{_SEARCH_RECENCY_LABEL}内的内容；如果搜索结果没有明确发布时间，也要优先选择明显属于近两天动态的报道。不要在搜索词中加年份。\n"
             f"目标产出：本期需要至少 6 篇有价值的文章，覆盖 3 个板块（产业动态、政策法规、学术前沿），请充分搜索确保素材充足。\n"
-        )
-
-    def _build_supplement_search_prompt(
-        self, target_date: date, memory: WorkingMemory
-    ) -> str:
-        """补充搜索轮的 prompt，针对覆盖缺口搜索。"""
-        gaps = memory.coverage.gaps()
-        gap_desc = "；".join(gaps) if gaps else "需要更多不同维度的内容"
-        searched = (
-            ", ".join(memory.searched_queries[-8:]) if memory.searched_queries else "无"
-        )
-        provider_health = (
-            "，".join(
-                f"{provider}:{self._provider_health_state(memory, provider)}"
-                for provider in ["zhipu", "brave"]
-                if (memory.search_provider_health or {}).get(provider)
-            )
-            or "暂无 provider 健康信息"
-        )
-        return (
-            f"补充搜索轮。当前覆盖缺口：{gap_desc}\n"
-            f"最近已搜索过的词：{searched}\n\n"
-            f"当前搜索服务状态：{provider_health}\n"
-            f"请针对缺口方向搜索新的关键词，重点补充不足的板块。\n"
-            f"严禁主动在搜索词中加入 2024、2025 等往年年份，除非用户明确要求回顾；优先搜索今日/近7天动态。\n"
-            f"时效要求：优先过去{_SEARCH_RECENCY_LABEL}内的内容，发布时间不明确时优先保留看起来属于近两天增量的信息。\n"
-            f"完成 4 轮以上搜索后即可 finish。\n"
         )
 
     def _build_synthesis_prompt(self, memory: WorkingMemory, target_date: date) -> str:
@@ -2563,15 +2348,6 @@ class DailyReportAgent:
                     "phase3_total_duration_seconds": result.diagnostics.get(
                         "phase3_total_duration_seconds", 0
                     ),
-                    "supplement_candidates_found": result.diagnostics.get(
-                        "supplement_candidates_found", 0
-                    ),
-                    "supplement_agents_launched": result.diagnostics.get(
-                        "supplement_agents_launched", 0
-                    ),
-                    "supplement_successful_articles": result.diagnostics.get(
-                        "supplement_successful_articles", 0
-                    ),
                     "phase2_rejected_missing_date_count": result.diagnostics.get(
                         "phase2_rejected_missing_date_count", 0
                     ),
@@ -2586,9 +2362,6 @@ class DailyReportAgent:
                     ),
                     "phase2_successful_articles": result.diagnostics.get(
                         "phase2_successful_articles", 0
-                    ),
-                    "supervisor_actions": result.diagnostics.get(
-                        "supervisor_actions", []
                     ),
                     "section_write_timeouts": result.memory_snapshot.get(
                         "section_write_timeouts", []
@@ -2672,15 +2445,6 @@ class DailyReportAgent:
                     "selected_topic_count": selected_topic_count,
                     "recent_verified_count": recent_verified_count,
                     "a_tier_count": a_tier_count,
-                    "supplement_candidates_found": result.diagnostics.get(
-                        "supplement_candidates_found", 0
-                    ),
-                    "supplement_agents_launched": result.diagnostics.get(
-                        "supplement_agents_launched", 0
-                    ),
-                    "supplement_successful_articles": result.diagnostics.get(
-                        "supplement_successful_articles", 0
-                    ),
                     "phase2_rejected_missing_date_count": result.diagnostics.get(
                         "phase2_rejected_missing_date_count", 0
                     ),
@@ -2696,9 +2460,6 @@ class DailyReportAgent:
                     "phase2_successful_articles": result.diagnostics.get(
                         "phase2_successful_articles", 0
                     ),
-                    "supervisor_actions": result.diagnostics.get(
-                        "supervisor_actions", []
-                    ),
                     "section_write_timeouts": result.memory_snapshot.get(
                         "section_write_timeouts", []
                     ),
@@ -2708,4 +2469,13 @@ class DailyReportAgent:
                 }
 
             session.commit()
+
+            if report and report.status in ("complete", "complete_auto_publish"):
+                try:
+                    from app.services.eval_runner import EvalRunner
+                    runner = EvalRunner(judge_model="claude-opus-4-7")
+                    await runner.evaluate_report(session, report)
+                except Exception:
+                    logger.warning("Auto-evaluation skipped (non-fatal)", exc_info=True)
+
             return report

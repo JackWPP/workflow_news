@@ -3,8 +3,14 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
+from sqlalchemy import select
+import mimetypes
 from pathlib import Path
+
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -92,11 +98,23 @@ async def scheduled_report_run():
     logger.info("Scheduled native report run finished.")
 
 
+async def scheduled_ingester_run():
+    from app.services.ingester import ContinuousIngester
+    logger.info("Starting hourly ingester run.")
+    try:
+        ingester = ContinuousIngester()
+        count = await ingester.run()
+        logger.info("Hourly ingester finished: %d new articles.", count)
+    except Exception as exc:
+        logger.error("Hourly ingester failed: %s", exc, exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     trigger = CronTrigger(hour=settings.report_hour, minute=settings.report_minute, timezone=settings.timezone)
     scheduler.add_job(scheduled_report_run, trigger, id="daily_native_report", replace_existing=True)
+    scheduler.add_job(scheduled_ingester_run, CronTrigger(hour="*"), id="hourly_ingester", replace_existing=True)
     scheduler.start()
     logger.info("Scheduler started. Job scheduled for %02d:%02d daily.", settings.report_hour, settings.report_minute)
     yield
@@ -454,6 +472,66 @@ async def get_admin_evaluation_summary(request: Request, days: int = 7):
     with session_scope() as session:
         _admin_user_or_403(session, request)
         return get_evaluation_summary(session, days=max(1, min(days, 30)))
+
+
+@app.post("/api/admin/evaluation/evaluate/{report_id}")
+async def trigger_evaluation(report_id: int, request: Request):
+    from app.services.eval_runner import EvalRunner
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        from app.models import Article, Report
+        report = session.get(Report, report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="Report not found")
+        articles = list(
+            session.scalars(
+                select(Article).where(Article.run_id == report.retrieval_run_id)
+            ).all()
+        )
+        runner = EvalRunner(judge_model="claude-opus-4-7")
+        result = await runner.evaluate_report(session, report, articles)
+        return result
+
+
+@app.get("/api/admin/evaluation/dashboard")
+async def get_evaluation_dashboard(request: Request, days: int = 30):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        from app.models import EvaluationRun, Report
+        from app.utils import now_local
+        since = now_local() - timedelta(days=max(days - 1, 0))
+        runs = list(
+            session.scalars(
+                select(EvaluationRun)
+                .join(Report)
+                .where(Report.report_date >= since.date())
+                .order_by(Report.report_date)
+            ).all()
+        )
+        if not runs:
+            return {"trend": [], "latest": None, "averages": {}}
+        trend = [
+            {
+                "date": run.evaluated_at.date().isoformat(),
+                "weighted_total": run.weighted_total,
+                "faithfulness": run.faithfulness_score,
+                "coverage": run.coverage_score,
+                "dedup": run.dedup_score,
+                "fluency": run.fluency_score,
+                "research_value": run.research_value_score,
+            }
+            for run in runs
+        ]
+        scores = [r.weighted_total for r in runs if r.weighted_total is not None]
+        avg = sum(scores) / len(scores) if scores else 0
+        return {
+            "trend": trend,
+            "latest": trend[-1] if trend else None,
+            "averages": {
+                "avg_weighted_total": round(avg, 2),
+                "total_evaluations": len(runs),
+            },
+        }
 
 
 @app.get("/api/conversations")
