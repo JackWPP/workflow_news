@@ -9,6 +9,7 @@ export interface DecisionTrace {
   key_finding: string
   source_domain: string
   section: string
+  category?: string                // "高材制造" | "清洁能源" | "AI"
   source_tier?: string
   source_reliability_label?: string
   source_kind?: string
@@ -17,6 +18,10 @@ export interface DecisionTrace {
   supports_numeric_claims?: boolean
   allowed_for_trend_summary?: boolean
   selection_reason?: string
+  topic_confidence?: string
+  recency_status?: string
+  published_at_source?: string
+  language?: string
 }
 
 export interface ReportItem {

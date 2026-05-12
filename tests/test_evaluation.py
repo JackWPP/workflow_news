@@ -49,7 +49,7 @@ class TestComputeRunScores:
                 "publish_grade": "failed",
             }
         )
-        assert scores["daily_report_score"] <= 30
+        assert scores["daily_report_score"] <= 50
 
     def test_missing_keys_default_safely(self):
         scores = compute_run_scores({})

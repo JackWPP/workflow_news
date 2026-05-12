@@ -95,6 +95,13 @@ def _resolve_provider(model: str) -> _ProviderConfig:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+    elif model.startswith("deepseek-"):
+        api_key = settings.deepseek_api_key
+        base_url = settings.deepseek_base_url.rstrip("/")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
     else:
         api_key = settings.openrouter_api_key
         base_url = settings.openrouter_base_url.rstrip("/")
@@ -114,14 +121,18 @@ def _is_kimi_model(model: str) -> bool:
 
 
 def _provider_kind(model: str) -> str:
-    return "moonshot" if _is_kimi_model(model) else "openrouter"
+    if _is_kimi_model(model):
+        return "moonshot"
+    if model.startswith("deepseek-"):
+        return "deepseek"
+    return "openrouter"
 
 
 def _provider_behavior(model: str) -> dict[str, Any]:
     kind = _provider_kind(model)
     return {
         "provider": kind,
-        "requires_reasoning_content": kind == "moonshot",
+        "requires_reasoning_content": kind in ("moonshot", "deepseek"),
         "supports_tool_history_replay": kind != "moonshot",
     }
 
@@ -139,6 +150,9 @@ def _build_payload_params(model: str, temperature: float) -> dict[str, Any]:
         # kimi-k2.5 不可修改 temperature 等参数，省略即可使用服务端默认值
         # 显式启用 thinking 模式（kimi-k2.5 默认已启用，显式传递更安全）
         params["thinking"] = {"type": "enabled"}
+    elif model.startswith("deepseek-"):
+        params["thinking"] = {"type": "enabled"}
+        params["temperature"] = temperature
     else:
         params["temperature"] = temperature
 

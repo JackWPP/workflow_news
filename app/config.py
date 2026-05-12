@@ -37,6 +37,9 @@ class Settings:
         os.getenv("SQLITE_BUSY_TIMEOUT_SECONDS", "30")
     )
 
+    bocha_api_key: str = os.getenv("BOCHA_API_KEY", "")
+    bocha_search_count: int = int(os.getenv("BOCHA_SEARCH_COUNT", "10"))
+
     zhipu_api_key: str = os.getenv("ZHIPU_API_KEY", "")
     zhipu_search_engine: str = os.getenv("ZHIPU_SEARCH_ENGINE", "search_pro_sogou")
     zhipu_search_count: int = int(os.getenv("ZHIPU_SEARCH_COUNT", "15"))
@@ -47,6 +50,16 @@ class Settings:
     scrape_concurrency: int = int(os.getenv("SCRAPE_CONCURRENCY", "3"))
     domain_failure_threshold: int = int(os.getenv("DOMAIN_FAILURE_THRESHOLD", "2"))
 
+    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
+    deepseek_base_url: str = os.getenv(
+        "DEEPSEEK_BASE_URL", "https://api.deepseek.com"
+    )
+
+    siliconflow_api_key: str = os.getenv("SILICONFLOW_API_KEY", "")
+    siliconflow_embedding_model: str = os.getenv(
+        "SILICONFLOW_EMBEDDING_MODEL", "BAAI/bge-m3"
+    )
+
     openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
     openrouter_base_url: str = os.getenv(
         "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
@@ -54,9 +67,9 @@ class Settings:
     openrouter_timeout_seconds: int = int(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "90"))
     kimi_api_key: str = os.getenv("KIMI_API_KEY", "")
     kimi_base_url: str = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
-    report_primary_model: str = os.getenv("REPORT_PRIMARY_MODEL", "kimi-k2.5")
+    report_primary_model: str = os.getenv("REPORT_PRIMARY_MODEL", "deepseek-v4-flash")
     report_fallback_model: str = os.getenv(
-        "REPORT_FALLBACK_MODEL", "minimax/minimax-m2.7"
+        "REPORT_FALLBACK_MODEL", "deepseek-v4-flash"
     )
     strict_primary_model_for_tool_use: bool = _as_bool(
         os.getenv("STRICT_PRIMARY_MODEL_FOR_TOOL_USE"), default=True
@@ -85,6 +98,9 @@ class Settings:
     admin_email: str = os.getenv("ADMIN_EMAIL", "admin@example.com")
     admin_password: str = os.getenv("ADMIN_PASSWORD", "admin123456")
     session_days: int = int(os.getenv("SESSION_DAYS", "7"))
+
+    log_format: str = os.getenv("LOG_FORMAT", "plain")
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
     @property
     def timezone(self) -> ZoneInfo:

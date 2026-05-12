@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Any
 
+import httpx
+
 from app.config import settings
 from app.utils import extract_domain, parse_datetime
 
@@ -35,6 +37,26 @@ _JINA_FIRST_DOMAINS = (
     "mp.weixin.qq.com",
     "36kr.com",
     "baijiahao.baidu.com",
+    # Chinese industry media
+    "86pla.com",
+    "adsalecprj.com",
+    # Chinese government
+    "miit.gov.cn",
+    "mee.gov.cn",
+    "stats.gov.cn",
+    "ndrc.gov.cn",
+    "samr.gov.cn",
+    "most.gov.cn",
+    # Chinese company newsrooms
+    "sinopecnews.com.cn",
+    "kingfa.com.cn",
+    "whchem.com",
+    "basf.com",
+    "covestro.com",
+    # Chinese academic
+    "buct.edu.cn",
+    "ic.cas.cn",
+    "polymer.cn",
 )
 
 
@@ -149,7 +171,20 @@ class ScraperClient:
         """用 Trafilatura 提取正文+内联图片，用 HTML meta 补充 title/og:image/date。"""
         import trafilatura
 
-        downloaded = await asyncio.to_thread(trafilatura.fetch_url, url)
+        # 用 httpx 下载（带浏览器 UA），避免 trafilatura.fetch_url 被反爬
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    return None
+                html_bytes = resp.content
+        except Exception:
+            return None
+
+        downloaded = html_bytes.decode("utf-8", errors="replace")
         if not downloaded:
             return None
 
@@ -167,6 +202,12 @@ class ScraperClient:
 
         # 从 HTML 补充 metadata
         title, image_url, published_at = _extract_html_meta(downloaded)
+
+        # Fallback: scan markdown for inline images if og:image not found
+        if not image_url and markdown:
+            m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+            if m:
+                image_url = m.group(1)
 
         # 如果 HTML meta 没有日期，尝试从文本中提取
         if published_at is None:

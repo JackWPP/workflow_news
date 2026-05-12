@@ -58,6 +58,7 @@ class ExtractResult:
     markdown: str = ""
     domain: str = ""
     published_at: str | None = None
+    image_url: str | None = None
     extraction_method: str = ""
     error: str | None = None
 
@@ -124,7 +125,14 @@ class ContentExtractor:
             if not markdown or not markdown.strip():
                 return None
 
-            title, _image_url, published_dt = _extract_html_meta(downloaded)
+            title, image_url, published_dt = _extract_html_meta(downloaded)
+
+            # Fallback: scan markdown for inline images if og:image not found
+            if not image_url and markdown:
+                m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+                if m:
+                    image_url = m.group(1)
+
             if published_dt is None:
                 published_dt = _extract_datetime_from_text(markdown)
 
@@ -138,6 +146,7 @@ class ContentExtractor:
                 markdown=markdown,
                 domain=domain,
                 published_at=published_dt.isoformat() if published_dt else None,
+                image_url=image_url,
                 extraction_method="trafilatura",
             )
         except Exception as exc:
@@ -160,6 +169,13 @@ class ContentExtractor:
             markdown: str = result.get("markdown", "")
             title: str = result.get("title", "")
             published_dt = result.get("published_at")
+            image_url = result.get("image_url")
+
+            # Fallback: scan markdown for inline images if no image found yet
+            if not image_url and markdown:
+                m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+                if m:
+                    image_url = m.group(1)
 
             content = self._extract_content(markdown)
 
@@ -171,6 +187,7 @@ class ContentExtractor:
                 markdown=markdown,
                 domain=domain,
                 published_at=published_dt.isoformat() if published_dt else None,
+                image_url=image_url,
                 extraction_method="jina",
             )
         except Exception as exc:
@@ -200,6 +217,11 @@ class ContentExtractor:
             if m:
                 title = m.group(1).strip()
 
+            image_url = None
+            m = _OG_IMAGE_RE.search(html) or _OG_IMAGE_RE_ALT.search(html)
+            if m:
+                image_url = m.group(1).strip()
+
             published_dt = None
             m = _ARTICLE_PUBLISHED_RE.search(html) or _ARTICLE_PUBLISHED_RE_ALT.search(html)
             if m:
@@ -224,6 +246,7 @@ class ContentExtractor:
                 markdown=markdown,
                 domain=domain,
                 published_at=published_dt.isoformat() if published_dt else None,
+                image_url=image_url,
                 extraction_method="http",
             )
         except Exception as exc:

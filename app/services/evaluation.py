@@ -62,10 +62,10 @@ def compute_run_scores(payload: dict[str, Any] | None, report_status: str | None
     stability_score = _round_score(100 * (0.40 * status_component + 0.35 * fallback_component + 0.25 * duration_component))
 
     daily_report_score = _round_score(
-        0.35 * content_score
-        + 0.30 * image_score
-        + 0.20 * relevance_score
-        + 0.15 * stability_score
+        0.40 * content_score
+        + 0.10 * image_score
+        + 0.25 * relevance_score
+        + 0.25 * stability_score
     )
 
     round2_recovery = bool(

@@ -115,6 +115,13 @@ DEFAULT_BLOCKED_DOMAINS: list[str] = [
     "storm.mg",
     "cna.com.tw",
     "taiwannews.com.tw",
+    # ── 已知不可访问站点（反爬/404/超时）──
+    "21cp.com",
+    "info.21cp.com",
+    "aibang.com",
+    "www.aibang.com",
+    "polymer.cn",
+    "www.polymer.cn",
 ]
 
 
@@ -143,28 +150,17 @@ class Harness:
     """
     Agent 的边界约束。
 
-    ✅ 设置资源上限（预算）
-    ✅ 设置领域边界（必须相关）
-    ✅ 设置安全边界（禁止域名）
-    ✅ 设置质量底线（必须有引用）
+    ✅ 设置资源上限（步骤数 + 超时）
+    ✅ 设置领域边界（blocked domains）
     ❌ 不规定每一步做什么（那是 Rails，不是 Harness）
     """
 
     # ── 资源限制 ──────────────────────────────────────────
-    max_steps: int = 40
+    max_steps: int = 50
     """Agent 最多执行多少步（每次工具调用算一步）。"""
 
-    max_search_calls: int = 15
-    """最多搜索多少次（web_search + search_images 合计）。"""
-
-    max_page_reads: int = 12
-    """最多深度阅读多少个页面（仅 read_page 计数）。"""
-
-    max_duration_seconds: float = 300.0
+    max_duration_seconds: float = 600.0
     """最长运行时间（秒）。超时后结束当前步骤并尝试输出。"""
-
-    max_llm_calls: int = 25
-    """最多 LLM 调用次数（含工具选择和工具内部 LLM 调用）。"""
 
     tool_timeouts: dict[str, float] = field(
         default_factory=lambda: dict(DEFAULT_TOOL_TIMEOUTS)
@@ -186,20 +182,8 @@ class Harness:
     min_sources_for_publish: int = 2
     """发布至少需要多少条不同来源。"""
 
-    must_have_citations: bool = True
-    """最终输出必须包含引用。"""
-
-    max_single_source_ratio: float = 0.6
-    """单一来源在最终报告中占比不能超过 60%。"""
-
     # ── Finish 前置条件 ─────────────────────────────────────
-    min_searches_before_finish: int = 6
-    """finish 前至少需要搜索多少次。设为 0 跳过检查。"""
-
-    min_articles_before_finish: int = 4
-    """finish 前至少需要多少篇可发布文章。设为 0 跳过检查。"""
-
-    max_consecutive_finish_rejects: int = 3
+    max_consecutive_finish_rejects: int = 1
     """连续拒绝 finish 的最大次数。超过后强制接受。"""
 
     # ── System Prompt ─────────────────────────────────────
@@ -208,24 +192,12 @@ class Harness:
 
     def __post_init__(self) -> None:
         self._violations: list[HarnessViolation] = []
-        self._search_count: int = 0
-        self._read_count: int = 0
         self._step_count: int = 0
-        self._llm_call_count: int = 0
         self._start_time: float = time.time()
 
     # ── 计数器 API ────────────────────────────────────────
-    def record_search(self) -> None:
-        self._search_count += 1
-
-    def record_read(self) -> None:
-        self._read_count += 1
-
     def record_step(self) -> None:
         self._step_count += 1
-
-    def record_llm_call(self) -> None:
-        self._llm_call_count += 1
 
     @property
     def elapsed_seconds(self) -> float:
@@ -249,11 +221,11 @@ class Harness:
     @property
     def should_wind_down(self) -> bool:
         """资源即将耗尽，应该进入收尾阶段。"""
-        if self.effective_budget_remaining < 5:
+        if self.effective_budget_remaining < 10:
             return True
         if self.max_duration_seconds > 0:
             remaining = self.max_duration_seconds - self.elapsed_seconds
-            if remaining < 60:
+            if remaining < 120:
                 return True
         return False
 
@@ -292,35 +264,7 @@ class Harness:
                 f"Timeout: {self.elapsed_seconds:.0f}s elapsed (limit {self.max_duration_seconds}s)",
             )
 
-        # 3. 搜索配额
-        if tool_call.tool_name in {"web_search", "search_images"}:
-            if self._search_count >= self.max_search_calls:
-                return (
-                    False,
-                    f"Search quota exhausted: {self._search_count}/{self.max_search_calls}",
-                )
-
-        # 4. 阅读配额
-        if tool_call.tool_name in {"read_page", "follow_references"}:
-            if self._read_count >= self.max_page_reads:
-                return (
-                    False,
-                    f"Read quota exhausted: {self._read_count}/{self.max_page_reads}",
-                )
-
-        # 5. LLM 调用配额
-        if tool_call.tool_name in {
-            "evaluate_article",
-            "compare_sources",
-            "write_section",
-        }:
-            if self._llm_call_count >= self.max_llm_calls:
-                return (
-                    False,
-                    f"LLM call quota exhausted: {self._llm_call_count}/{self.max_llm_calls}",
-                )
-
-        # 6. Blocked domain 检查
+        # 3. Blocked domain 检查
         url_or_query = (
             tool_call.arguments.get("url") or tool_call.arguments.get("query") or ""
         )
@@ -349,9 +293,6 @@ class Harness:
         """返回当前 harness 状态，用于写入 AgentRun.debug_payload。"""
         return {
             "step_count": self._step_count,
-            "search_count": self._search_count,
-            "read_count": self._read_count,
-            "llm_call_count": self._llm_call_count,
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "budget_remaining": self.budget_remaining,
             "violations": [v.to_dict() for v in self._violations],
@@ -369,11 +310,8 @@ def make_daily_report_harness() -> Harness:
     )  # lazy import
 
     return Harness(
-        max_steps=40,
-        max_search_calls=15,
-        max_page_reads=12,
-        max_duration_seconds=300.0,
-        max_llm_calls=20,
+        max_steps=50,
+        max_duration_seconds=600.0,
         system_prompt=DAILY_REPORT_SYSTEM_PROMPT,
     )
 
@@ -384,11 +322,7 @@ def make_research_harness() -> Harness:
 
     return Harness(
         max_steps=25,
-        max_search_calls=10,
-        max_page_reads=8,
         max_duration_seconds=180.0,
-        max_llm_calls=15,
         min_sources_for_publish=2,
-        must_have_citations=True,
         system_prompt=RESEARCH_SYSTEM_PROMPT,
     )

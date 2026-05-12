@@ -161,6 +161,7 @@ class Report(TimestampMixin, Base):
     pipeline_version: Mapped[str] = mapped_column(String(64), nullable=False)
     retrieval_run_id: Mapped[int | None] = mapped_column(ForeignKey("retrieval_runs.id"))
     debug_url: Mapped[str | None] = mapped_column(String(1000))
+    report_type: Mapped[str] = mapped_column(String(16), default="global", nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
 
     retrieval_run: Mapped["RetrievalRun | None"] = relationship(back_populates="report")
@@ -249,6 +250,7 @@ class ReportItem(TimestampMixin, Base):
     citations: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     combined_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     decision_trace: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    language: Mapped[str] = mapped_column(String(8), default="zh", nullable=False)
 
     report: Mapped["Report"] = relationship(back_populates="items")
 
@@ -326,6 +328,7 @@ class AgentStep(TimestampMixin, Base):
     thought: Mapped[str | None] = mapped_column(Text)  # LLM's free-text reasoning
     tool_name: Mapped[str | None] = mapped_column(String(64))  # tool called this step
     harness_blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    tokens_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     agent_run: Mapped["AgentRun"] = relationship(back_populates="steps")
 

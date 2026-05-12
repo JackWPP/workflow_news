@@ -44,6 +44,7 @@ def get_agent_run_trace(session, run_id: int) -> dict[str, Any] | None:
             "harness_blocked": step.fallback_triggered,
             "block_reason": step.error_message or "",
             "duration_seconds": round(step.duration_seconds, 2),
+            "tokens_used": step.tokens_used if hasattr(step, "tokens_used") else 0,
             "created_at": step.created_at.isoformat() if step.created_at else None,
         })
 
@@ -113,4 +114,71 @@ def get_agent_step_detail(session, step_id: int) -> dict[str, Any] | None:
         "block_reason": step.error_message or "",
         "duration_seconds": round(step.duration_seconds, 2),
         "created_at": step.created_at.isoformat() if step.created_at else None,
+    }
+
+
+def get_agent_run_timeline(session, run_id: int) -> dict[str, Any] | None:
+    run = session.get(AgentRun, run_id)
+    if run is None:
+        return None
+
+    steps = sorted(run.steps, key=lambda s: (s.round_index, s.created_at))
+
+    step_entries: list[dict[str, Any]] = []
+    total_duration = 0.0
+    total_tokens = 0
+    failed_steps = 0
+    harness_blocks = 0
+    slowest: dict[str, Any] | None = None
+    error_counts: dict[str, dict[str, Any]] = {}
+
+    for step in steps:
+        dur = round(step.duration_seconds, 2)
+        tokens = step.tokens_used if hasattr(step, "tokens_used") else 0
+        total_duration += dur
+        total_tokens += tokens
+
+        is_failed = step.status not in ("completed", "blocked")
+        is_blocked = step.fallback_triggered or step.status == "blocked"
+        if is_failed:
+            failed_steps += 1
+        if is_blocked:
+            harness_blocks += 1
+
+        if slowest is None or dur > slowest["duration_seconds"]:
+            slowest = {"step_index": step.round_index, "tool_name": step.stage_name, "duration_seconds": dur}
+
+        err = step.error_message or ""
+        if is_failed and err:
+            if err not in error_counts:
+                error_counts[err] = {"error": err, "count": 0, "step_indices": []}
+            error_counts[err]["count"] += 1
+            error_counts[err]["step_indices"].append(step.round_index)
+
+        payload = step.input_payload or {}
+        step_entries.append({
+            "step_id": step.id,
+            "step_index": step.round_index,
+            "tool_name": step.stage_name,
+            "duration_seconds": dur,
+            "tokens_used": tokens,
+            "status": step.status,
+            "harness_blocked": is_blocked,
+            "result_snippet": (step.decision_summary or "")[:150],
+            "error": err or None,
+            "thought": payload.get("thought", "")[:200],
+            "created_at": step.created_at.isoformat() if step.created_at else None,
+        })
+
+    return {
+        "run_id": run.id,
+        "agent_run_id": run.id,
+        "total_steps": len(steps),
+        "total_duration_seconds": round(total_duration, 2),
+        "total_tokens": total_tokens,
+        "failed_steps": failed_steps,
+        "harness_blocks": harness_blocks,
+        "slowest_step": slowest,
+        "error_patterns": list(error_counts.values()),
+        "steps": step_entries,
     }

@@ -1,8 +1,22 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { ReportItem } from '../types'
-import { ExternalLink, Image as ImageIcon, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-vue-next'
+import { ExternalLink, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-vue-next'
 import { cardBrief, evidenceLabel, presentSourceName, sourceKindLabel, trustLabel } from '../lib/reportPresentation'
+
+import fallbackManufacturing from '../assets/fallback-manufacturing.svg'
+import fallbackEnergy from '../assets/fallback-energy.svg'
+import fallbackAi from '../assets/fallback-ai.svg'
+import fallbackDefault from '../assets/fallback-default.svg'
+
+function categoryFallback(category?: string): string {
+  switch (category) {
+    case '高材制造': return fallbackManufacturing
+    case '清洁能源': return fallbackEnergy
+    case 'AI': return fallbackAi
+    default: return fallbackDefault
+  }
+}
 
 const props = defineProps<{ item: ReportItem }>()
 
@@ -67,9 +81,8 @@ const publishedLabel = computed(() => {
           <CheckCircle2 class="w-3 h-3" /> 高质量配图
         </div>
       </div>
-    <div v-else class="h-16 flex items-center justify-center gap-2 bg-black/20 border-b border-white/5 text-[var(--text-muted)] border-dashed text-xs">
-      <ImageIcon class="w-5 h-5 opacity-50" />
-      <span>本条暂无合适配图</span>
+    <div v-else class="relative h-32 overflow-hidden bg-black/20 border-b border-white/5">
+      <img :src="categoryFallback(item.category)" :alt="item.category || '资讯'" class="w-full h-full object-cover opacity-60" />
     </div>
 
     <!-- Content Area -->
@@ -97,7 +110,7 @@ const publishedLabel = computed(() => {
       <div class="mt-auto pt-4 flex flex-col gap-3">
         <div class="p-3 rounded-lg bg-[var(--card-accent)]/5 border border-[var(--card-accent)]/10">
           <p class="text-xs text-[var(--card-accent)] leading-relaxed line-clamp-2">
-            <strong class="opacity-70 mr-1">Signal:</strong> {{ item.research_signal }}
+            <strong class="opacity-70 mr-1">洞察:</strong> {{ item.research_signal }}
           </p>
         </div>
 

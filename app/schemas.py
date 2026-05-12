@@ -36,6 +36,8 @@ class ReportItemOut(ORMModel):
     window_bucket: str
     citations: list[dict[str, Any]]
     combined_score: float
+    decision_trace: dict[str, Any] = Field(default_factory=dict)
+    language: str = "zh"
 
 
 class ReportOut(ORMModel):
@@ -54,6 +56,11 @@ class ReportOut(ORMModel):
     hero_image: dict[str, Any] | None = None
     image_review_summary: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+    report_type: str = "global"
+    categories: list[str] = Field(default_factory=lambda: ["高材制造", "清洁能源", "AI"])
+    english_section_count: int = 0
+    chinese_section_count: int = 0
+    overall_score: float | None = None
 
 
 class ReportDetailOut(ReportOut):

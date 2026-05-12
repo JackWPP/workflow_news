@@ -133,7 +133,6 @@ class AgentCore:
             step_start = time.time()
 
             # === Step 1: LLM 决策 ===
-            self.harness.record_llm_call()
             llm_response = await self._get_llm_decision(messages, memory)
             total_tokens += llm_response.tokens_used
 
@@ -260,6 +259,7 @@ class AgentCore:
             assistant_message = self._build_assistant_message(llm_response)
             messages.append(assistant_message)
 
+            first_tool_in_step = True
             for tool_call_req in llm_response.tool_calls:
                 self.harness.record_step()
                 tool_call = ToolCall(
@@ -280,6 +280,8 @@ class AgentCore:
                         summary=f"[Harness 拦截] {deny_reason}",
                         data={"harness_blocked": True, "reason": deny_reason},
                     )
+                    step_tokens = llm_response.tokens_used if first_tool_in_step else 0
+                    first_tool_in_step = False
                     step_record = StepRecord(
                         step_index=step_index,
                         tool_name=tool_call.tool_name,
@@ -288,6 +290,7 @@ class AgentCore:
                         duration_seconds=0.0,
                         harness_blocked=True,
                         block_reason=deny_reason,
+                        tokens_used=step_tokens,
                     )
                 else:
                     # 执行工具
@@ -299,12 +302,6 @@ class AgentCore:
                             data={},
                         )
                     else:
-                        # 更新计数器（搜索/阅读分类计数）
-                        if tool_call.tool_name in {"web_search", "search_images"}:
-                            self.harness.record_search()
-                        elif tool_call.tool_name == "read_page":
-                            self.harness.record_read()
-
                         try:
                             timeout = self.harness.tool_timeout(tool_call.tool_name)
                             tool_result = await asyncio.wait_for(
@@ -373,6 +370,8 @@ class AgentCore:
                             )
 
                     step_duration = time.time() - step_start
+                    step_tokens = llm_response.tokens_used if first_tool_in_step else 0
+                    first_tool_in_step = False
                     step_record = StepRecord(
                         step_index=step_index,
                         tool_name=tool_call.tool_name,
@@ -380,13 +379,14 @@ class AgentCore:
                         result_summary=tool_result.summary[:500],
                         duration_seconds=step_duration,
                         harness_blocked=False,
+                        tokens_used=step_tokens,
                     )
 
                 memory.record_step(step_record)
 
                 # 持久化 AgentStep
                 if agent_run_id is not None:
-                    self._persist_step(agent_run_id, step_record, llm_response.thought)
+                    self._persist_step(agent_run_id, step_record, llm_response.thought, step_record.tokens_used)
 
                 # 在 memory context summary 后面附上工具结果
                 context_update = f"\n\n[当前状态]\n{memory.to_context_summary()}"
@@ -468,15 +468,68 @@ class AgentCore:
 
             messages.extend(tool_result_messages)
 
-            # 动态预算感知：资源即将耗尽时注入收尾提示（只提示一次）
+            # ── 3 个强制检查点：确保 Agent 不会迷失在搜索里 ──
+
+            # 检查之前调过的工具
+            has_evaluated = any(s.tool_name == "evaluate_article" for s in memory.step_history)
+            has_written = any(s.tool_name == "write_section" for s in memory.step_history)
+            has_read = any(s.tool_name == "read_page" for s in memory.step_history)
+            articles = memory.publishable_articles()
+
+            # Checkpoint 0 (step >= 5): 不能只搜不读
+            if step_index == 5 and not has_read:
+                searched = len(memory.searched_queries)
+                msg = f"⚠️ 检查点：你已经搜索了 {searched} 轮但还没有阅读任何文章。现在必须用 read_page 阅读最相关的 2-3 篇，然后用 evaluate_article 评估。"
+                messages.append({"role": "user", "content": msg})
+
+            # Checkpoint 1 (step >= 10): 强制评估
+            if step_index == 10 and not has_evaluated:
+                read_count = len(memory.read_urls)
+                if read_count > 0:
+                    msg = f"⚠️ 检查点：你已经阅读了 {read_count} 篇文章，但还没有评估任何一篇。现在必须用 evaluate_article 评估它们，不要继续搜索。"
+                else:
+                    msg = "⚠️ 检查点：步数已到 10。如果你还没有读到有价值的文章，请先读几篇然后用 evaluate_article 评估。不要只搜索不读。"
+                messages.append({"role": "user", "content": msg})
+
+            # Checkpoint 1.5 (step >= 12): 板块多样性
+            if step_index == 12 and len(articles) >= 3:
+                sections = {a.section for a in articles}
+                if len(sections) == 1:
+                    sec = list(sections)[0]
+                    msg = f"⚠️ 检查点：所有 {len(articles)} 篇文章都在同一个板块。请搜索其他方向（政策法规/学术前沿），确保覆盖至少 2 个板块。然后继续评估和写作。"
+                    messages.append({"role": "user", "content": msg})
+
+            # Checkpoint 2 (step >= 16): 强制开始写作
+            if step_index == 16 and not has_written:
+                if len(articles) >= 2:
+                    msg = f"⚠️ 检查点：步数已到 20。你已经有 {len(articles)} 篇可发布文章。现在必须停止搜索，用 write_section 撰写各板块内容，然后 finish。"
+                else:
+                    msg = f"⚠️ 检查点：步数已到 20。立即用 evaluate_article 评估所有已读文章，然后用 write_section + finish 完成日报。"
+                messages.append({"role": "user", "content": msg})
+
+            # Checkpoint 3 (step >= 22): 如果已写作但未 finish，强制催促
+            if step_index == 22 and has_written:
+                has_finished = any(s.tool_name == "finish" for s in memory.step_history)
+                if not has_finished:
+                    msg = "检查点：你已经写了板块内容。现在必须立即调用 finish 完成日报，不要继续搜索或阅读。"
+                    messages.append({"role": "user", "content": msg})
+
+            # Checkpoint 3.5 (step >= 28): 还没 finish 就直接中断
+            if step_index >= 28:
+                has_finished = any(s.tool_name == "finish" for s in memory.step_history)
+                if not has_finished and (has_written or len(articles) >= 2):
+                    logger.info("[AgentCore] Step %d: forcing auto-finish", step_index)
+                    return self._build_fallback_result(
+                        memory, "auto_finish", step_index, total_tokens,
+                        diagnostics={"llm_no_tool_stall_count": llm_no_tool_stall_count},
+                    )
+
+            # 动态预算感知：剩余步数不足时最后提示
             if self.harness.should_wind_down and not _wind_down_warned:
                 _wind_down_warned = True
-                remaining_time = max(
-                    0, self.harness.max_duration_seconds - self.harness.elapsed_seconds
-                )
+                remaining_time = max(0, self.harness.max_duration_seconds - self.harness.elapsed_seconds)
                 wind_down_msg = (
-                    f"⚠️ 资源即将耗尽（剩余约 {self.harness.effective_budget_remaining} 步，"
-                    f"{remaining_time:.0f}s）。"
+                    f"⚠️ 资源即将耗尽（剩余约 {self.harness.effective_budget_remaining} 步，{remaining_time:.0f}s）。"
                     "请尽快使用 write_section 撰写已收集的内容并调用 finish 完成报告。"
                 )
                 messages.append({"role": "user", "content": wind_down_msg})
@@ -507,8 +560,6 @@ class AgentCore:
 
         harness_info = (
             f"资源限制: 最多 {self.harness.max_steps} 步, "
-            f"{self.harness.max_search_calls} 次搜索, "
-            f"{self.harness.max_page_reads} 次阅读, "
             f"{self.harness.max_duration_seconds:.0f} 秒超时。"
         )
         base_prompt = self.harness.system_prompt or "你是一个专业的新闻研究员助手。"
@@ -630,22 +681,9 @@ class AgentCore:
     def _extract_finish_result(
         self, llm_response: LLMResponse, memory: WorkingMemory
     ) -> dict[str, Any] | None:
-        """从 LLM 的 finish 工具调用中提取结果。如果搜的不够多，拒绝 finish。"""
+        """从 LLM 的 finish 工具调用中提取结果。信任 LLM 的判断——它知道自己是否探索充分。"""
         for tc in llm_response.tool_calls:
             if tc.tool_name == "finish":
-                min_searches = self.harness.min_searches_before_finish
-                min_articles = self.harness.min_articles_before_finish
-                if min_searches > 0 and len(memory.searched_queries) < min_searches:
-                    raise StopIteration(
-                        f"搜索次数不足（{len(memory.searched_queries)}/{min_searches}），请继续搜索更多方向。"
-                    )
-                if (
-                    min_articles > 0
-                    and len(memory.publishable_articles()) < min_articles
-                ):
-                    raise StopIteration(
-                        f"可发布文章不足（{len(memory.publishable_articles())}/{min_articles}），请继续阅读和评估文章。"
-                    )
                 return tc.arguments
         return None
 
@@ -735,6 +773,7 @@ class AgentCore:
         agent_run_id: int,
         step_record: StepRecord,
         thought: str,
+        tokens_used: int = 0,
     ) -> None:
         """
         持久化 AgentStep 到数据库。
@@ -765,6 +804,7 @@ class AgentCore:
                     error_message=step_record.block_reason
                     if step_record.harness_blocked
                     else None,
+                    tokens_used=tokens_used,
                 )
                 step_session.add(step)
                 step_session.flush()

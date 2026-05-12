@@ -1,6 +1,9 @@
 """
 zhipu_search.py — 智谱 AI Web Search API 客户端
 
+DEPRECATED: 当前系统已统一使用 BochaSearchClient。
+本文件保留供未来可能的重新启用，不再被主流程引用。
+
 使用 search_pro 引擎（多引擎协作：搜狗/夸克/自研），专为中文搜索优化。
 REST 端点：POST https://open.bigmodel.cn/api/paas/v4/web_search
 """

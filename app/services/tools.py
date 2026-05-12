@@ -23,7 +23,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -213,9 +213,8 @@ class WebSearchTool(Tool):
         "required": ["query"],
     }
 
-    def __init__(self, zhipu_client: Any = None) -> None:
-        self._brave = None
-        self._zhipu = zhipu_client
+    def __init__(self, bocha_client: Any = None, zhipu_client: Any = None) -> None:
+        self._bocha = bocha_client
 
     @staticmethod
     def _normalize_query(query: str) -> str:
@@ -249,68 +248,64 @@ class WebSearchTool(Tool):
 
         memory.record_search(normalized_query)
 
-        # ── 搜索策略：中文用智谱 Web Search（search_pro），英文/失败时用 Brave ──
+        # ── 搜索策略：Bocha 为主力 ──
+        # Map recency window to Bocha freshness parameter.
+        # Date ranges give more precise server-side control than "oneDay".
+        recency_hours = memory.get_recency_hours_for_query(normalized_query)
+        if recency_hours <= 24:
+            freshness = f"{date.today().isoformat()}..{date.today().isoformat()}"
+        elif recency_hours <= 72:
+            freshness = f"{(date.today() - timedelta(days=3)).isoformat()}..{date.today().isoformat()}"
+        else:
+            freshness = "oneWeek"
+
+        # Auto-add domain filters for targeted queries.
+        # Academic → edu/research domains; Policy → government domains.
+        # Industry / default queries keep no domain filter for breadth.
+        academic_keywords = [
+            "研究", "论文", "实验室", "大学",
+            "journal", "university", "research",
+            "polymer", "materials science",
+        ]
+        policy_keywords = [
+            "政策", "法规", "标准", "限塑", "碳关税",
+            "regulation", "policy", "directive", "CBAM",
+        ]
+        ql = normalized_query.lower()
+        include_domains: list[str] | None = None
+        if "site:" not in ql:
+            if any(kw in ql for kw in academic_keywords):
+                include_domains = [
+                    "edu.cn", "ac.cn", "cas.cn",
+                    "nature.com", "acs.org", "pubs.rsc.org", "sciencedirect.com",
+                ]
+            elif any(kw in ql for kw in policy_keywords):
+                include_domains = [
+                    "gov.cn", "miit.gov.cn", "mee.gov.cn",
+                    "ndrc.gov.cn", "samr.gov.cn",
+                ]
+            # Industry queries (no keywords matched): no include_domains — keep breadth
+
         results: list[dict[str, Any]] = []
 
-        if language == "zh" and self._zhipu and self._zhipu.enabled:
+        if self._bocha and self._bocha.enabled:
             try:
-                results = await self._zhipu.search(normalized_query)
+                results = await self._bocha.search(
+                    normalized_query,
+                    freshness=freshness,
+                    include_domains=include_domains,
+                )
                 logger.info(
-                    "web_search [zh/zhipu] '%s' → %d results",
+                    "web_search [bocha] '%s' → %d results",
                     normalized_query,
                     len(results),
                 )
             except Exception as exc:
-                logger.warning("ZhipuSearch failed for '%s': %s", normalized_query, exc)
+                logger.warning("BochaSearch failed for '%s': %s", normalized_query, exc)
             finally:
                 memory.record_search_provider_health(
-                    "zhipu", self._zhipu.health_snapshot()
+                    "bocha", self._bocha.health_snapshot()
                 )
-
-        if (
-            not results
-            and self._brave
-            and self._brave.enabled
-            and not self._should_skip_provider(
-                memory, "brave", {"quota_limited", "circuit_open"}
-            )
-        ):
-            # 英文搜索 或 中文搜索失败时的 Brave 兜底
-            from app.config import settings
-
-            search_lang = (
-                settings.brave_search_lang
-                if language == "zh"
-                else settings.brave_fallback_lang
-            )
-            try:
-                results = await self._brave.search_all(normalized_query, search_lang)
-                logger.info(
-                    "web_search [%s/brave] '%s' → %d results",
-                    language,
-                    normalized_query,
-                    len(results),
-                )
-            except Exception as exc:
-                brave_health = self._brave.health_snapshot()
-                if brave_health.get("last_error") == "quota_exceeded":
-                    logger.warning(
-                        "Brave quota limited for '%s', switching strategy",
-                        normalized_query,
-                    )
-                else:
-                    logger.warning(
-                        "Brave search failed for '%s': %s", normalized_query, exc
-                    )
-            finally:
-                memory.record_search_provider_health(
-                    "brave", self._brave.health_snapshot()
-                )
-        elif not results and self._brave and self._brave.enabled:
-            logger.info(
-                "web_search skipping Brave for '%s' due to run-level health state",
-                normalized_query,
-            )
 
         if not results:
             memory.record_empty_search()
@@ -340,40 +335,6 @@ class WebSearchTool(Tool):
             return ToolResult(
                 success=True,
                 summary=f"'{normalized_query}' 搜索到了结果但都被过滤了（不可信来源），请换一个搜索词",
-                data={"results": []},
-            )
-
-        # ── 时效性过滤：按板块使用分层的时效窗口 ──
-        cutoff = datetime.now(timezone.utc) - timedelta(
-            hours=memory.get_recency_hours_for_query(normalized_query)
-        )
-        fresh_results = []
-        stale_count = 0
-        for r in results:
-            pub = r.get("published_at")
-            if pub is not None:
-                # 确保 pub 有 timezone 信息
-                if hasattr(pub, "tzinfo") and pub.tzinfo is None:
-                    pub = pub.replace(tzinfo=timezone.utc)
-                if pub < cutoff:
-                    stale_count += 1
-                    continue
-            # pub 为 None 的保留（无法判断时效）
-            fresh_results.append(r)
-        if stale_count:
-            window_hours = memory.get_recency_hours_for_query(normalized_query)
-            logger.info(
-                "web_search filtered out %d stale results (>%dh old for this section)",
-                stale_count,
-                window_hours,
-            )
-        results = fresh_results
-
-        if not results:
-            memory.record_empty_search()
-            return ToolResult(
-                success=True,
-                summary=f"'{normalized_query}' 的搜索结果都超出日报主窗口（约 {memory.current_recency_hours} 小时），请换一个更具时效性的搜索词。",
                 data={"results": []},
             )
 
@@ -535,7 +496,7 @@ class ReadPageTool(Tool):
                     "scrape_status": scrape_status or "success",
                     "scrape_layer": scrape_layer,
                     "page_kind": page_kind,
-                    "content_available": False,
+                    "content_available": bool(markdown),
                 },
             )
             memory.record_scrape_layer(scrape_layer)
@@ -547,6 +508,9 @@ class ReadPageTool(Tool):
                     "resolved_url": resolved_url,
                     "scrape_layer": scrape_layer,
                     "page_kind": page_kind,
+                    "markdown": markdown,
+                    "title": title,
+                    "published_at": published_at.isoformat() if isinstance(published_at, datetime) else published_at,
                 },
             )
 
@@ -562,7 +526,7 @@ class ReadPageTool(Tool):
                     "scrape_status": scrape_status or "success",
                     "scrape_layer": scrape_layer,
                     "page_kind": quality["page_kind"],
-                    "content_available": False,
+                    "content_available": bool(markdown),
                     "quality_rejection_reason": quality["publish_block_reason"],
                 },
             )
@@ -575,6 +539,9 @@ class ReadPageTool(Tool):
                     "resolved_url": resolved_url,
                     "scrape_layer": scrape_layer,
                     "page_kind": quality["page_kind"],
+                    "markdown": markdown,
+                    "title": title,
+                    "published_at": published_at.isoformat() if isinstance(published_at, datetime) else published_at,
                 },
             )
 
@@ -876,6 +843,7 @@ class EvaluateArticleTool(Tool):
         published_at: str = kwargs.get("published_at", "")
         resolved_url: str = normalize_external_url(kwargs.get("resolved_url", ""))
         page_kind: str = kwargs.get("page_kind", "")
+        pre_evaluated: dict | None = kwargs.get("pre_evaluated")
 
         if not title or not content:
             return ToolResult(
@@ -943,43 +911,61 @@ class EvaluateArticleTool(Tool):
                 },
             )
 
-        system_prompt = (
-            "你是高分子材料加工领域的日报研究员。\n"
-            "评估这篇文章是否值得纳入今日日报，并给出理由。\n"
-            "优先选择中国大陆权威媒体或英文学术/产业新闻，对台湾或非相关繁体媒体降低评分权重！\n"
-            "对以下内容必须直接拒绝：泛财经市场预测、宏观战争新闻、纯医药并购、体育社会新闻、"
-            "与高分子材料加工/设备/原料/政策无直接关系的内容。\n"
-            "输出 JSON，包含：\n"
-            "  - worthy: true/false\n"
-            "  - section: academic/industry/policy\n"
-            "  - key_finding: 一句话的核心发现（30字以内，必须是中文）\n"
-            "  - reason: 评估理由（50字以内，写明为什么值得或不值得，必须是中文）\n"
-            "  - image_worthiness: true/false（这个主题值不值得配图）\n"
-            "  - zh_title: 文章的中文翻译标题（如果原文是中文则原样保留）\n"
-            "  - zh_summary: 提炼后的中文内容摘要（约80字，如果原文是中文则用中文总结）\n"
-        )
-        user_content = (
-            f"标题：{title}\n"
-            f"来源：{domain}\n"
-            f"来源等级：{quality['source_tier']} / {quality['source_kind']}\n"
-            f"页面类型：{quality['page_kind']}\n"
-            f"发布时间：{published_at or '未知（允许继续评估，但需降低时效置信）'}\n"
-            f"内容摘要：\n{content[:1200]}"
-        )
-
-        if self._llm and self._llm.enabled:
-            result = await self._llm.simple_json_completion(system_prompt, user_content)
+        if pre_evaluated and pre_evaluated.get("quality_score") is not None:
+            # Reuse BatchEvaluator Map-phase results, skip LLM call
+            quality_score = pre_evaluated.get("quality_score", 0)
+            worthy = bool(quality_score >= 0.25)
+            section = pre_evaluated.get("section", "industry")
+            category = pre_evaluated.get("category", "高材制造")
+            key_finding = pre_evaluated.get("key_finding", title[:50])
+            reason = pre_evaluated.get("relevance_rationale", "") or pre_evaluated.get("reason", "")
+            image_worthiness = True  # Images are nice-to-have, not a quality gate
+            topic_confidence = "provisional" if 0.25 <= quality_score < 0.4 else "formal"
+            zh_title = title
+            zh_summary = content[:500]
         else:
-            result = self._heuristic_evaluate(title, content, domain)
+            system_prompt = (
+                "你是高分子材料加工领域的日报研究员。\n"
+                "评估这篇文章是否值得纳入今日日报，并给出理由。\n"
+                "优先选择中国大陆权威媒体或英文学术/产业新闻，对台湾或非相关繁体媒体降低评分权重！\n"
+                "对以下内容必须直接拒绝：纯宏观战争新闻、纯医药并购、纯体育社会新闻。\n"
+                "注意：当文章涉及塑料回收、新材料、化工设备、产业政策、环保法规、碳排放、"
+                "可持续发展、包装、汽车轻量化、医疗器械、新能源材料等相关领域时，即使与高分子加工不直接相关，也应倾向于保留。\n"
+                "当有疑问时，倾向于保留（标记 confidence 为 low），不要轻易拒绝。\n"
+                "输出 JSON，包含：\n"
+                "  - worthy: true/false\n"
+                "  - section: academic/industry/policy\n"
+                "  - category: 高材制造/清洁能源/AI（按文章主题归类：高分子材料、塑料、复合材料等材料相关→高材制造；新能源、回收、降解、碳关税、环保→清洁能源；人工智能、数字化、智能制造、机器学习→AI）\n"
+                "  - key_finding: 一句话的核心发现（30字以内，必须是中文）\n"
+                "  - reason: 评估理由（50字以内，写明为什么值得或不值得，必须是中文）\n"
+                "  - image_worthiness: true/false（这个主题值不值得配图）\n"
+                "  - zh_title: 文章的中文翻译标题（如果原文是中文则原样保留）\n"
+                "  - zh_summary: 提炼后的中文内容摘要（约80字，如果原文是中文则用中文总结）\n"
+            )
+            user_content = (
+                f"标题：{title}\n"
+                f"来源：{domain}\n"
+                f"来源等级：{quality['source_tier']} / {quality['source_kind']}\n"
+                f"页面类型：{quality['page_kind']}\n"
+                f"发布时间：{published_at or '未知（允许继续评估，但需降低时效置信）'}\n"
+                f"内容摘要：\n{content[:1200]}"
+            )
 
-        worthy = bool(result.get("worthy", False))
-        section = result.get("section", "industry")
-        key_finding = result.get("key_finding", title[:50])
-        reason = result.get("reason", "")
-        image_worthiness = bool(result.get("image_worthiness", True))
+            if self._llm and self._llm.enabled:
+                result = await self._llm.simple_json_completion(system_prompt, user_content)
+            else:
+                result = self._heuristic_evaluate(title, content, domain)
 
-        zh_title = result.get("zh_title") or title
-        zh_summary = result.get("zh_summary") or content[:500]
+            worthy = bool(result.get("worthy", False))
+            section = result.get("section", "industry")
+            category = result.get("category", "高材制造")
+            key_finding = result.get("key_finding", title[:50])
+            reason = result.get("reason", "")
+            image_worthiness = True  # Always try to find images; nice-to-have, not a gate
+
+            zh_title = result.get("zh_title") or title
+            zh_summary = result.get("zh_summary") or content[:500]
+            topic_confidence = "formal" if worthy else None
 
         if worthy:
             # 查找发现此 URL 的搜索 query
@@ -995,6 +981,7 @@ class EvaluateArticleTool(Tool):
                 section=section
                 if section in {"academic", "industry", "policy"}
                 else "industry",
+                category=category if category in {"高材制造", "清洁能源", "AI"} else "高材制造",
                 key_finding=key_finding,
                 worth_publishing=True,
                 evaluation_reason=reason,
@@ -1046,6 +1033,7 @@ class EvaluateArticleTool(Tool):
                 "evidence_strength": quality["evidence_strength"],
                 "supports_numeric_claims": quality["supports_numeric_claims"],
                 "allowed_for_trend_summary": quality["allowed_for_trend_summary"],
+                "topic_confidence": topic_confidence,
                 "recency_status": recency_status,
                 "published_at_source": published_at_source,
             },
@@ -1081,7 +1069,7 @@ class EvaluateArticleTool(Tool):
         )
         section = "academic" if is_academic else ("policy" if is_policy else "industry")
 
-        worthy = topic_hits >= 2
+        worthy = topic_hits >= 1
         return {
             "worthy": worthy,
             "section": section,
@@ -1245,7 +1233,6 @@ class SearchImagesTool(Tool):
     }
 
     def __init__(self, scraper_client: Any = None) -> None:
-        self._brave = None
         self._scraper = scraper_client
 
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
@@ -1256,38 +1243,6 @@ class SearchImagesTool(Tool):
             return ToolResult(success=False, summary="topic 不能为空", data={})
 
         results: list[dict[str, Any]] = []
-
-        # 优先 Brave 图片搜索
-        brave_health = (memory.search_provider_health or {}).get("brave", {})
-        brave_state = str(
-            brave_health.get("health_state") or brave_health.get("state") or ""
-        )
-        if (
-            self._brave
-            and self._brave.enabled
-            and brave_state not in {"quota_limited", "circuit_open"}
-        ):
-            from app.config import settings
-
-            try:
-                results = await self._brave.search(
-                    topic,
-                    search_type="images",
-                    count=6,
-                    search_lang=settings.brave_search_lang,
-                )
-            except Exception as exc:
-                logger.warning("search_images [brave] failed: %s", exc)
-            finally:
-                if hasattr(self._brave, "health_snapshot"):
-                    memory.record_search_provider_health(
-                        "brave", self._brave.health_snapshot()
-                    )
-        elif self._brave and self._brave.enabled:
-            logger.info(
-                "search_images skipping Brave for '%s' due to run-level health state",
-                topic,
-            )
 
         if not results:
             # 如果有 article_url，尝试从文章页面本身提取图片
@@ -1305,6 +1260,21 @@ class SearchImagesTool(Tool):
                         )
                         logger.info(
                             "search_images: extracted OG image from article page"
+                        )
+                    # Also scan markdown content for inline images
+                    markdown = page_data.get("markdown", "")
+                    inline_images = re.findall(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+                    for img_url in inline_images[:3]:
+                        results.append(
+                            {
+                                "url": article_url,
+                                "title": page_data.get("title", topic),
+                                "image_url": normalize_external_url(img_url),
+                            }
+                        )
+                    if inline_images:
+                        logger.info(
+                            "search_images: found %d inline markdown images", len(inline_images[:3])
                         )
                 except Exception as exc:
                     logger.warning(
@@ -1382,7 +1352,7 @@ class VerifyImageTool(Tool):
         if not image_url:
             return ToolResult(success=False, summary="image_url 不能为空", data={})
 
-        # 基础规则检查（不需要 LLM）
+        # 规则检查（零 LLM 成本）
         reject_reason = self._rule_check(image_url)
         if reject_reason:
             return ToolResult(
@@ -1391,23 +1361,11 @@ class VerifyImageTool(Tool):
                 data={"suitable": False, "reason": reject_reason},
             )
 
-        # LLM 视觉验证（如果支持）
-        if self._llm and self._llm.enabled:
-            system_prompt = (
-                "你是日报图片编辑。判断这张图片是否适合作为日报配图。\n"
-                "输出 JSON：{suitable: bool, reason: str}\n"
-                "合格条件：真实内容图、与主题相关、非logo/验证码/装饰图"
-            )
-            user_content = f"文章主题: {context}\n图片URL: {image_url}"
-            result = await self._llm.simple_json_completion(system_prompt, user_content)
-            suitable = bool(result.get("suitable", True))
-            reason = result.get("reason", "")
-        else:
-            # 无 LLM 时，通过规则检查的都视为合格
-            suitable = True
-            reason = "基础规则检查通过"
+        # 规则检查通过即视为合格
+        suitable = True
+        reason = "规则检查通过"
 
-        if suitable and article_url:
+        if article_url:
             memory.mark_image_verified(article_url, image_url, reason)
 
         status = "✅ 图片合格" if suitable else "❌ 图片不合格"
@@ -1798,12 +1756,12 @@ class FinishTool(Tool):
 
 def build_all_tools(
     scraper_client: Any = None,
-    zhipu_client: Any = None,
+    bocha_client: Any = None,
     llm_client: "LLMClient | None" = None,
     scrape_timeout_seconds: int | None = None,
 ) -> list[Tool]:
     return [
-        WebSearchTool(zhipu_client=zhipu_client),
+        WebSearchTool(bocha_client=bocha_client),
         ReadPageTool(
             scraper_client=scraper_client, timeout_seconds=scrape_timeout_seconds
         ),

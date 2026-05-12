@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -26,13 +26,19 @@ _TRUSTED_SOURCE_TIER_RANK = {
     "unknown": 1,
     "pr-wire": 0,
 }
-_TRUSTED_SOURCE_SEED_LIMIT = 4
-_TRUSTED_SOURCE_ITEMS_PER_FEED = 2
+_TRUSTED_SOURCE_SEED_LIMIT = 20
+_TRUSTED_SOURCE_ITEMS_PER_FEED = 5
 
 _POSITIVE_KEYWORDS = [
     "高分子", "塑料", "树脂", "改性", "注塑", "挤出", "吹塑",
     "复合材料", "recycling", "polymer", "plastics", "resin",
-    "extrusion", "injection", "processing",
+    "extrusion", "injection", "processing", "materials",
+    "材料", "化工", "化学", "橡胶", "纤维", "薄膜",
+    "macromolecule", "macromolecular", "elastomer", "thermoplastic",
+    "monomer", "copolymer", "polyolefin", "polyurethane",
+    "polystyrene", "polyester", "polyamide", "polycarbonate",
+    "nanocomposite", "bioplastic", "biopolymer", "degradable",
+    "sustainability", "circular economy",
 ]
 _NEGATIVE_KEYWORDS = [
     "market forecast", "cagr", "stock", "earnings", "marathon",
@@ -45,6 +51,16 @@ _PREVIEW_REJECT_PAGE_KINDS = {
     "navigation", "anti_bot", "binary",
 }
 
+_BLOCKED_POOL_DOMAINS: set[str] = {
+    "peipusci.com", "renzhengyun.cn", "xiaokudang.com",
+    "texleader.com.cn", "yoojia.com", "ssoocc.com",
+    "quheqihuo.com", "fucaiyunji.com", "xjishu.com",
+    "lz.gxrc.com", "yszc.com.cn", "zixin.com.cn",
+    "bk.taobao.com", "industrystock.cn", "cmpe360.com",
+    "m.chinairn.com", "cn.agropages.com", "m.zhixuedoc.com",
+    "eduour.com", "scholar.xjtu.edu.cn",
+}
+
 
 def _compute_content_hash(title: str, url: str) -> str:
     return hashlib.sha256(f"{title}|{canonicalize_url(url)}".encode()).hexdigest()
@@ -54,6 +70,9 @@ def _row_is_relevant(row: dict[str, Any]) -> bool:
     title = str(row.get("title") or "")
     snippet = str(row.get("snippet") or "")
     url = str(row.get("url") or "")
+    domain = extract_domain(url)
+    if domain in _BLOCKED_POOL_DOMAINS:
+        return False
     text = f"{title} {snippet}".lower()
     if not any(keyword.lower() in text for keyword in _POSITIVE_KEYWORDS):
         return False
@@ -74,10 +93,10 @@ class ContinuousIngester:
     @property
     def search_engine(self):
         if self._search_engine is None:
-            from app.services.zhipu_search import ZhipuSearchClient
+            from app.services.bocha_search import BochaSearchClient
             from app.services.search_engine import SearchEngine
             self._search_engine = SearchEngine(
-                zhipu_client=ZhipuSearchClient(),
+                bocha_client=BochaSearchClient(),
             )
         return self._search_engine
 
@@ -118,7 +137,12 @@ class ContinuousIngester:
             return_exceptions=True,
         )
         for source, result in zip(selected, results, strict=False):
-            if isinstance(result, Exception) or not isinstance(result, list):
+            if isinstance(result, Exception):
+                logger.warning("RSS feed failed for %s (%s): %s", source.name, source.rss_or_listing_url, result)
+                continue
+            elif isinstance(result, list):
+                logger.info("RSS feed OK for %s: %d entries", source.name, len(result))
+            else:
                 continue
             for row in result[:_TRUSTED_SOURCE_ITEMS_PER_FEED]:
                 if not _row_is_relevant(row):
@@ -166,6 +190,8 @@ class ContinuousIngester:
         self, *, url: str, title: str, domain: str, source_type: str,
         language: str, snippet: str = "", published_at: Any = None,
     ) -> int:
+        if domain in _BLOCKED_POOL_DOMAINS:
+            return 0
         normalized = canonicalize_url(url)
         if not normalized:
             return 0
@@ -200,11 +226,14 @@ def _normalize_published_at(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
         return value
     if isinstance(value, str):
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
             try:
-                return datetime.strptime(value[:19], fmt)
+                dt = datetime.strptime(value[:19], fmt)
+                return dt.replace(tzinfo=UTC)
             except ValueError:
                 continue
     return None
@@ -217,6 +246,8 @@ def _build_search_queries() -> dict[str, list[str]]:
             "塑料原料 价格行情", "复合材料 汽车轻量化", "改性塑料 应用",
             "限塑令 最新政策", "碳关税 塑料行业", "环保法规 高分子材料",
             "高分子改性 研究进展", "聚合物 新材料 论文",
+            "北京化工大学 英蓝实验室 高分子 研究",
+            "英蓝云展 高分子材料 加工技术",
         ],
         "en": [
             "injection molding machine new product",
@@ -225,5 +256,7 @@ def _build_search_queries() -> dict[str, list[str]]:
             "EU plastic regulation policy",
             "carbon border tax polymer industry",
             "polymer composite materials science research",
+            "Beijing University Chemical Technology polymer processing",
+            "Yinglan laboratory polymer research",
         ],
     }

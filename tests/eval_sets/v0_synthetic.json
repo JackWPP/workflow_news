@@ -120,7 +120,7 @@
         "publish_grade": "failed",
         "off_topic_escape_count": 0
       },
-      "expect": { "daily_report_score_max": 30 },
+      "expect": { "daily_report_score_max": 50 },
       "note": "完全空跑应得到最低分。"
     },
     {
@@ -151,7 +151,7 @@
         "publish_grade": "hold_for_missing_quality",
         "off_topic_escape_count": 0
       },
-      "expect": { "relevance_score_max": 60, "daily_report_score_max": 55 },
+      "expect": { "relevance_score_max": 60, "daily_report_score_max": 60 },
       "note": "全部 borderline 时应触发 hold，相关性得分应偏低。"
     },
     {

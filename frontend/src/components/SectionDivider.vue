@@ -35,7 +35,7 @@ const colorClass = computed(() => {
     <div :class="['flex items-center gap-3 px-4 py-2 rounded-full border border-white/5 bg-black/40 backdrop-blur-sm transition-all duration-300 group-hover:bg-white/5', colorClass]">
       <component :is="icon" class="w-5 h-5 flex-shrink-0" />
       <h2 class="font-bold tracking-widest text-lg">{{ sectionLabel }}</h2>
-      <span class="ml-2 text-xs font-mono opacity-60 tabular-nums">[{{ count }} ITEMS]</span>
+      <span class="ml-2 text-xs font-mono opacity-60 tabular-nums">[{{ count }} 条]</span>
     </div>
     <div class="flex-1 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
   </div>

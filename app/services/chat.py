@@ -10,15 +10,15 @@ from sqlalchemy import desc, or_, select
 
 from app.config import settings
 from app.models import Article, Conversation, Message, Report, ReportItem
-from app.services.zhipu_search import ZhipuSearchClient
+from app.services.bocha_search import BochaSearchClient
 
 
 class ChatService:
     def __init__(self):
-        self.api_key = settings.openrouter_api_key
-        self.base_url = settings.openrouter_base_url.rstrip("/")
+        self.api_key = settings.deepseek_api_key
+        self.base_url = settings.deepseek_base_url.rstrip("/")
         self.model = settings.report_primary_model
-        self.zhipu = ZhipuSearchClient()
+        self._bocha = BochaSearchClient()
 
     @property
     def enabled(self) -> bool:
@@ -150,10 +150,10 @@ class ChatService:
         return "当前没有命中本地日报，也没有可用的外部检索结果。请换个问法，或先生成新的日报。", [], mode
 
     async def _external_lookup(self, prompt: str) -> list[dict[str, Any]]:
-        if not self.zhipu.enabled:
+        if not self._bocha.enabled:
             return []
 
-        rows = await self.zhipu.search(prompt, count=4)
+        rows = await self._bocha.search(prompt, count=4)
         return [
             {
                 "title": row["title"],

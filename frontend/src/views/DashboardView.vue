@@ -17,14 +17,30 @@ const generating = ref(false)
 const error = ref('')
 const viewMode = ref<'cards' | 'markdown'>('cards')
 const reportType = ref<'global' | 'lab'>('global')
+const activeCategory = ref<'all' | '高材制造' | '清洁能源' | 'AI'>('all')
 const progressPanel = ref<InstanceType<typeof AgentProgressPanel> | null>(null)
 let activeES: EventSource | null = null
 
-const heroItem = computed(() => report.value?.items.find((item) => item.has_verified_image) ?? report.value?.items[0] ?? null)
+const heroItem = computed(() => filteredByReportType.value.find((item) => item.has_verified_image) ?? filteredByReportType.value[0] ?? null)
+
+const filteredByCategory = computed(() => {
+  if (activeCategory.value === 'all') return report.value?.items ?? []
+  return (report.value?.items ?? []).filter(item => item.decision_trace?.category === activeCategory.value)
+})
+
+const filteredByReportType = computed(() => {
+  if (reportType.value === 'global') return filteredByCategory.value
+  // 实验室日报：筛选 BUCT/英蓝/北京化工大学 相关来源
+  return filteredByCategory.value.filter(item => {
+    const url = item.source_url || ''
+    const name = item.source_name || ''
+    return url.includes('buct') || url.includes('mail.buct') || name.includes('英蓝') || name.includes('北京化工') || url.includes('yinglan')
+  })
+})
 
 const groupedItems = computed(() => {
   const buckets: Record<string, Report['items']> = { industry: [], academic: [], policy: [] }
-  for (const item of report.value?.items ?? []) {
+  for (const item of filteredByReportType.value) {
     buckets[item.section] = [...(buckets[item.section] ?? []), item]
   }
   return buckets
@@ -37,7 +53,7 @@ const langGroupedItems = computed(() => {
     policy: { zh: [], en: [] },
   }
   for (const item of report.value?.items ?? []) {
-    const lang = (item as any).language === 'en' ? 'en' : 'zh'
+    const lang = item.language === 'en' ? 'en' : 'zh'
     result[item.section]?.[lang]?.push(item)
   }
   return result
@@ -47,12 +63,12 @@ const stats = computed(() => ({
   academic: groupedItems.value.academic?.length || 0,
   industry: groupedItems.value.industry?.length || 0,
   policy: groupedItems.value.policy?.length || 0,
-  images: (report.value?.image_review_summary?.verified_image_count as number | undefined) ?? report.value?.items.filter(i => i.has_verified_image).length ?? 0
+  images: (report.value?.image_review_summary?.verified_image_count as number | undefined) ?? filteredByReportType.value.filter(i => i.has_verified_image).length ?? 0
 }))
 
 const qualityChips = computed(() => {
   if (!report.value) return []
-  const items = report.value.items ?? []
+  const items = filteredByReportType.value
   const highTrust = items.filter((item) => item.decision_trace?.source_tier === 'A').length
   const primarySignals = items.filter((item) => item.decision_trace?.supports_numeric_claims).length
   const primarySources = items.filter((item) => ['government', 'academic_journal', 'official_company_newsroom', 'standards'].includes(item.decision_trace?.source_kind || '')).length
@@ -65,8 +81,10 @@ const qualityChips = computed(() => {
 
 const qualityNote = computed(() => {
   if (!report.value) return ''
-  const itemCount = report.value.items?.length ?? 0
-  const sectionCount = new Set((report.value.items ?? []).map((item) => item.section).filter(Boolean)).size
+  const items = filteredByReportType.value
+  const itemCount = items.length
+  const sectionCount = new Set(items.map((item) => item.section).filter(Boolean)).size
+  if (reportType.value === 'lab' && itemCount === 0) return '暂无今天的实验室相关文章，英蓝实验室与英蓝云展的内容将在采集后自动展示。'
   if (itemCount >= 4 && sectionCount >= 2) return ''
   if (itemCount === 0) return '本期仍未形成可发布条目，建议重跑并检查来源配置。'
   return `本期属于${report.value.publish_grade === 'degraded' ? '降级' : '补充'}交付：已保留 ${itemCount} 条高相关内容，后续可优先补强${sectionCount < 2 ? '板块覆盖' : '配图与来源丰富度'}。`
@@ -156,6 +174,17 @@ onUnmounted(() => {
         >实验室日报</button>
       </div>
 
+      <!-- 三个方向分类 Tab -->
+      <div class="flex items-center gap-2 bg-black/40 p-1 rounded-xl border border-white/10 w-max mt-4">
+        <button
+          v-for="cat in (['all', '高材制造', '清洁能源', 'AI'] as const)"
+          :key="cat"
+          @click="activeCategory = cat"
+          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          :class="activeCategory === cat ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
+        >{{ cat === 'all' ? '全部' : cat }}</button>
+      </div>
+
       <!-- Toolbar & Analytics Row -->
       <div class="flex flex-col lg:flex-row gap-6 items-end justify-between mb-2">
         <!-- Coverage Gauge Analytics -->
@@ -204,7 +233,7 @@ onUnmounted(() => {
             <template v-for="lang in (['zh', 'en'] as const)" :key="`${section}-${lang}`">
               <div v-if="langGroupedItems[section]?.[lang]?.length > 0" class="mb-4">
                 <div class="text-xs text-[var(--text-secondary)] uppercase tracking-wider mb-2 px-1">
-                  {{ lang === 'zh' ? '中文来源' : 'English Sources' }}
+                  {{ lang === 'zh' ? '中文来源' : '英文来源' }}
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   <ReportItemCard v-for="item in langGroupedItems[section][lang]" :key="item.id" :item="item" />

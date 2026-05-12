@@ -267,24 +267,21 @@ class ResearchAgent:
 
         return Harness(
             max_steps=25,
-            max_search_calls=10,
-            max_page_reads=8,
             max_duration_seconds=180.0,
-            max_llm_calls=15,
             domain_keywords=list(DEFAULT_DOMAIN_KEYWORDS),
             blocked_domains=list(DEFAULT_BLOCKED_DOMAINS),
             system_prompt=RESEARCH_SYSTEM_PROMPT,
         )
 
     def _build_tools(self) -> list[Tool]:
-        from app.services.zhipu_search import ZhipuSearchClient
+        from app.services.bocha_search import BochaSearchClient
         from app.services.scraper import ScraperClient
 
-        zhipu = ZhipuSearchClient()
+        bocha = BochaSearchClient()
         scraper = ScraperClient()
         return [
             LocalCorpusSearchTool(session=self._session),
-            WebSearchTool(zhipu_client=zhipu),
+            WebSearchTool(bocha_client=bocha),
             ReadPageTool(scraper_client=scraper),
             FollowReferencesTool(),
             EvaluateArticleTool(llm_client=self._llm_client),

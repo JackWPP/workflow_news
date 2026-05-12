@@ -56,9 +56,22 @@ def _ensure_sqlite_schema() -> None:
                 "context_verdict": "ALTER TABLE report_items ADD COLUMN context_verdict VARCHAR(32)",
                 "selected_for_publish": "ALTER TABLE report_items ADD COLUMN selected_for_publish BOOLEAN NOT NULL DEFAULT 0",
                 "image_reason": "ALTER TABLE report_items ADD COLUMN image_reason TEXT",
+                "decision_trace": "ALTER TABLE report_items ADD COLUMN decision_trace JSON NOT NULL DEFAULT '{}'",
+                "language": "ALTER TABLE report_items ADD COLUMN language VARCHAR(8) NOT NULL DEFAULT 'zh'",
             }
             for name, statement in report_item_statements.items():
                 if name not in report_item_columns:
+                    connection.execute(text(statement))
+
+        if "reports" in tables:
+            report_columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info('reports')"))
+            }
+            report_statements = {
+                "report_type": "ALTER TABLE reports ADD COLUMN report_type VARCHAR(16) NOT NULL DEFAULT 'global'",
+            }
+            for name, statement in report_statements.items():
+                if name not in report_columns:
                     connection.execute(text(statement))
 
         if "agent_runs" in tables:
@@ -89,6 +102,7 @@ def _ensure_sqlite_schema() -> None:
                 "thought": "ALTER TABLE agent_steps ADD COLUMN thought TEXT",
                 "tool_name": "ALTER TABLE agent_steps ADD COLUMN tool_name VARCHAR(64)",
                 "harness_blocked": "ALTER TABLE agent_steps ADD COLUMN harness_blocked BOOLEAN NOT NULL DEFAULT 0",
+                "tokens_used": "ALTER TABLE agent_steps ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0",
             }
             for name, statement in agent_step_statements_v2.items():
                 if name not in agent_step_columns:

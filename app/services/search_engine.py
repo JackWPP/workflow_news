@@ -25,8 +25,9 @@ def _is_blocked(domain: str) -> bool:
 
 class SearchEngine:
 
-    def __init__(self, zhipu_client: Any = None) -> None:
-        self._zhipu = zhipu_client
+    def __init__(self, bocha_client: Any = None, zhipu_client: Any = None) -> None:
+        self._bocha = bocha_client
+        self._zhipu = zhipu_client  # deprecated, kept for compatibility
 
     async def search(
         self,
@@ -37,7 +38,7 @@ class SearchEngine:
         source_order: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         if source_order is None:
-            source_order = ["zhipu"]
+            source_order = ["bocha"]
 
         seen_urls: set[str] = set()
         results: list[dict[str, Any]] = []
@@ -79,6 +80,7 @@ class SearchEngine:
                         "snippet": item.get("snippet", ""),
                         "domain": domain,
                         "published_at": item.get("published_at"),
+                        "image_url": item.get("image_url"),
                     }
                 )
                 if len(results) >= max_results:
@@ -89,10 +91,17 @@ class SearchEngine:
     async def _search_source(
         self, source: str, query: str, language: str
     ) -> list[dict[str, Any]]:
+        if source == "bocha":
+            return await self._search_bocha(query)
         if source == "zhipu":
             return await self._search_zhipu(query)
         logger.warning("SearchEngine: unknown source '%s'", source)
         return []
+
+    async def _search_bocha(self, query: str) -> list[dict[str, Any]]:
+        if not self._bocha or not self._bocha.enabled:
+            return []
+        return await self._bocha.search(query)
 
     async def _search_zhipu(self, query: str) -> list[dict[str, Any]]:
         if not self._zhipu or not self._zhipu.enabled:

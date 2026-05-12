@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import re
 from typing import Optional
 
+import httpx
 import numpy as np
 
+logger = logging.getLogger(__name__)
 
 _TRACKING_PARAM = re.compile(
     r"(?:^|&)(utm_\w+|ref|fbclid|gclid)=[^&]*", re.IGNORECASE
 )
+
+_DEFAULT_SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
+_DEFAULT_SILICONFLOW_MODEL = "BAAI/bge-m3"
+_DEFAULT_SILICONFLOW_TIMEOUT = 30.0
 
 
 def _normalize_url(url: str) -> str:
@@ -66,26 +74,30 @@ class SemanticDedup:
 
     def __init__(
         self,
-        embedding_model_name: str = "BAAI/bge-m3",
-        device: str = "cpu",
+        api_key: str = "",
+        api_base: str = _DEFAULT_SILICONFLOW_BASE,
+        embedding_model_name: str = _DEFAULT_SILICONFLOW_MODEL,
         minhash_perm: int = 128,
     ) -> None:
         self._url_fingerprints: set[str] = set()
         self._minhashes: list[_MinHash] = []
         self._embeddings: list[tuple[str, np.ndarray]] = []
-        self._embedding_model: object | None = None
+        self._api_key = api_key
+        self._api_base = api_base.rstrip("/")
         self._embedding_model_name = embedding_model_name
-        self._device = device
         self._minhash_perm = minhash_perm
+        self._api_enabled = bool(api_key)
+        if not self._api_enabled:
+            logger.info("SemanticDedup: no API key configured, embedding dedup disabled")
 
-    def url_dedup(self, urls: list[str]) -> list[str]:
-        unique: list[str] = []
-        for url in urls:
+    def url_dedup(self, urls: list[str]) -> list[int]:
+        unique_indices: list[int] = []
+        for i, url in enumerate(urls):
             fp = _url_md5(url)
             if fp not in self._url_fingerprints:
                 self._url_fingerprints.add(fp)
-                unique.append(url)
-        return unique
+                unique_indices.append(i)
+        return unique_indices
 
     def url_dedup_readonly(self, urls: list[str]) -> list[str]:
         return [u for u in urls if _url_md5(u) not in self._url_fingerprints]
@@ -101,76 +113,109 @@ class SemanticDedup:
             mh = self._make_minhash(text)
             if any(mh.jaccard(existing) >= threshold for existing in self._minhashes):
                 continue
+            self._minhashes.append(mh)
             unique_indices.append(i)
         return unique_indices
 
-    def _load_embedding_model(self) -> object:
-        if self._embedding_model is not None:
-            return self._embedding_model
-        try:
-            from sentence_transformers import SentenceTransformer
-
-            self._embedding_model = SentenceTransformer(
-                self._embedding_model_name, device=self._device, trust_remote_code=True
+    async def _encode(self, texts: list[str]) -> np.ndarray:
+        if not self._api_enabled:
+            raise RuntimeError("SiliconFlow API key not configured for embeddings")
+        truncated = [t[:8000] for t in texts]  # BGE-M3 max context
+        payload = {
+            "model": self._embedding_model_name,
+            "input": truncated,
+            "encoding_format": "float",
+        }
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=_DEFAULT_SILICONFLOW_TIMEOUT) as client:
+            resp = await client.post(
+                f"{self._api_base}/embeddings",
+                json=payload,
+                headers=headers,
             )
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers is required for embedding-based dedup. "
-                "Install with: pip install sentence-transformers"
-            )
-        except OSError:
-            import warnings
+            resp.raise_for_status()
+            data = resp.json()
+        items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+        emb_array = np.array([item["embedding"] for item in items], dtype=np.float32)
+        # Normalize (SiliconFlow already normalizes for bge-m3, but ensure)
+        norms = np.linalg.norm(emb_array, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1.0, norms)
+        return emb_array / norms
 
-            fallback = "all-MiniLM-L6-v2"
-            warnings.warn(
-                f"Could not load {self._embedding_model_name}, falling back to {fallback}"
-            )
-            from sentence_transformers import SentenceTransformer
-
-            self._embedding_model = SentenceTransformer(fallback, device=self._device)
-            self._embedding_model_name = fallback
-        return self._embedding_model
-
-    def _encode(self, texts: list[str]) -> np.ndarray:
-        model = self._load_embedding_model()
-        truncated = [t[:32000] for t in texts]
-        embeddings = model.encode(
-            truncated,
-            normalize_embeddings=True,
-            batch_size=32,
-            show_progress_bar=False,
-        )
-        return np.asarray(embeddings, dtype=np.float32)
-
-    def semantic_dedup(
+    async def semantic_dedup(
         self,
         texts: list[str],
         existing_embeddings: Optional[np.ndarray] = None,
         strong_threshold: float = 0.92,
         weak_threshold: float = 0.85,
     ) -> tuple[list[int], list[int]]:
-        if not texts:
-            return [], []
-        new_embs = self._encode(texts)
+        if not texts or not self._api_enabled:
+            return (list(range(len(texts))), []) if texts else ([], [])
+
+        new_embs = await self._encode(texts)
+        n = len(texts)
+
+        # B.1: Intra-batch pairwise dedup — mark later index as duplicate when
+        # similarity >= strong_threshold against an earlier unique article.
+        pairwise_sim = np.dot(new_embs, new_embs.T)
+        intra_dupes: set[int] = set()
+        for i in range(n):
+            if i in intra_dupes:
+                continue
+            for j in range(i + 1, n):
+                if j in intra_dupes:
+                    continue
+                if pairwise_sim[i][j] >= strong_threshold:
+                    intra_dupes.add(j)
+
+        # Build historical embedding matrix (including external existing_embeddings).
         all_existing: list[np.ndarray] = [e for _, e in self._embeddings]
         if existing_embeddings is not None and len(existing_embeddings) > 0:
             all_existing.extend(
                 existing_embeddings[i] for i in range(existing_embeddings.shape[0])
             )
-        if not all_existing:
-            return list(range(len(texts))), []
-        existing_matrix = np.stack(all_existing)
-        sim_matrix = np.dot(new_embs, existing_matrix.T)
-        max_sims = np.max(sim_matrix, axis=1)
+
         unique_indices: list[int] = []
         weak_indices: list[int] = []
-        for i, sim in enumerate(max_sims):
-            if sim >= strong_threshold:
-                continue
-            elif sim >= weak_threshold:
-                weak_indices.append(i)
-            else:
+
+        if all_existing:
+            existing_matrix = np.stack(all_existing)
+            sim_matrix = np.dot(new_embs, existing_matrix.T)
+            max_sims = np.max(sim_matrix, axis=1)
+            for i in range(n):
+                if i in intra_dupes:
+                    continue
+                sim = max_sims[i]
+                if sim >= strong_threshold:
+                    continue
+                elif sim >= weak_threshold:
+                    weak_indices.append(i)
+                else:
+                    unique_indices.append(i)
+        else:
+            for i in range(n):
+                if i in intra_dupes:
+                    continue
                 unique_indices.append(i)
+
+        # B.2: Store embeddings for unique articles so cross-call dedup works.
+        for idx in unique_indices:
+            text = texts[idx]
+            content_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+            self._embeddings.append(
+                (content_hash, np.asarray(new_embs[idx], dtype=np.float32))
+            )
+
+        # B.4: Store MinHash for unique texts not already tracked.
+        for idx in unique_indices:
+            text = texts[idx]
+            mh = self._make_minhash(text)
+            if not any(mh.jaccard(existing) >= 0.70 for existing in self._minhashes):
+                self._minhashes.append(mh)
+
         return unique_indices, weak_indices
 
     def add(self, content_hash: str, text: str, embedding: np.ndarray) -> None:
@@ -200,12 +245,12 @@ class SemanticDedup:
     def contains_url(self, url: str) -> bool:
         return _url_md5(url) in self._url_fingerprints
 
-    def find_similar(
+    async def find_similar(
         self, text: str, top_k: int = 5, threshold: float = 0.80
     ) -> list[tuple[str, float]]:
-        if not self._embeddings:
+        if not self._embeddings or not self._api_enabled:
             return []
-        query_emb = self._encode([text])[0]
+        query_emb = (await self._encode([text]))[0]
         existing_matrix = np.stack([e for _, e in self._embeddings])
         sims = np.dot(query_emb, existing_matrix.T)
         top_indices = np.argsort(sims)[::-1][:top_k]
@@ -216,8 +261,8 @@ class SemanticDedup:
                 results.append((self._embeddings[idx][0], sim))
         return results
 
-    def pairwise_similarity_matrix(self, texts: list[str]) -> np.ndarray:
-        embs = self._encode(texts)
+    async def pairwise_similarity_matrix(self, texts: list[str]) -> np.ndarray:
+        embs = await self._encode(texts)
         return np.dot(embs, embs.T)
 
     def reset(self) -> None:

@@ -13,7 +13,7 @@ from app.services.agent_core import AgentCore, AgentResult
 from app.services.article_agent import ArticleAgent, ArticleCard, ArticleHarness
 from app.services.jina_reader import JinaReaderClient
 from app.services.scraper import ScraperClient
-from app.services.zhipu_search import ZhipuSearchClient
+from app.services.bocha_search import BochaSearchClient
 from app.services.harness import DEFAULT_BLOCKED_DOMAINS, Harness
 from app.services.llm_client import LLMClient
 from app.services.repository import get_report_settings, list_sources
@@ -273,19 +273,35 @@ SYNTHESIS_PHASE_SYSTEM_PROMPT = """\
 # ── Fallback: 单体模式 System Prompt ────────────────────────
 FALLBACK_SYSTEM_PROMPT = """\
 你是高分子材料加工领域的专业情报分析 Agent。
-你需要独立完成搜索、阅读、评估和撰写每日行业资讯日报。
+你需要以"交织工作"的方式完成日报——搜索、阅读、评估、写作交替推进，不要攒到最后。
 
-【工作流程】
-1. 执行 6-8 轮 web_search，覆盖产业/技术/政策维度
-2. 阅读有价值的文章并用 evaluate_article 评估
-3. 用 check_coverage 检查进度，补足缺口
-4. 为有价值文章找配图并验证
-5. 调用 write_section 撰写各板块
-6. 调用 finish 完成报告
+【核心规则 —— 严格遵守】
+1. 搜索 1-2 轮后，立刻 read_page 阅读最相关的 2-3 篇
+2. 每读完一篇，立刻用 evaluate_article 评估。不要囤积未评估的文章！
+3. 评估为有价值的文章，立刻用 search_images + verify_image 找配图
+4. 重复以上步骤，覆盖产业动态、政策法规、学术前沿三个方向
+5. 当你有了 4+ 篇已评估有价值的文章时，停止搜索，开始写作
+6. 用 check_coverage 检查覆盖 → write_section 写各板块 → finish 完成
 
-注意：follow_references 仅用于论文、研究报告或明确带参考文献的页面。普通新闻、行业资讯、站点列表页不要调用 follow_references。
-如果当前已有候选足以支撑成稿，优先完成 evaluate_article / write_section，不要继续发散探索。
+【关键约束】
+- 总共搜索 3-5 轮就够了，不要无止境地搜
+- 每轮读完立刻评估，不攒着
+- 优先消化工作记忆中的种子候选（ArticlePool），再搜索新内容
+- 中英文搜索结果都要阅读和评估
+- follow_references 仅用于论文和研究报告，普通新闻禁用
+
+【配图重要——评估通过后立刻执行，不要拖延】
+每篇有价值的文章，评估通过后立刻在同一轮中调用 search_images + verify_image 找配图。
+系统会自动从页面 markdown 中提取图片。不要求每篇都有图，但每篇都应该尝试。
+不要等到最后 check_coverage 之后才统一找图！
+
+【报告定位：行业洞察，不是新闻聚合】
+- 事实陈述 + 行业影响分析/趋势预判
+- 多篇文章指向同一趋势时合并分析
+- 每条分析末尾附来源引用（超链接格式）
+- 某板块只有 1 篇时，深度展开其行业影响
 """
+
 
 # 兼容 make_daily_report_harness() 等旧调用方。
 DAILY_REPORT_SYSTEM_PROMPT = FALLBACK_SYSTEM_PROMPT
@@ -294,6 +310,7 @@ DAILY_REPORT_SYSTEM_PROMPT = FALLBACK_SYSTEM_PROMPT
 class DailyReportAgent:
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self._llm_client = llm_client or LLMClient()
+        self._runtime_llm: LLMClient | None = None
 
     def _runtime_settings(
         self, payload: dict[str, Any] | None, shadow_mode: bool | None
@@ -387,40 +404,29 @@ class DailyReportAgent:
 
     # ── Harness Presets ──────────────────────────────────────
 
+    # DEPRECATED: not used in simplified agent-driven flow
     def _build_search_harness(self) -> Harness:
         """Phase 1: 搜索阶段。只搜索不阅读。"""
         return Harness(
-            max_steps=36,
-            max_search_calls=30,
-            max_page_reads=0,
-            max_llm_calls=30,
+            max_steps=50,
             max_duration_seconds=600.0,
-            min_searches_before_finish=12,
-            min_articles_before_finish=0,
             system_prompt=SEARCH_PHASE_SYSTEM_PROMPT,
         )
 
+    # DEPRECATED: not used in simplified agent-driven flow
     def _build_synthesis_harness(self) -> Harness:
         """Phase 3: 综合阶段。只去重、撰写、完成。"""
         return Harness(
             max_steps=15,
-            max_search_calls=0,
-            max_page_reads=0,
-            max_llm_calls=12,
             max_duration_seconds=300.0,
-            min_searches_before_finish=0,
-            min_articles_before_finish=0,
             system_prompt=SYNTHESIS_PHASE_SYSTEM_PROMPT,
         )
 
-    def _build_fallback_harness(self, search_enabled: bool = True) -> Harness:
-        """Fallback: 单体模式。全工具集。"""
+    def _build_agent_harness(self) -> Harness:
+        """单体 Agent 模式。全工具集。"""
         return Harness(
-            max_steps=28 if search_enabled else 18,
-            max_search_calls=8 if search_enabled else 0,
-            max_page_reads=10 if search_enabled else 6,
-            max_llm_calls=50,
-            max_duration_seconds=600.0 if search_enabled else 300.0,
+            max_steps=65,
+            max_duration_seconds=1200.0,
             system_prompt=FALLBACK_SYSTEM_PROMPT,
         )
 
@@ -483,6 +489,8 @@ class DailyReportAgent:
                 agent_run_id = agent_run.id
 
         # ── Phase B: 异步 I/O（无 session，15-25 min）──
+        from app.log_context import run_id_var
+        run_id_var.set(run_id)
         try:
             report = await self._run_phases(
                 target_date,
@@ -504,10 +512,13 @@ class DailyReportAgent:
                         run_obj.status = "failed"
                         run_obj.error_message = str(exc)[:500]
                         run_obj.finished_at = now_local()
-                        run_obj.debug_payload = {
+                        crash_payload: dict[str, Any] = {
                             **(run_obj.debug_payload or {}),
                             "runtime": runtime,
                         }
+                        if self._runtime_llm:
+                            crash_payload["llm_metrics_on_crash"] = self._runtime_llm.snapshot_metrics()
+                        run_obj.debug_payload = crash_payload
                     if ar_obj:
                         ar_obj.status = "failed"
                         ar_obj.finished_reason = "error"
@@ -533,326 +544,65 @@ class DailyReportAgent:
         # 初始化共享资源
         jina = JinaReaderClient()
         scraper = ScraperClient(jina_client=jina)
-        zhipu = ZhipuSearchClient()
+        bocha = BochaSearchClient()
         memory = WorkingMemory()
         llm_client = self._build_runtime_llm_client(runtime)
         synthesis_llm_client = self._build_synthesis_llm_client(runtime)
+        self._runtime_llm = llm_client
 
-        # ============ Phase 1: 拉取 + 去重 + 评估（Composer） ============
-        logger.info("[DailyReportAgent] Phase 1: Composer gather + dedup + evaluate")
-        if event_queue:
-            event_queue.put_nowait({"type": "phase", "phase": 1, "name": "拉取与评估"})
-
+        # Seed Agent's working memory from ArticlePool
         from app.services.composer import DailyComposer
         composer = DailyComposer(llm_client=llm_client)
-        candidates = await composer.gather_candidates(target_date)
-        if candidates:
-            for c in candidates:
+        seeds = await composer.gather_seeds(target_date)
+        if not seeds:
+            logger.info("[DailyReportAgent] ArticlePool empty, triggering Ingester first")
+            try:
+                from app.services.ingester import ContinuousIngester
+                await ContinuousIngester().run()
+                seeds = await composer.gather_seeds(target_date)
+            except Exception as exc:
+                logger.warning("[DailyReportAgent] Ingester trigger failed: %s", exc)
+
+        if seeds:
+            for s in seeds:
                 memory.search_results.append({
-                    "url": c.get("url", ""),
-                    "title": c.get("title", ""),
-                    "snippet": c.get("snippet", ""),
-                    "domain": c.get("domain", ""),
-                    "published_at": c.get("published_at"),
+                    "url": s.get("url", ""),
+                    "title": s.get("title", ""),
+                    "snippet": s.get("snippet", ""),
+                    "domain": s.get("domain", ""),
+                    "published_at": s.get("published_at"),
                     "search_type": "article_pool",
-                    "source_name": c.get("domain", ""),
+                    "source_name": s.get("domain", ""),
                     "source_type": "article_pool",
-                    "metadata": {
-                        "quality_score": c.get("quality_score"),
-                        "section": c.get("section"),
-                        "category": c.get("category"),
-                        "language": c.get("language"),
-                    },
+                    "metadata": {"language": s.get("language", "zh")},
                 })
-        logger.info(
-            "[DailyReportAgent] Phase 1 done: %d candidates after dedup+evaluate",
-            len(candidates),
-        )
-        if event_queue:
-            event_queue.put_nowait({
-                "type": "stats",
-                "phase": 1,
-                "search_result_count": len(candidates),
-                "seeded_candidate_count": len(candidates),
-            })
+            if event_queue:
+                event_queue.put_nowait({"type": "stats", "phase": "seed", "seed_count": len(seeds)})
 
-        # ============ Phase 2: 并发文章处理 ============
-        logger.info("[DailyReportAgent] Phase 2: Parallel Article Processing")
-        if event_queue:
-            event_queue.put_nowait({"type": "phase", "phase": 2, "name": "文章处理"})
-        candidate_urls = self._extract_candidate_urls(memory, runtime)
-
-        if not candidate_urls:
-            logger.warning(
-                "[DailyReportAgent] No candidate URLs found, falling back to monolithic mode"
-            )
-            return await self._run_fallback(
-                target_date,
-                run_id,
-                agent_run_id,
-                zhipu,
-                scraper,
-                memory,
-                shadow_mode,
-                mode,
-                runtime,
-                llm_client,
-            )
-
-        # 构建 sub-agent 工具
-        article_tools = {
-            "read_page": ReadPageTool(
-                scraper_client=scraper,
-                timeout_seconds=runtime["scrape_timeout_seconds"],
-            ),
-            "evaluate_article": EvaluateArticleTool(llm_client=llm_client),
-            "search_images": SearchImagesTool(
-                scraper_client=scraper
-            ),
-            "verify_image": VerifyImageTool(llm_client=llm_client),
-        }
-
-        # 创建并运行 Article Agents
-        article_agents = [
-            ArticleAgent(
-                url=url,
-                context=context,
-                memory=memory,
-                tools=article_tools,
-                harness=ArticleHarness(),
-                agent_run_id=agent_run_id,
-            )
-            for url, context in candidate_urls
+        # Build tools and run Agent
+        agent_tools = [
+            WebSearchTool(bocha_client=bocha),
+            ReadPageTool(scraper_client=scraper, timeout_seconds=runtime["scrape_timeout_seconds"]),
+            EvaluateArticleTool(llm_client=llm_client),
+            SearchImagesTool(scraper_client=scraper),
+            VerifyImageTool(llm_client=llm_client),
+            WriteSectionTool(llm_client=llm_client),
+            CheckCoverageTool(),
+            FinishTool(llm_client=llm_client),
+            CompareSourcesTool(llm_client=llm_client),
         ]
-        cards = await self._run_article_agents(
-            article_agents,
-            memory=memory,
-            max_concurrency=runtime["scrape_concurrency"],
-            domain_failure_threshold=runtime["domain_failure_threshold"],
-        )
-        total_attempted_articles = len(cards)
 
-        successful = [c for c in cards if c.success and c.section != "rejected"]
-        phase2_rejected_missing_date_count = sum(
-            1
-            for c in cards
-            if c.section == "rejected" and "发布时间缺失" in (c.evaluation_reason or "")
-        )
-        phase2_rejected_stale_count = sum(
-            1
-            for c in cards
-            if c.section == "rejected" and "发布时间过旧" in (c.evaluation_reason or "")
-        )
-        phase2_soft_accepted_unknown_date_count = sum(
-            1
-            for a in memory.publishable_articles()
-            if getattr(a, "recency_status", "") == "unknown"
-        )
-        logger.info(
-            "[DailyReportAgent] Phase 2 done: %d/%d articles processed successfully",
-            len(successful),
-            len(cards),
-        )
-        if event_queue:
-            event_queue.put_nowait(
-                {
-                    "type": "stats",
-                    "phase": 2,
-                    "candidate_count": len(candidate_urls),
-                    "successful_articles": len(successful),
-                    "scrape_layer_stats": memory.scrape_layer_stats,
-                }
-            )
+        harness = self._build_agent_harness()
+        agent = AgentCore(tools=agent_tools, llm_client=llm_client, harness=harness, event_queue=event_queue)
+        task = self._build_task_prompt(target_date)
+        result = await agent.run(task=task, agent_run_id=agent_run_id, memory=memory)
 
-        if not successful:
-            logger.warning("[DailyReportAgent] All article agents failed, falling back")
-            return await self._run_fallback(
-                target_date,
-                run_id,
-                agent_run_id,
-                zhipu,
-                scraper,
-                memory,
-                shadow_mode,
-                mode,
-                runtime,
-                llm_client,
-            )
-
-        # ============ Phase 2.5: 链接可用性验证 ============
-        if event_queue:
-            event_queue.put_nowait({"type": "phase", "phase": 2.5, "name": "链接验证"})
-        logger.info(
-            "[DailyReportAgent] Phase 2.5: Link Validation (%d articles)",
-            len(successful),
-        )
-        from app.services.link_checker import LinkChecker
-
-        checker = LinkChecker()
-        article_urls = [normalize_external_url(c.url) for c in successful]
-        image_urls = [
-            normalize_external_url(c.image_url) for c in successful if c.image_url
-        ]
-        all_check_urls = article_urls + image_urls
-        check_results = await checker.check_batch(all_check_urls)
-        url_status = {r.url: r for r in check_results}
-
-        valid_cards: list[ArticleCard] = []
-        transient_link_failures = 0
-        for card in successful:
-            card.url = normalize_external_url(card.url)
-            if card.resolved_url:
-                card.resolved_url = normalize_external_url(card.resolved_url)
-            if card.image_url:
-                card.image_url = normalize_external_url(card.image_url)
-            result = url_status.get(card.url)
-            if result and not result.is_available:
-                read_meta = memory.get_read_metadata(card.url)
-                transient_failure = result.status_code is None or result.error in {
-                    "timeout",
-                    "",
-                }
-                if read_meta.get("content_available") or transient_failure:
-                    logger.info("Link advisory only for readable article: %s", card.url)
-                    if result.redirect_url:
-                        card.resolved_url = result.redirect_url
-                    transient_link_failures += int(transient_failure)
-                    valid_cards.append(card)
-                    continue
-                logger.warning(
-                    "Link unavailable, removing: %s (status=%s, error=%s)",
-                    card.url,
-                    result.status_code,
-                    result.error,
-                )
-                continue
-            # 检查 image_url
-            if card.image_url:
-                img_result = url_status.get(card.image_url)
-                if img_result and not img_result.is_available:
-                    logger.info("Image link unavailable, clearing: %s", card.image_url)
-                    card.image_url = None
-                    card.image_caption = None
-            if result and result.redirect_url:
-                card.resolved_url = result.redirect_url
-            valid_cards.append(card)
-
-        removed = len(successful) - len(valid_cards)
-        if removed:
-            logger.info(
-                "[DailyReportAgent] Link check removed %d articles, %d remain",
-                removed,
-                len(valid_cards),
-            )
-        if transient_link_failures and event_queue:
-            event_queue.put_nowait(
-                {
-                    "type": "warning",
-                    "warning_code": "phase2_link_transient_soft_kept",
-                    "message": f"{transient_link_failures} 条内容因链接瞬时异常被保留为软告警。",
-                }
-            )
-        successful = valid_cards
-
-        # 将链接校验后的最终卡片状态（尤其是图片 URL）回写到 WorkingMemory。
-        # Phase 3 的 FinishTool 读取的是 memory.publishable_articles()，若不回写，
-        # 会出现日志里 image=yes 但最终报告与数据库中 image_url 为空的错位。
-        for card in successful:
-            memory.sync_article_card(card)
-
-        if not successful:
-            logger.warning(
-                "[DailyReportAgent] All links failed validation, falling back"
-            )
-            return await self._run_fallback(
-                target_date,
-                run_id,
-                agent_run_id,
-                zhipu,
-                scraper,
-                memory,
-                shadow_mode,
-                mode,
-                runtime,
-                llm_client,
-            )
-
-        compiled_topics = self._compile_section_topics(memory, runtime)
-        if event_queue:
-            event_queue.put_nowait(
-                {
-                    "type": "stats",
-                    "phase": 2.6,
-                    "compiled_sections": {
-                        section: len(topics)
-                        for section, topics in compiled_topics.items()
-                    },
-                }
-            )
-
-        # ============ Phase 3: 编排综合 ============
-        logger.info("[DailyReportAgent] Phase 3: Synthesis")
-        if event_queue:
-            event_queue.put_nowait(
-                {
-                    "type": "phase",
-                    "phase": 3,
-                    "name": "编排综合",
-                    "article_count": len(successful),
-                }
-            )
-        final_result = await self._run_deterministic_synthesis(
-            memory=memory,
-            target_date=target_date,
-            llm_client=synthesis_llm_client,
-            event_queue=event_queue,
-            runtime=runtime,
-        )
-        final_result.diagnostics.update(
-            {
-                "phase2_attempted_articles": total_attempted_articles,
-                "phase2_successful_articles": len(successful),
-                "phase2_rejected_missing_date_count": phase2_rejected_missing_date_count,
-                "phase2_rejected_stale_count": phase2_rejected_stale_count,
-                "phase2_soft_accepted_unknown_date_count": phase2_soft_accepted_unknown_date_count,
-            }
-        )
-        logger.info(
-            "[DailyReportAgent] Phase 3 done: %d articles, reason=%s",
-            len(final_result.articles),
-            final_result.finished_reason,
-        )
-        if event_queue:
-            event_queue.put_nowait(
-                {
-                    "type": "stats",
-                    "phase": 3,
-                    "article_count": len(final_result.articles),
-                    "finished_reason": final_result.finished_reason,
-                    "phase3_compare_status": final_result.diagnostics.get(
-                        "phase3_compare_status", {}
-                    ),
-                    "phase3_section_results": final_result.diagnostics.get(
-                        "phase3_section_results", {}
-                    ),
-                }
-            )
-
-        # ── Phase C: 持久化 Report（短 session，<1s）──
-        return await self._result_to_report(
-            final_result,
-            target_date,
-            run_id,
-            agent_run_id,
-            shadow_mode,
-            mode,
-            runtime,
-            llm_client,
-            synthesis_llm_client,
-        )
+        logger.info("[DailyReportAgent] Agent finished: %d articles, reason=%s", len(result.articles), result.finished_reason)
+        return await self._result_to_report(result, target_date, run_id, agent_run_id, shadow_mode, mode, runtime, llm_client, llm_client)
 
     # ── Fallback: 单体模式 ────────────────────────────────────
 
+    # DEPRECATED: not used in simplified agent-driven flow
     async def _run_fallback(
         self,
         target_date: date,
@@ -867,14 +617,14 @@ class DailyReportAgent:
     ) -> Report:
         """所有 Article Agent 失败时，回退到单体 AgentCore 模式。"""
         logger.info("[DailyReportAgent] Running fallback monolithic agent")
-        zhipu = ZhipuSearchClient()
+        bocha = BochaSearchClient()
         fallback_candidates = self._fallback_candidates(memory, runtime)
         search_enabled = not self._should_disable_fallback_search(memory)
         scrape_failure_rate = self._scrape_failure_rate(memory)
         skip_for_scrape = self._should_skip_fallback_for_scrape_health(memory)
         provider_health = {
             provider: self._provider_health_state(memory, provider)
-            for provider in ["zhipu", "zhipu"]
+            for provider in ["bocha", "zhipu"]
             if (memory.search_provider_health or {}).get(provider)
         }
         if not search_enabled and not fallback_candidates:
@@ -955,15 +705,14 @@ class DailyReportAgent:
         if search_enabled:
             fallback_tools = [
                 WebSearchTool(
-                                        zhipu_client=zhipu,
+                    bocha_client=bocha,
                 ),
                 FollowReferencesTool(),
                 *fallback_tools,
             ]
 
-        harness = self._build_fallback_harness(search_enabled=search_enabled)
+        harness = self._build_agent_harness()
         if scrape_failure_rate > 0.6 and not skip_for_scrape:
-            harness.max_page_reads = max(1, harness.max_page_reads // 2)
             harness.max_duration_seconds = min(harness.max_duration_seconds, 180.0)
             logger.info(
                 "[DailyReportAgent] Reducing fallback budget: scrape failure rate %.0f%%",
@@ -995,6 +744,7 @@ class DailyReportAgent:
 
     # ── Article Agent 并发运行 ────────────────────────────────
 
+    # DEPRECATED: not used in simplified agent-driven flow
     async def _run_article_agents(
         self,
         agents: list[ArticleAgent],
@@ -1079,6 +829,7 @@ class DailyReportAgent:
 
         return results
 
+    # DEPRECATED: not used in simplified agent-driven flow
     async def _run_deterministic_synthesis(
         self,
         memory: WorkingMemory,
@@ -1320,6 +1071,7 @@ class DailyReportAgent:
             summary += "。辅助分析提示：" + "；".join(memory.key_findings[:2])
         return summary + "。"
 
+    # DEPRECATED: not used in simplified agent-driven flow
     def _compile_section_topics(
         self, memory: WorkingMemory, runtime: dict[str, Any]
     ) -> dict[str, list[dict[str, Any]]]:
@@ -1611,6 +1363,7 @@ class DailyReportAgent:
 
     # ── 候选 URL 提取 ─────────────────────────────────────────
 
+    # DEPRECATED: not used in simplified agent-driven flow
     def _extract_candidate_urls(
         self,
         memory: WorkingMemory,
@@ -1697,7 +1450,7 @@ class DailyReportAgent:
                 continue
 
             score = self._candidate_score(row, memory, query_usage, quality)
-            if score <= -2.0:
+            if score <= -3.0:
                 memory.record_candidate_rejection("off_topic_candidate")
                 continue
 
@@ -1783,10 +1536,16 @@ class DailyReportAgent:
 
         for section in self._candidate_section_hints(row):
             current_count = getattr(memory.coverage, f"{section}_count", 0)
-            if current_count <= 0:
-                score += 1.3
-            elif current_count == 1:
-                score += 0.6
+            if section in ("policy", "academic"):
+                if current_count <= 0:
+                    score += 2.0
+                elif current_count == 1:
+                    score += 1.0
+            else:
+                if current_count <= 0:
+                    score += 1.3
+                elif current_count == 1:
+                    score += 0.6
 
         query = memory.url_search_query.get(url, "")
         score += max(0.0, 1.5 - float(query_usage.get(query, 0)))
@@ -1926,6 +1685,16 @@ class DailyReportAgent:
         return not (negative_hits > 0 and positive_hits == 0)
 
     @staticmethod
+    def _infer_language(domain: str) -> str:
+        domain_lower = domain.lower()
+        if domain_lower.endswith(".cn") or ".com.cn" in domain_lower:
+            return "zh"
+        for tld in (".tw", ".hk", ".jp", ".kr"):
+            if domain_lower.endswith(tld) or f"{tld}/" in domain_lower:
+                return "zh"
+        return "zh" if any(kw in domain_lower for kw in ["sina", "sohu", "qq", "163", "36kr"]) else "en"
+
+    @staticmethod
     def _display_source_name(article: dict[str, Any]) -> str:
         raw_name = str(article.get("source_name") or "").strip()
         domain = extract_domain(
@@ -1960,7 +1729,7 @@ class DailyReportAgent:
     def _should_disable_fallback_search(self, memory: WorkingMemory) -> bool:
         provider_health = memory.search_provider_health or {}
         return self._provider_is_unhealthy(
-            provider_health.get("zhipu", {})
+            provider_health.get("bocha", {})
         ) and self._provider_is_unhealthy(provider_health.get("zhipu", {}))
 
     @staticmethod
@@ -2004,7 +1773,7 @@ class DailyReportAgent:
             f"请搜索今日《{settings.report_title}》（{target_date.isoformat()}）需要的文章素材。\n"
             f"{seed_hint}"
             f"请确保搜索词覆盖至少 5 个不同子话题（如设备新品、原料行情、政策法规、学术研究、下游应用），中英文各半，避免重复搜索同一主题的近义词。\n"
-            f"时效要求：优先收录过去{_SEARCH_RECENCY_LABEL}内的内容；如果搜索结果没有明确发布时间，也要优先选择明显属于近两天动态的报道。不要在搜索词中加年份。\n"
+            f"时效要求：优先收录过去{_SEARCH_RECENCY_LABEL}的内容；如果搜索结果没有明确发布时间，也要优先选择明显属于近两天动态的报道。不要在搜索词中加年份。\n"
             f"目标产出：本期需要至少 6 篇有价值的文章，覆盖 3 个板块（产业动态、政策法规、学术前沿），请充分搜索确保素材充足。\n"
         )
 
@@ -2069,7 +1838,7 @@ class DailyReportAgent:
         return (
             f"当前时间：{now.isoformat(' ', 'seconds')}（{settings.app_timezone}）\n\n"
             f"请生成今日《{settings.report_title}》（{target_date.isoformat()}）。\n"
-            f"时效要求：优先只收录过去{_SEARCH_RECENCY_LABEL}内发布的内容。不要在搜索词中加上往年年份。\n"
+            f"时效要求：优先只收录过去{_SEARCH_RECENCY_LABEL}发布的内容。不要在搜索词中加上往年年份。\n"
             f"{provider_line}{search_line}{candidate_block}"
             "严禁把 homepage、navigation、topic、subject、journal landing、频道页、列表页当作正文证据；只阅读具体文章详情页或明确带发布日期的新闻稿。\n"
         )
@@ -2243,6 +2012,7 @@ class DailyReportAgent:
                     image_url=article.get("image_url", ""),
                     has_verified_image=bool(article.get("image_url")),
                     combined_score=float(article.get("relevance_score", 0.6) or 0.6),
+                    language=self._infer_language(article.get("domain", "")),
                     decision_trace={
                         "search_query": article.get("search_query", ""),
                         "evaluation_reason": article.get("evaluation_reason", ""),
@@ -2255,6 +2025,7 @@ class DailyReportAgent:
                         ),
                         "source_kind": article.get("source_kind", ""),
                         "page_kind": article.get("page_kind", ""),
+                        "category": article.get("category", "高材制造"),
                         "evidence_strength": article.get("evidence_strength", ""),
                         "supports_numeric_claims": bool(
                             article.get("supports_numeric_claims", False)
@@ -2266,6 +2037,7 @@ class DailyReportAgent:
                         "topic_confidence": article.get("topic_confidence", ""),
                         "recency_status": article.get("recency_status", "unknown"),
                         "published_at_source": article.get("published_at_source", ""),
+                        "language": article.get("language", self._infer_language(article.get("domain", ""))),
                     },
                 )
                 session.add(item)

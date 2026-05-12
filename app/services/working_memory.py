@@ -53,6 +53,7 @@ class ArticleSummary:
     allowed_for_trend_summary: bool = False
     is_primary_source: bool = False
     requires_observation_only: bool = False
+    category: str = ""  # 高材制造 / 清洁能源 / AI
     selection_reason: str = ""
     topic_confidence: str = ""
     excluded_reason: str = ""
@@ -84,6 +85,7 @@ class ArticleSummary:
             "allowed_for_trend_summary": self.allowed_for_trend_summary,
             "is_primary_source": self.is_primary_source,
             "requires_observation_only": self.requires_observation_only,
+            "category": self.category,
             "selection_reason": self.selection_reason,
             "topic_confidence": self.topic_confidence,
             "excluded_reason": self.excluded_reason,
@@ -205,6 +207,7 @@ class StepRecord:
     duration_seconds: float
     harness_blocked: bool = False
     block_reason: str = ""
+    tokens_used: int = 0
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
@@ -216,6 +219,7 @@ class StepRecord:
             "duration_seconds": self.duration_seconds,
             "harness_blocked": self.harness_blocked,
             "block_reason": self.block_reason,
+            "tokens_used": self.tokens_used,
             "timestamp": self.timestamp,
         }
 
@@ -368,6 +372,22 @@ class WorkingMemory:
                 "price",
                 "market",
                 "resin",
+                "plastics",
+                "polymer",
+                "processing",
+                "manufacturing",
+                "production",
+                "industry",
+                "news",
+                "latest",
+                "update",
+                "trend",
+                "technology",
+                "material",
+                "chemical",
+                "compound",
+                "development",
+                "application",
             ],
         }
 

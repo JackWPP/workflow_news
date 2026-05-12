@@ -63,7 +63,7 @@ const supervisorSummary = computed(() => {
       <div>
         <div class="flex items-center gap-3 mb-4">
           <span class="px-3 py-1 bg-white/10 rounded-full text-xs font-semibold tracking-widest text-[var(--accent-academic)] border border-white/10 uppercase drop-shadow-md">
-            Daily Report
+            今日日报
           </span>
           <span v-if="report" class="px-3 py-1 bg-white/10 rounded-full text-xs font-semibold text-white border border-white/10">
             {{ publishGradeLabel }}
@@ -108,15 +108,15 @@ const supervisorSummary = computed(() => {
         
         <div v-if="report" class="flex items-center gap-6 px-4 py-2 border-l border-white/10 ml-2">
           <div class="flex flex-col">
-            <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1"><Calendar class="w-3 h-3"/> Date</span>
+            <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1"><Calendar class="w-3 h-3"/> 日期</span>
             <span class="text-sm text-white font-medium">{{ report.report_date }}</span>
           </div>
           <div class="flex flex-col">
-            <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1"><Layers class="w-3 h-3"/> Coverage</span>
+            <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1"><Layers class="w-3 h-3"/> 覆盖</span>
             <span class="text-sm text-white font-medium">{{ itemCount }} 条 / {{ activeSectionCount }} 板块</span>
           </div>
           <div class="flex flex-col">
-            <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1"><CheckSquare class="w-3 h-3"/> Assets</span>
+            <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1"><CheckSquare class="w-3 h-3"/> 配图</span>
             <span class="text-sm text-white font-medium">{{ imageCount > 0 ? `${imageCount} 张配图` : '待补图' }}</span>
           </div>
         </div>

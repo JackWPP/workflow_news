@@ -29,7 +29,7 @@ except ImportError:
 class EvalRunner:
     def __init__(
         self,
-        judge_model: str = "claude-opus-4-7",
+        judge_model: str = "deepseek-v4-flash",
         llm_client: Any = None,
     ):
         self.judge_model = judge_model

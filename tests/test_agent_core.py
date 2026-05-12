@@ -48,10 +48,7 @@ def make_article(section: str = "industry", url: str | None = None) -> ArticleSu
 def make_harness(**kwargs: Any) -> Harness:
     defaults = dict(
         max_steps=10,
-        max_search_calls=5,
-        max_page_reads=5,
         max_duration_seconds=60.0,
-        max_llm_calls=10,
         system_prompt="Test agent",
     )
     defaults.update(kwargs)
@@ -131,23 +128,6 @@ class TestHarness:
         assert allowed
         assert reason == ""
 
-    def test_search_quota_blocks(self):
-        h = make_harness(max_search_calls=2)
-        h.record_search()
-        h.record_search()
-        tc = ToolCall(tool_name="web_search", arguments={"query": "test"})
-        allowed, reason = h.allows(tc)
-        assert not allowed
-        assert "quota" in reason
-
-    def test_read_quota_blocks(self):
-        h = make_harness(max_page_reads=2)
-        h.record_read()
-        h.record_read()
-        tc = ToolCall(tool_name="read_page", arguments={"url": "https://example.com"})
-        allowed, reason = h.allows(tc)
-        assert not allowed
-
     def test_violations_tracked(self):
         h = make_harness(blocked_domains=["spam.com"])
         tc = ToolCall(tool_name="read_page", arguments={"url": "https://spam.com/page"})
@@ -158,10 +138,8 @@ class TestHarness:
     def test_status_dict(self):
         h = make_harness(max_steps=10)
         h.record_step()
-        h.record_search()
         status = h.to_status_dict()
         assert status["step_count"] == 1
-        assert status["search_count"] == 1
         assert status["budget_remaining"] == 9
 
 
@@ -363,8 +341,6 @@ class TestAgentCore:
         mock_finish.name = "finish"
 
         harness = make_harness(max_steps=20)
-        harness.min_searches_before_finish = 0
-        harness.min_articles_before_finish = 0
         core = AgentCore(
             tools=[mock_finish],
             llm_client=llm,

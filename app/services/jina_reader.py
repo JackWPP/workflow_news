@@ -110,6 +110,12 @@ class JinaReaderClient:
         elif isinstance(images, list) and images:
             image_url = images[0] if isinstance(images[0], str) else None
 
+        # Fallback: scan markdown for inline images if no image found yet
+        if not image_url and markdown:
+            m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+            if m:
+                image_url = m.group(1)
+
         # If Jina didn't provide published_at, try extracting from markdown
         if published_at is None and markdown:
             published_at = self._extract_datetime_from_text(markdown)
@@ -148,18 +154,73 @@ class JinaReaderClient:
         if m:
             image_url = m.group(1).strip()
 
+        # Fallback: scan raw HTML for first content <img> (before HTML is stripped)
+        if not image_url:
+            # Extract base URL for resolving relative paths
+            base_match = re.search(r'(https?://[^/]+)', url)
+            base = base_match.group(1) if base_match else ""
+            img_candidates = []
+            # Multiple patterns for different image sources
+            for pattern in [
+                r'<img[^>]+src=["\'](https?://[^"\']+)["\']',     # absolute
+                r'<img[^>]+src=["\'](//[^"\']+)["\']',            # protocol-relative
+                r'<img[^>]+data-src=["\'](https?://[^"\']+)["\']', # lazy-load
+                r'<img[^>]+data-original=["\'](https?://[^"\']+)["\']',
+            ]:
+                for src in re.findall(pattern, html, re.IGNORECASE):
+                    if src.startswith('//'):
+                        src = 'https:' + src
+                    img_candidates.append(src)
+            # Also try relative paths (src="/path/to/img.jpg")
+            if base:
+                for src in re.findall(r'<img[^>]+src=["\'](/[^"\']+\.(?:jpg|jpeg|png|gif|webp))["\']', html, re.IGNORECASE):
+                    img_candidates.append(base + src)
+            for src in img_candidates:
+                src_lower = src.lower()
+                if not any(skip in src_lower for skip in ("logo", "icon", "avatar", "banner", "qr", "weixin", "微信", "footer", "sidebar")):
+                    image_url = src.strip()
+                    break
+
         # Extract published time
         published_at = None
         m = _ARTICLE_PUBLISHED_RE.search(html)
         if m:
             published_at = parse_datetime(m.group(1).strip())
 
-        # Strip HTML to plain text
-        text = re.sub(r"<script.*?</script>", " ", html, flags=re.IGNORECASE | re.DOTALL)
-        text = re.sub(r"<style.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        markdown = text[:8000]
+        # Targeted HTML-to-markdown conversions before stripping everything
+        # 1. Strip noise elements entirely
+        md = re.sub(
+            r"<(script|style|nav|footer|header|noscript|iframe)[^>]*>.*?</\1>",
+            " ", html, flags=re.IGNORECASE | re.DOTALL,
+        )
+        # 2. Convert headings
+        md = re.sub(r"<h1[^>]*>(.*?)</h1>", r"\n\n## \1\n\n", md, flags=re.IGNORECASE | re.DOTALL)
+        md = re.sub(r"<h2[^>]*>(.*?)</h2>", r"\n\n### \1\n\n", md, flags=re.IGNORECASE | re.DOTALL)
+        md = re.sub(r"<h3[^>]*>(.*?)</h3>", r"\n\n#### \1\n\n", md, flags=re.IGNORECASE | re.DOTALL)
+        md = re.sub(r"<h4[^>]*>(.*?)</h4>", r"\n\n#### \1\n\n", md, flags=re.IGNORECASE | re.DOTALL)
+        # 3. Convert links
+        md = re.sub(
+            r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+            r"[\2](\1)", md, flags=re.IGNORECASE | re.DOTALL,
+        )
+        # 4. Convert block-level elements to paragraph breaks
+        md = re.sub(r"<(?:p|li|div|article|section|main)[^>]*>", r"\n\n", md, flags=re.IGNORECASE)
+        md = re.sub(r"</(?:p|li|div|article|section|main)>", r"\n\n", md, flags=re.IGNORECASE)
+        # 5. Convert <br> to newline
+        md = re.sub(r"<br\s*/?>", "\n", md, flags=re.IGNORECASE)
+        # 6. Strip remaining HTML tags
+        md = re.sub(r"<[^>]+>", " ", md)
+        # 7. Normalize whitespace
+        md = re.sub(r"\n\s*\n\s*\n+", "\n\n", md)
+        md = re.sub(r" {2,}", " ", md)
+        md = md.strip()
+        markdown = md[:8000]
+
+        # Fallback: scan for inline markdown images if og:image not found
+        if not image_url and markdown:
+            m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+            if m:
+                image_url = m.group(1)
 
         if published_at is None:
             published_at = self._extract_datetime_from_text(markdown)

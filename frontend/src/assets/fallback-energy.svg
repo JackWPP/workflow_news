@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 250" fill="none">
+  <rect width="400" height="250" fill="#E6F4EA"/>
+  <g transform="translate(150,50)">
+    <circle cx="50" cy="50" r="35" fill="#34A853" opacity="0.2"/>
+    <path d="M50 20 L50 80" stroke="#34A853" stroke-width="3" opacity="0.5"/>
+    <path d="M30 40 L70 40" stroke="#34A853" stroke-width="3" opacity="0.5"/>
+    <path d="M35 60 L65 30" stroke="#34A853" stroke-width="2" opacity="0.4"/>
+    <path d="M35 30 L65 60" stroke="#34A853" stroke-width="2" opacity="0.4"/>
+    <rect x="15" y="90" width="70" height="30" rx="4" fill="#34A853" opacity="0.3"/>
+    <rect x="25" y="95" width="50" height="20" rx="2" fill="#34A853" opacity="0.4"/>
+  </g>
+  <text x="200" y="180" text-anchor="middle" font-family="system-ui" font-size="14" fill="#34A853" opacity="0.6">清洁能源</text>
+</svg>

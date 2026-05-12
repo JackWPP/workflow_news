@@ -137,7 +137,7 @@ class BatchEvaluator:
     def __init__(
         self,
         llm_client: LLMClient | None = None,
-        cheap_model: str = "deepseek/deepseek-chat",
+        cheap_model: str = "deepseek-v4-flash",
         strong_model: str | None = None,
     ):
         self._shared_client = llm_client
@@ -252,26 +252,32 @@ class BatchEvaluator:
                 items = [result]
 
         evaluated: list[dict] = []
-        for item in items:
+        for pos, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
             idx = item.get("index")
-            original: dict = {}
+            # Match by explicit index first, fall back to position
+            matched: dict = {}
             if isinstance(idx, int) and 0 <= idx < len(batch):
-                original = batch[idx]
+                matched = batch[idx]
+            elif pos < len(batch):
+                matched = batch[pos]
+            else:
+                # No match possible — skip this item
+                continue
 
             evaluated.append({
-                "url": original.get("url", item.get("url", "")),
-                "title": original.get("title", item.get("title", "")),
+                "url": matched.get("url", item.get("url", "")),
+                "title": matched.get("title", item.get("title", "")),
                 "quality_score": float(item.get("quality_score", 0.0)),
                 "section": item.get("section", "industry"),
                 "category": item.get("category", "其他"),
                 "key_finding": item.get("key_finding", ""),
                 "relevance_rationale": item.get("relevance_rationale", ""),
-                "domain": original.get("domain", item.get("domain", "")),
-                "source_type": original.get("source_type", ""),
-                "language": original.get("language", language),
-                "published_at": original.get("published_at", ""),
+                "domain": matched.get("domain", item.get("domain", "")),
+                "source_type": matched.get("source_type", ""),
+                "language": matched.get("language", language),
+                "published_at": matched.get("published_at", ""),
             })
 
         return evaluated
