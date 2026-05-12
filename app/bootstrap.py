@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from app.database import Base, engine, session_scope
 from app.seed import seed_defaults
 
+logger = logging.getLogger(__name__)
+
 
 def _ensure_sqlite_schema() -> None:
+    # NOTE: This function handles historical schema migrations for SQLite.
+    # Going forward, all new schema changes should be managed via Alembic
+    # (see alembic/ directory).  Run `alembic upgrade head` to apply them.
     if engine.dialect.name != "sqlite":
         return
 
@@ -48,9 +56,22 @@ def _ensure_sqlite_schema() -> None:
                 "context_verdict": "ALTER TABLE report_items ADD COLUMN context_verdict VARCHAR(32)",
                 "selected_for_publish": "ALTER TABLE report_items ADD COLUMN selected_for_publish BOOLEAN NOT NULL DEFAULT 0",
                 "image_reason": "ALTER TABLE report_items ADD COLUMN image_reason TEXT",
+                "decision_trace": "ALTER TABLE report_items ADD COLUMN decision_trace JSON NOT NULL DEFAULT '{}'",
+                "language": "ALTER TABLE report_items ADD COLUMN language VARCHAR(8) NOT NULL DEFAULT 'zh'",
             }
             for name, statement in report_item_statements.items():
                 if name not in report_item_columns:
+                    connection.execute(text(statement))
+
+        if "reports" in tables:
+            report_columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info('reports')"))
+            }
+            report_statements = {
+                "report_type": "ALTER TABLE reports ADD COLUMN report_type VARCHAR(16) NOT NULL DEFAULT 'global'",
+            }
+            for name, statement in report_statements.items():
+                if name not in report_columns:
                     connection.execute(text(statement))
 
         if "agent_runs" in tables:
@@ -81,6 +102,7 @@ def _ensure_sqlite_schema() -> None:
                 "thought": "ALTER TABLE agent_steps ADD COLUMN thought TEXT",
                 "tool_name": "ALTER TABLE agent_steps ADD COLUMN tool_name VARCHAR(64)",
                 "harness_blocked": "ALTER TABLE agent_steps ADD COLUMN harness_blocked BOOLEAN NOT NULL DEFAULT 0",
+                "tokens_used": "ALTER TABLE agent_steps ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0",
             }
             for name, statement in agent_step_statements_v2.items():
                 if name not in agent_step_columns:
@@ -101,9 +123,38 @@ def _ensure_sqlite_schema() -> None:
                 if name not in article_image_columns:
                     connection.execute(text(statement))
 
+        if "evaluation_runs" not in tables:
+            Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["evaluation_runs"]])
+
+        if "article_pool" not in tables:
+            Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["article_pool"]])
+
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_schema()
     with session_scope() as session:
         seed_defaults(session)
+    _check_db_writable()
+
+
+def _check_db_writable() -> None:
+    """Verify the database is writable at startup.
+
+    If another process holds the write lock (e.g. a stale uvicorn process),
+    log an error so the operator knows to kill it.
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("CREATE TABLE IF NOT EXISTS _writable_check (id INTEGER)"))
+            conn.execute(text("INSERT INTO _writable_check (id) VALUES (1)"))
+            conn.execute(text("DROP TABLE _writable_check"))
+            conn.commit()
+    except OperationalError as exc:
+        if "locked" in str(exc):
+            logger.error(
+                "DATABASE IS LOCKED by another process! "
+                "Check for stale uvicorn processes: `ps aux | grep uvicorn` and kill them.",
+            )
+        else:
+            raise

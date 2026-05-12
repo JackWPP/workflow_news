@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(curl *)",
+      "Bash(python -c \"import mimetypes; mimetypes.add_type\\('application/javascript', '.js'\\); print\\(mimetypes.guess_type\\('test.js'\\)\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('report:', d.get\\('title',''\\), '| items:', len\\(d.get\\('items',[]\\)\\), '| status:', d.get\\('status',''\\)\\)\")",
+      "WebFetch(domain:bigmodel.cn)",
+      "Bash(python -c \"from app.services.research_agent import ResearchAgent; print\\('ResearchAgent OK'\\)\")",
+      "Bash(python -c \"from app.services.chat import ChatService; print\\('ChatService OK'\\)\")",
+      "Bash(python -m pytest tests/test_evaluation.py -q)"
+    ]
+  }
+}

@@ -82,7 +82,7 @@ defineExpose({ handleStep, handlePhase, handleComplete, handleError })
       <Loader class="w-4 h-4 animate-spin" />
       <span>{{ currentPhase.name }}...</span>
       <span v-if="currentPhase.article_count" class="text-xs opacity-60">
-        ({{ currentPhase.article_count }} articles)
+        ({{ currentPhase.article_count }} 篇)
       </span>
     </div>
 
@@ -102,7 +102,7 @@ defineExpose({ handleStep, handlePhase, handleComplete, handleError })
         <p class="step-result">{{ step.result_summary }}</p>
       </div>
       <div v-if="steps.length === 0" class="step-item opacity-50">
-        <Loader class="w-4 h-4 animate-spin inline" /> Waiting for first step...
+        <Loader class="w-4 h-4 animate-spin inline" /> 等待 Agent 执行第一步...
       </div>
     </div>
 
@@ -114,8 +114,8 @@ defineExpose({ handleStep, handlePhase, handleComplete, handleError })
 
     <!-- Stats bar -->
     <div class="stats-bar">
-      <span>Steps: {{ steps.length }}</span>
-      <span>Searches: {{ steps.filter(s => s.tool_name === 'web_search').length }}</span>
+      <span>步数: {{ steps.length }}</span>
+      <span>搜索: {{ steps.filter(s => s.tool_name === 'web_search').length }} 次</span>
     </div>
   </div>
 </template>

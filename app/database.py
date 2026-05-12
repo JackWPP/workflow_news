@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
+import time
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 
@@ -43,12 +47,32 @@ if settings.database_url.startswith("sqlite"):
 
 @contextmanager
 def session_scope():
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+    """Provide a transactional scope with automatic retry on database lock.
+
+    Retries up to 3 times with exponential backoff (0.5s, 1s, 2s) when
+    SQLite reports "database is locked" — typically caused by concurrent
+    writers or stale processes holding the write lock.
+    """
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        session = SessionLocal()
+        try:
+            yield session
+            session.commit()
+            return
+        except OperationalError as exc:
+            session.rollback()
+            if "database is locked" in str(exc) and attempt < max_retries:
+                wait = 0.5 * (2 ** attempt)
+                logger.warning(
+                    "database is locked, retry %d/%d in %.1fs",
+                    attempt + 1, max_retries, wait,
+                )
+                time.sleep(wait)
+                continue
+            raise
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()

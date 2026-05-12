@@ -36,6 +36,8 @@ class ReportItemOut(ORMModel):
     window_bucket: str
     citations: list[dict[str, Any]]
     combined_score: float
+    decision_trace: dict[str, Any] = Field(default_factory=dict)
+    language: str = "zh"
 
 
 class ReportOut(ORMModel):
@@ -54,6 +56,11 @@ class ReportOut(ORMModel):
     hero_image: dict[str, Any] | None = None
     image_review_summary: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+    report_type: str = "global"
+    categories: list[str] = Field(default_factory=lambda: ["高材制造", "清洁能源", "AI"])
+    english_section_count: int = 0
+    chinese_section_count: int = 0
+    overall_score: float | None = None
 
 
 class ReportDetailOut(ReportOut):
@@ -124,11 +131,16 @@ class SourceRulesPayload(BaseModel):
 class ReportRunRequest(BaseModel):
     shadow_mode: bool | None = None
     mode: str = "publish"
+    report_type: str = "global"
 
 
 class ReportSettingsOut(BaseModel):
     report_hour: int
     report_minute: int
+    ai_report_enabled: bool = True
+    ai_report_hour: int
+    ai_report_minute: int
+    ai_rss_feed_url: str
     shadow_mode: bool
     scrape_timeout_seconds: int
     scrape_concurrency: int
@@ -140,6 +152,10 @@ class ReportSettingsOut(BaseModel):
 class ReportSettingsUpdate(BaseModel):
     report_hour: int
     report_minute: int
+    ai_report_enabled: bool = True
+    ai_report_hour: int
+    ai_report_minute: int
+    ai_rss_feed_url: str
     shadow_mode: bool
     scrape_timeout_seconds: int
     scrape_concurrency: int

@@ -1,0 +1,66 @@
+# 确定性搜索模板 — 替代 LLM Agent 搜索决策
+# 每个 section × language 下是具体的搜索 query 列表
+# ContinuousIngester 每小时遍历所有模板执行搜索
+
+# ============================================================================
+# 产业动态 (industry)
+# ============================================================================
+industry:
+  zh:
+    - "注塑机 新品发布"
+    - "挤出设备 技术升级"
+    - "高分子材料 产能扩建"
+    - "塑料原料 价格行情"
+    - "复合材料 汽车轻量化"
+    - "改性塑料 应用"
+    - "吹塑成型 新技术"
+    - "模具技术 创新"
+    - "薄膜生产 技术进展"
+    - "塑料回收 再生技术"
+    - "生物基塑料 产业化"
+    - "降解材料 应用前景"
+  en:
+    - "injection molding machine new product"
+    - "polymer processing equipment innovation"
+    - "plastics recycling technology breakthrough"
+    - "composite materials automotive lightweight"
+    - "extrusion technology advancement"
+    - "biodegradable polymer development"
+    - "additive manufacturing polymer"
+    - "plastic packaging sustainability"
+
+# ============================================================================
+# 政策法规 (policy)
+# ============================================================================
+policy:
+  zh:
+    - "限塑令 最新政策"
+    - "碳关税 塑料行业"
+    - "环保法规 高分子材料"
+    - "塑料回收 政策法规"
+    - "食品接触材料 标准"
+    - "化工行业 安全法规"
+  en:
+    - "EU plastic regulation policy"
+    - "carbon border tax polymer industry"
+    - "plastic ban legislation"
+    - "polymer recycling mandate"
+    - "food contact material regulation"
+    - "chemical industry compliance"
+
+# ============================================================================
+# 学术前沿 (academic)
+# ============================================================================
+academic:
+  zh:
+    - "高分子改性 研究进展"
+    - "聚合物 新材料 论文"
+    - "高分子加工 学术期刊"
+    - "复合材料 力学性能"
+    - "塑料降解 机理研究"
+  en:
+    - "polymer composite materials science research"
+    - "plastics processing academic paper"
+    - "polymer science breakthrough"
+    - "biodegradable polymer research"
+    - "polymer rheology study"

@@ -52,18 +52,18 @@ export const api = {
     return request<User>('/api/me')
   },
   listReports(limit = 30) {
-    return request<{ reports: Report[] }>(`/api/reports?limit=${limit}`)
+    return request<{ reports: Report[] }>(`/api/reports?limit=${limit}&view=combined`)
   },
   todayReport() {
-    return request<Report>('/api/reports/today')
+    return request<Report>('/api/reports/today?view=combined')
   },
   getReport(id: number) {
     return request<Report>(`/api/reports/${id}`)
   },
-  runReport() {
+  runReport(reportType: 'global' | 'ai' = 'global') {
     return request<{ run_id: number; status: string }>('/api/reports/run', {
       method: 'POST',
-      body: JSON.stringify({ shadow_mode: false }),
+      body: JSON.stringify({ shadow_mode: false, report_type: reportType }),
     })
   },
   runStatus() {

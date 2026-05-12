@@ -8,11 +8,13 @@ llm_client.py — 统一的 LLM 客户端，支持 tool-use 模式 + 多 Provide
   - kimi-* 模型  → Moonshot API (api.moonshot.cn)
   - 其他模型      → OpenRouter API (openrouter.ai)
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import random
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,9 +26,17 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _format_exc(exc: Exception) -> str:
+    text = str(exc).strip()
+    if text:
+        return f"{exc.__class__.__name__}: {text}"
+    return exc.__class__.__name__
+
+
 @dataclass
 class ToolCallRequest:
     """LLM 产生的一次工具调用请求。"""
+
     tool_name: str
     arguments: dict[str, Any]
     call_id: str = ""
@@ -40,10 +50,11 @@ class ToolCallRequest:
 @dataclass
 class LLMResponse:
     """LLM 的一次响应。"""
-    content: str                                          # 自由文本（思考过程）
-    reasoning_content: str = ""                           # 推理阶段的内部思考内容（kimi-k2.5/moonshot）
+
+    content: str  # 自由文本（思考过程）
+    reasoning_content: str = ""  # 推理阶段的内部思考内容（kimi-k2.5/moonshot）
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
-    is_finish: bool = False                               # 是否调用了 finish 工具
+    is_finish: bool = False  # 是否调用了 finish 工具
     model_used: str = ""
     tokens_used: int = 0
 
@@ -59,9 +70,11 @@ class LLMResponse:
 
 # ── Provider 配置 ─────────────────────────────────────────
 
+
 @dataclass
 class _ProviderConfig:
     """一个 API Provider 的连接配置。"""
+
     base_url: str
     api_key: str
     headers: dict[str, str]
@@ -78,6 +91,13 @@ def _resolve_provider(model: str) -> _ProviderConfig:
     if model.startswith("kimi-") or model.startswith("moonshot-"):
         api_key = settings.kimi_api_key
         base_url = settings.kimi_base_url.rstrip("/")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+    elif model.startswith("deepseek-"):
+        api_key = settings.deepseek_api_key
+        base_url = settings.deepseek_base_url.rstrip("/")
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -100,6 +120,23 @@ def _is_kimi_model(model: str) -> bool:
     return model.startswith("kimi-") or model.startswith("moonshot-")
 
 
+def _provider_kind(model: str) -> str:
+    if _is_kimi_model(model):
+        return "moonshot"
+    if model.startswith("deepseek-"):
+        return "deepseek"
+    return "openrouter"
+
+
+def _provider_behavior(model: str) -> dict[str, Any]:
+    kind = _provider_kind(model)
+    return {
+        "provider": kind,
+        "requires_reasoning_content": kind in ("moonshot", "deepseek"),
+        "supports_tool_history_replay": kind != "moonshot",
+    }
+
+
 def _build_payload_params(model: str, temperature: float) -> dict[str, Any]:
     """
     构建请求参数，处理模型间的差异。
@@ -113,6 +150,9 @@ def _build_payload_params(model: str, temperature: float) -> dict[str, Any]:
         # kimi-k2.5 不可修改 temperature 等参数，省略即可使用服务端默认值
         # 显式启用 thinking 模式（kimi-k2.5 默认已启用，显式传递更安全）
         params["thinking"] = {"type": "enabled"}
+    elif model.startswith("deepseek-"):
+        params["thinking"] = {"type": "enabled"}
+        params["temperature"] = temperature
     else:
         params["temperature"] = temperature
 
@@ -138,11 +178,38 @@ class LLMClient:
         max_concurrency: int = 3,
         api_key: str | None = None,
         base_url: str | None = None,
+        strict_primary_model_for_tool_use: bool | None = None,
+        strict_primary_model_for_all_llm: bool | None = None,
+        tool_use_fallback_mode: str | None = None,
     ):
         self.primary_model = primary_model or settings.report_primary_model
         self.fallback_model = fallback_model or settings.report_fallback_model
         self.timeout = timeout or settings.openrouter_timeout_seconds
         self._semaphore = asyncio.Semaphore(max_concurrency)
+        self.strict_primary_model_for_tool_use = (
+            settings.strict_primary_model_for_tool_use
+            if strict_primary_model_for_tool_use is None
+            else strict_primary_model_for_tool_use
+        )
+        self.strict_primary_model_for_all_llm = (
+            settings.strict_primary_model_for_all_llm
+            if strict_primary_model_for_all_llm is None
+            else strict_primary_model_for_all_llm
+        )
+        self.tool_use_fallback_mode = (
+            tool_use_fallback_mode or settings.tool_use_fallback_mode
+        )
+        self._metrics: dict[str, Any] = {
+            "model_fallbacks": [],
+            "llm_bad_request_count": 0,
+            "tool_use_model": self.primary_model,
+            "tool_use_model_switch_attempted": False,
+            "tool_use_history_reset_count": 0,
+            "moonshot_reasoning_history_errors": 0,
+            "kimi_rate_limit_errors": 0,
+            "strict_primary_model_enabled": self.strict_primary_model_for_tool_use,
+            "tool_use_fallback_mode": self.tool_use_fallback_mode,
+        }
 
     @property
     def enabled(self) -> bool:
@@ -168,20 +235,60 @@ class LLMClient:
             return LLMResponse(content="LLM not configured", is_finish=True)
 
         models = [self.primary_model]
-        if self.fallback_model and self.fallback_model != self.primary_model:
+        if (
+            not self.strict_primary_model_for_tool_use
+            and self.fallback_model
+            and self.fallback_model != self.primary_model
+        ):
             models.append(self.fallback_model)
 
         last_exc: Exception | None = None
-        for model in models:
+        for index, model in enumerate(models):
             try:
-                return await self._chat_with_tools_request(
+                response = await self._chat_with_tools_request(
                     model, messages, tool_definitions, temperature
                 )
+                if index > 0 and last_exc is not None:
+                    self._record_model_fallback(model, last_exc)
+                return response
             except (httpx.HTTPError, json.JSONDecodeError, KeyError, ValueError) as exc:
-                logger.warning("LLM tool-use call failed with %s: %s", model, exc)
+                logger.warning(
+                    "LLM tool-use call failed with %s: %s", model, _format_exc(exc)
+                )
                 last_exc = exc
+                is_retriable = (
+                    isinstance(exc, httpx.ConnectError)
+                    or "ConnectError" in type(exc).__name__
+                    or (
+                        isinstance(exc, httpx.HTTPStatusError)
+                        and exc.response.status_code in (429, 403)
+                    )
+                )
+                if (
+                    is_retriable
+                    and self.fallback_model
+                    and self.fallback_model != self.primary_model
+                ):
+                    reason = (
+                        "connection failure"
+                        if isinstance(exc, httpx.ConnectError)
+                        or "ConnectError" in type(exc).__name__
+                        else f"HTTP {exc.response.status_code}"
+                    )
+                    logger.warning(
+                        "LLM tool-use %s with %s, allowing fallback to %s despite strict mode",
+                        reason,
+                        self.primary_model,
+                        self.fallback_model,
+                    )
+                    continue
+                if self.strict_primary_model_for_tool_use:
+                    break
 
-        logger.error("All LLM models failed: %s", last_exc)
+        logger.error(
+            "All LLM models failed: %s",
+            _format_exc(last_exc) if last_exc else "unknown_error",
+        )
         return LLMResponse(content=f"LLM error: {last_exc}", is_finish=True)
 
     async def _chat_with_tools_request(
@@ -194,13 +301,14 @@ class LLMClient:
         provider = _resolve_provider(model)
 
         payload = _build_payload_params(model, temperature)
-        payload["messages"] = messages
+        payload["messages"] = self._sanitize_messages_for_model(messages, model)
         if tool_definitions:
             payload["tools"] = tool_definitions
             payload["tool_choice"] = "auto"
 
-        max_retries = 2
+        max_retries = 3
         data: dict[str, Any] = {}
+        history_reset_retry_used = False
         for attempt in range(max_retries):
             async with self._semaphore:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -210,13 +318,47 @@ class LLMClient:
                         headers=provider.headers,
                     )
                     if resp.status_code == 429 and attempt < max_retries - 1:
-                        wait = self._extract_retry_wait(resp)
-                        logger.info("LLM %s rate limited (429), retrying in %.1fs", model, wait)
+                        self._metrics["kimi_rate_limit_errors"] += 1
+                        wait = self._retry_wait_for_attempt(resp, attempt)
+                        logger.info(
+                            "LLM %s 429 overload, retrying in %.1fs", model, wait
+                        )
                         await asyncio.sleep(wait)
                         continue
+                    if resp.status_code == 400:
+                        # 400 是请求格式错误（如 reasoning_content 缺失），重试无意义
+                        # 直接 raise 让外层 fallback 到下一个模型
+                        body = resp.text[:500]
+                        self._metrics["llm_bad_request_count"] += 1
+                        if (
+                            _is_kimi_model(model)
+                            and not history_reset_retry_used
+                            and "reasoning_content is missing" in body.lower()
+                        ):
+                            history_reset_retry_used = True
+                            self._metrics["moonshot_reasoning_history_errors"] += 1
+                            self._metrics["tool_use_history_reset_count"] += 1
+                            payload["messages"] = (
+                                self._build_history_reset_retry_messages(
+                                    messages, model
+                                )
+                            )
+                            logger.warning(
+                                "LLM %s returned Moonshot reasoning history error; retrying with history reset",
+                                model,
+                            )
+                            continue
+                        logger.warning(
+                            "LLM %s returned 400 (non-retryable): %s", model, body
+                        )
+                        resp.raise_for_status()
+                    if resp.status_code == 429:
+                        self._metrics["kimi_rate_limit_errors"] += 1
                     if resp.status_code != 200:
                         body = resp.text[:500]
-                        logger.warning("LLM %s returned %d: %s", model, resp.status_code, body)
+                        logger.warning(
+                            "LLM %s returned %d: %s", model, resp.status_code, body
+                        )
                         resp.raise_for_status()
                     data = resp.json()
                     break
@@ -224,7 +366,9 @@ class LLMClient:
         if "choices" not in data or not data["choices"]:
             # Log error details if present (e.g., OpenRouter returns {"error": {...}})
             error_info = data.get("error", data)
-            logger.warning("LLM %s response has no choices. Error: %s", model, error_info)
+            logger.warning(
+                "LLM %s response has no choices. Error: %s", model, error_info
+            )
             raise ValueError(f"LLM response error from {model}: {error_info}")
 
         choice = data["choices"][0]
@@ -245,18 +389,19 @@ class LLMClient:
                     arguments = json.loads(raw_args)
                 else:
                     arguments = raw_args
-                tool_calls.append(ToolCallRequest(
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    call_id=tc.get("id", ""),
-                ))
+                tool_calls.append(
+                    ToolCallRequest(
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        call_id=tc.get("id", ""),
+                    )
+                )
             except (json.JSONDecodeError, KeyError, TypeError) as exc:
                 logger.warning("Failed to parse tool call: %s — %s", tc, exc)
 
-        is_finish = (
-            finish_reason == "stop"
-            and not tool_calls
-        ) or any(tc.tool_name == "finish" for tc in tool_calls)
+        is_finish = (finish_reason == "stop" and not tool_calls) or any(
+            tc.tool_name == "finish" for tc in tool_calls
+        )
 
         return LLMResponse(
             content=content,
@@ -266,6 +411,125 @@ class LLMClient:
             model_used=model,
             tokens_used=usage.get("total_tokens", 0),
         )
+
+    @staticmethod
+    def _sanitize_messages_for_model(
+        messages: list[dict[str, Any]], model: str
+    ) -> list[dict[str, Any]]:
+        """
+        清理消息历史，确保兼容目标模型的要求。
+
+        kimi-k2.5 在 thinking 模式下要求所有 assistant 消息必须包含
+        reasoning_content 字段，否则返回 400:
+        "thinking is enabled but reasoning_content is missing in assistant
+        tool call message at index N"
+        """
+        behavior = _provider_behavior(model)
+        cleaned = []
+        for msg in messages:
+            normalized = dict(msg)
+            if normalized.get("role") == "assistant":
+                normalized["content"] = normalized.get("content") or ""
+                if behavior["requires_reasoning_content"]:
+                    normalized["reasoning_content"] = (
+                        LLMClient._normalized_reasoning_content(normalized)
+                    )
+                elif "reasoning_content" in normalized:
+                    normalized = {
+                        k: v for k, v in normalized.items() if k != "reasoning_content"
+                    }
+
+                if normalized.get("tool_calls"):
+                    normalized["tool_calls"] = [
+                        LLMClient._normalize_tool_call(call, idx)
+                        for idx, call in enumerate(normalized.get("tool_calls") or [])
+                    ]
+            cleaned.append(normalized)
+        return cleaned
+
+    @staticmethod
+    def _normalized_reasoning_content(message: dict[str, Any]) -> str:
+        reasoning = (message.get("reasoning_content") or "").strip()
+        if reasoning:
+            return reasoning
+        content = (message.get("content") or "").strip()
+        if content:
+            return content[:2000]
+        if message.get("tool_calls"):
+            return "[tool planning]"
+        return "[assistant response]"
+
+    @staticmethod
+    def _normalize_tool_call(tool_call: dict[str, Any], index: int) -> dict[str, Any]:
+        call = dict(tool_call)
+        fn = dict(call.get("function") or {})
+        raw_args = fn.get("arguments", "{}")
+        if not isinstance(raw_args, str):
+            raw_args = json.dumps(raw_args, ensure_ascii=False)
+        fn["arguments"] = raw_args
+        call["id"] = call.get("id") or f"call_{index}"
+        call["type"] = call.get("type") or "function"
+        call["function"] = fn
+        return call
+
+    def _build_history_reset_retry_messages(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        keep_recent_users: int = 2,
+        keep_recent_tools: int = 4,
+    ) -> list[dict[str, Any]]:
+        if len(messages) <= 2:
+            return self._sanitize_messages_for_model(messages, model)
+
+        prefix = messages[:2]
+        trailing_users: list[str] = []
+        tool_summaries: list[str] = []
+
+        for msg in messages[2:]:
+            role = msg.get("role")
+            if role == "user":
+                content = (msg.get("content") or "").strip()
+                if content:
+                    trailing_users.append(content[:500])
+            elif role == "tool":
+                content = (msg.get("content") or "").strip()
+                if content:
+                    tool_summaries.append(content[:300])
+
+        rebuilt: list[dict[str, Any]] = list(prefix)
+        for content in trailing_users[-keep_recent_users:]:
+            rebuilt.append({"role": "user", "content": content})
+        if tool_summaries:
+            rebuilt.append(
+                {
+                    "role": "user",
+                    "content": "[历史工具结果摘要]\n"
+                    + "\n".join(
+                        f"- {item}" for item in tool_summaries[-keep_recent_tools:]
+                    ),
+                }
+            )
+        return self._sanitize_messages_for_model(rebuilt, model)
+
+    @staticmethod
+    def _message_chunks(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+        chunks: list[list[dict[str, Any]]] = []
+        index = 0
+        while index < len(messages):
+            current = messages[index]
+            role = current.get("role")
+            if role == "assistant" and current.get("tool_calls"):
+                chunk = [current]
+                index += 1
+                while index < len(messages) and messages[index].get("role") == "tool":
+                    chunk.append(messages[index])
+                    index += 1
+                chunks.append(chunk)
+                continue
+            chunks.append([current])
+            index += 1
+        return chunks
 
     async def simple_completion(
         self,
@@ -290,10 +554,15 @@ class LLMClient:
         ]
 
         models = [self.primary_model]
-        if self.fallback_model and self.fallback_model != self.primary_model:
+        if (
+            not self.strict_primary_model_for_all_llm
+            and self.fallback_model
+            and self.fallback_model != self.primary_model
+        ):
             models.append(self.fallback_model)
 
-        for model in models:
+        last_exc: Exception | None = None
+        for index, model in enumerate(models):
             provider = _resolve_provider(model)
             payload = _build_payload_params(model, temperature)
             payload["messages"] = messages
@@ -313,21 +582,60 @@ class LLMClient:
                             )
                             if resp.status_code == 429 and attempt < max_retries - 1:
                                 wait = self._extract_retry_wait(resp)
-                                logger.info("simple_completion %s rate limited (429), retrying in %.1fs (attempt %d/%d)", model, wait, attempt + 1, max_retries)
+                                logger.info(
+                                    "simple_completion %s rate limited (429), retrying in %.1fs (attempt %d/%d)",
+                                    model,
+                                    wait,
+                                    attempt + 1,
+                                    max_retries,
+                                )
                                 await asyncio.sleep(wait)
                                 continue
+                            if resp.status_code == 400:
+                                self._metrics["llm_bad_request_count"] += 1
                             if resp.status_code != 200:
-                                logger.warning("LLM %s returned %d: %s", model, resp.status_code, resp.text[:500])
+                                logger.warning(
+                                    "LLM %s returned %d: %s",
+                                    model,
+                                    resp.status_code,
+                                    resp.text[:500],
+                                )
                                 resp.raise_for_status()
                             data = resp.json()
                     if "choices" not in data or not data["choices"]:
                         error_info = data.get("error", data)
-                        raise ValueError(f"LLM response error from {model}: {error_info}")
+                        raise ValueError(
+                            f"LLM response error from {model}: {error_info}"
+                        )
+                    if index > 0 and last_exc is not None:
+                        self._record_model_fallback(model, last_exc)
                     return data["choices"][0]["message"]["content"] or ""
                 except (httpx.HTTPError, KeyError, ValueError) as exc:
-                    logger.warning("simple_completion failed with %s: %s (attempt %d/%d)", model, exc, attempt + 1, max_retries)
-                    if attempt < max_retries - 1 and isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+                    logger.warning(
+                        "simple_completion failed with %s: %s (attempt %d/%d)",
+                        model,
+                        _format_exc(exc),
+                        attempt + 1,
+                        max_retries,
+                    )
+                    last_exc = exc
+                    if (
+                        attempt < max_retries - 1
+                        and isinstance(exc, httpx.HTTPStatusError)
+                        and exc.response.status_code == 429
+                    ):
                         continue
+                    break
+            if self.strict_primary_model_for_all_llm:
+                is_primary_failure_retriable = last_exc and (
+                    isinstance(last_exc, httpx.ConnectError)
+                    or "ConnectError" in type(last_exc).__name__
+                    or (
+                        isinstance(last_exc, httpx.HTTPStatusError)
+                        and last_exc.response.status_code in (429, 403)
+                    )
+                )
+                if not is_primary_failure_retriable:
                     break
 
         return ""
@@ -360,7 +668,10 @@ class LLMClient:
                 return min(max(body_wait, 1.0), 10.0)
 
             # exceeded_current_quota_error: 余额不足，不重试
-            if "exceeded_current_quota" in message.lower() or "quota" in (error.get("type") or "").lower():
+            if (
+                "exceeded_current_quota" in message.lower()
+                or "quota" in (error.get("type") or "").lower()
+            ):
                 return 30.0  # 长等待，让后续模型接管
         except (json.JSONDecodeError, KeyError, AttributeError):
             pass
@@ -391,7 +702,9 @@ class LLMClient:
     def _extract_json(raw: str) -> dict[str, Any]:
         text = raw.strip()
         # 先尝试 markdown 代码块
-        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+        fenced = re.search(
+            r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE
+        )
         if fenced:
             try:
                 return json.loads(fenced.group(1))
@@ -402,7 +715,7 @@ class LLMClient:
         end = text.rfind("}")
         if start != -1 and end > start:
             try:
-                return json.loads(text[start:end + 1])
+                return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
                 pass
         return {}
@@ -418,3 +731,43 @@ class LLMClient:
             "tool_call_id": tool_call_id,
             "content": result_content,
         }
+
+    def snapshot_metrics(self) -> dict[str, Any]:
+        return {
+            "model_fallbacks": list(self._metrics.get("model_fallbacks", [])),
+            "llm_bad_request_count": int(self._metrics.get("llm_bad_request_count", 0)),
+            "tool_use_model": self._metrics.get("tool_use_model", self.primary_model),
+            "tool_use_model_switch_attempted": bool(
+                self._metrics.get("tool_use_model_switch_attempted", False)
+            ),
+            "tool_use_history_reset_count": int(
+                self._metrics.get("tool_use_history_reset_count", 0)
+            ),
+            "moonshot_reasoning_history_errors": int(
+                self._metrics.get("moonshot_reasoning_history_errors", 0)
+            ),
+            "kimi_rate_limit_errors": int(
+                self._metrics.get("kimi_rate_limit_errors", 0)
+            ),
+            "strict_primary_model_enabled": bool(
+                self._metrics.get("strict_primary_model_enabled", True)
+            ),
+            "tool_use_fallback_mode": self._metrics.get(
+                "tool_use_fallback_mode", "disabled"
+            ),
+        }
+
+    def _record_model_fallback(self, model: str, exc: Exception) -> None:
+        self._metrics.setdefault("model_fallbacks", []).append(
+            {
+                "from": self.primary_model,
+                "to": model,
+                "reason": str(exc)[:200],
+            }
+        )
+
+    def _retry_wait_for_attempt(self, resp: httpx.Response, attempt: int) -> float:
+        if resp.status_code == 429:
+            base = [2.0, 5.0, 10.0][min(attempt, 2)]
+            return base + random.uniform(0.0, 0.5)
+        return self._extract_retry_wait(resp)

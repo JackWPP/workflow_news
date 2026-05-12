@@ -12,3 +12,12 @@ frontend/dist
 temp.out
 .gitignore
 templog.log
+workflow_news_smoke_check.db
+feedback_docs/
+feedback_docs/
+CLAUDE.md
+sh.exe.stackdump
+help1.md
+help2.md
+help3.md
+.claude/ralph-loop.local.md

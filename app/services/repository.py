@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from types import SimpleNamespace
+from typing import Any
 
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import selectinload
@@ -26,7 +28,9 @@ from app.services.evaluation import build_evaluation_summary, enrich_debug_paylo
 from app.utils import extract_domain, now_local
 
 
-def get_latest_report_for_date(session, report_date: date) -> Report | None:
+def get_latest_report_for_date(
+    session, report_date: date, report_type: str | None = None
+) -> Report | None:
     stmt = (
         select(Report)
         .where(Report.report_date == report_date)
@@ -34,6 +38,8 @@ def get_latest_report_for_date(session, report_date: date) -> Report | None:
         .order_by(desc(Report.id))
         .limit(1)
     )
+    if report_type:
+        stmt = stmt.where(Report.report_type == report_type)
     return session.scalars(stmt).first()
 
 
@@ -42,14 +48,166 @@ def get_report_by_id(session, report_id: int) -> Report | None:
     return session.scalars(stmt).first()
 
 
-def list_reports(session, limit: int = 30) -> list[Report]:
-    stmt = select(Report).options(selectinload(Report.items)).order_by(desc(Report.report_date), desc(Report.id)).limit(limit)
+def list_reports(
+    session, limit: int = 30, report_type: str | None = None
+) -> list[Report]:
+    stmt = (
+        select(Report)
+        .options(selectinload(Report.items))
+        .order_by(desc(Report.report_date), desc(Report.id))
+        .limit(limit)
+    )
+    if report_type:
+        stmt = stmt.where(Report.report_type == report_type)
     return list(session.scalars(stmt).all())
 
 
-def list_history_dates(session) -> list[date]:
+def list_history_dates(session, report_type: str | None = None) -> list[date]:
     stmt = select(Report.report_date).distinct().order_by(desc(Report.report_date))
+    if report_type:
+        stmt = stmt.where(Report.report_type == report_type)
     return list(session.scalars(stmt).all())
+
+
+def list_reports_for_date(session, report_date: date) -> list[Report]:
+    stmt = (
+        select(Report)
+        .where(Report.report_date == report_date)
+        .options(selectinload(Report.items))
+        .order_by(desc(Report.id))
+    )
+    return list(session.scalars(stmt).all())
+
+
+def _coerce_iso_datetime(value: datetime | str | None) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if value is None:
+        return None
+    return str(value)
+
+
+def _clone_report_item(item: Any, category_override: str | None = None) -> SimpleNamespace:
+    decision_trace = dict(getattr(item, "decision_trace", {}) or {})
+    if category_override:
+        decision_trace["category"] = category_override
+    image_url = getattr(item, "image_url", None)
+    has_verified_image = bool(getattr(item, "has_verified_image", False))
+    return SimpleNamespace(
+        id=getattr(item, "id"),
+        section=getattr(item, "section"),
+        rank=getattr(item, "rank", 0),
+        title=getattr(item, "title"),
+        source_name=getattr(item, "source_name"),
+        source_url=getattr(item, "source_url"),
+        published_at=getattr(item, "published_at", None),
+        summary=getattr(item, "summary"),
+        research_signal=getattr(item, "research_signal"),
+        image_url=image_url,
+        image_source_url=getattr(item, "image_source_url", None),
+        image_origin_type=getattr(item, "image_origin_type", None),
+        image_caption=getattr(item, "image_caption", None),
+        image_relevance_score=float(getattr(item, "image_relevance_score", 0.0) or 0.0),
+        has_verified_image=has_verified_image,
+        visual_verdict=getattr(item, "visual_verdict", None),
+        context_verdict=getattr(item, "context_verdict", None),
+        visual_score=1.0 if has_verified_image else 0.0,
+        context_score=1.0 if has_verified_image else 0.0,
+        final_image_score=float(getattr(item, "image_relevance_score", 0.0) or 0.0),
+        selected_for_publish=bool(getattr(item, "selected_for_publish", False)),
+        image_reason=getattr(item, "image_reason", None),
+        window_bucket=getattr(item, "window_bucket", "primary_24h"),
+        citations=list(getattr(item, "citations", []) or []),
+        combined_score=float(getattr(item, "combined_score", 0.0) or 0.0),
+        decision_trace=decision_trace,
+        language=getattr(item, "language", "zh"),
+    )
+
+
+def build_combined_report_payload(reports: list[Report]) -> SimpleNamespace | None:
+    if not reports:
+        return None
+
+    global_report = next((report for report in reports if report.report_type == "global"), None)
+    ai_report = next((report for report in reports if report.report_type == "ai"), None)
+    primary = global_report or ai_report or reports[0]
+    items: list[SimpleNamespace] = []
+
+    if global_report:
+        items.extend(_clone_report_item(item) for item in global_report.items)
+    if ai_report:
+        items.extend(_clone_report_item(item, category_override="AI") for item in ai_report.items)
+
+    items.sort(
+        key=lambda item: (
+            item.decision_trace.get("category") != "AI",
+            item.section,
+            -float(item.combined_score or 0.0),
+            item.rank,
+            item.id,
+        )
+    )
+    for index, item in enumerate(items, start=1):
+        item.rank = index
+
+    summary_parts: list[str] = []
+    if global_report and global_report.summary:
+        summary_parts.append(str(global_report.summary))
+    if ai_report:
+        ai_count = len(ai_report.items)
+        ai_summary = str(ai_report.summary or "").strip()
+        summary_parts.append(ai_summary or f"AI 日报同步 {ai_count} 条 RSS 条目。")
+
+    hero_item = next((item for item in items if item.has_verified_image), items[0] if items else None)
+    image_count = sum(1 for item in items if item.has_verified_image)
+
+    return SimpleNamespace(
+        id=getattr(primary, "id"),
+        report_date=getattr(primary, "report_date"),
+        status=getattr(primary, "status"),
+        title=getattr(primary, "title"),
+        markdown_content="\n\n".join(
+            str(content).strip()
+            for content in [
+                getattr(global_report, "markdown_content", None),
+                getattr(ai_report, "markdown_content", None),
+            ]
+            if content
+        ),
+        summary=" ".join(summary_parts).strip() or getattr(primary, "summary", None),
+        pipeline_version="combined-v1",
+        debug_url=getattr(primary, "debug_url", None),
+        error_message=getattr(primary, "error_message", None),
+        publish_grade=getattr(primary, "publish_grade", getattr(primary, "status", "partial")),
+        round_count=getattr(primary, "round_count", 1),
+        supervisor_actions=getattr(primary, "supervisor_actions", []),
+        hero_image={"url": hero_item.image_url} if hero_item and hero_item.image_url else None,
+        image_review_summary={"verified_image_count": image_count},
+        created_at=getattr(primary, "created_at"),
+        report_type="combined",
+        categories=["高材制造", "清洁能源", "AI"],
+        english_section_count=sum(1 for item in items if item.language == "en"),
+        chinese_section_count=sum(1 for item in items if item.language != "en"),
+        overall_score=None,
+        items=items,
+    )
+
+
+def get_combined_report_for_date(session, report_date: date) -> SimpleNamespace | None:
+    reports = list_reports_for_date(session, report_date)
+    return build_combined_report_payload(reports)
+
+
+def list_combined_reports(session, limit: int = 30) -> list[SimpleNamespace]:
+    dates = list_history_dates(session)
+    combined: list[SimpleNamespace] = []
+    for report_date in dates:
+        payload = get_combined_report_for_date(session, report_date)
+        if payload is not None:
+            combined.append(payload)
+        if len(combined) >= limit:
+            break
+    return combined[:limit]
 
 
 def list_sources(session) -> list[Source]:

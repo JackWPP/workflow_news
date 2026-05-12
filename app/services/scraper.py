@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Any
 
+import httpx
+
 from app.config import settings
 from app.utils import extract_domain, parse_datetime
 
@@ -28,6 +30,34 @@ _ARTICLE_PUBLISHED_RE_ALT = re.compile(
     re.IGNORECASE,
 )
 _TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_JINA_FIRST_DOMAINS = (
+    "toutiao.com",
+    "qq.com",
+    "weixin.qq.com",
+    "mp.weixin.qq.com",
+    "36kr.com",
+    "baijiahao.baidu.com",
+    # Chinese industry media
+    "86pla.com",
+    "adsalecprj.com",
+    # Chinese government
+    "miit.gov.cn",
+    "mee.gov.cn",
+    "stats.gov.cn",
+    "ndrc.gov.cn",
+    "samr.gov.cn",
+    "most.gov.cn",
+    # Chinese company newsrooms
+    "sinopecnews.com.cn",
+    "kingfa.com.cn",
+    "whchem.com",
+    "basf.com",
+    "covestro.com",
+    # Chinese academic
+    "buct.edu.cn",
+    "ic.cas.cn",
+    "polymer.cn",
+)
 
 
 def _extract_html_meta(html: str) -> tuple[str, str | None, Any]:
@@ -52,30 +82,42 @@ def _extract_html_meta(html: str) -> tuple[str, str | None, Any]:
 
 
 class ScraperClient:
-    """三层降级抓取：Trafilatura → Jina Reader → Firecrawl。
+    """三层降级抓取：Trafilatura → Jina Reader → direct_http。
 
-    每层独立失败，绝不级联。返回格式与 FirecrawlClient.scrape() 兼容。
+    每层独立失败，绝不级联。
     """
 
     def __init__(
         self,
         jina_client: Any = None,
-        firecrawl_client: Any = None,
+        browser_fallback: Any = None,
     ) -> None:
         # Lazy import to avoid circular dependency at module level
         if jina_client is not None:
             self._jina = jina_client
         else:
             from app.services.jina_reader import JinaReaderClient
+
             self._jina = JinaReaderClient()
-        self._firecrawl = firecrawl_client
+        self._browser_fallback = browser_fallback
 
     @property
     def enabled(self) -> bool:
         return True  # Trafilatura 始终可用
 
-    async def scrape(self, url: str, timeout_seconds: int | None = None) -> dict[str, Any]:
+    async def scrape(
+        self, url: str, timeout_seconds: int | None = None
+    ) -> dict[str, Any]:
         timeout = timeout_seconds or settings.scrape_timeout_seconds
+
+        if self._prefer_jina_first(url):
+            try:
+                result = await self._jina.scrape(url, timeout_seconds=timeout)
+                if result.get("status") != "error" and result.get("markdown"):
+                    logger.debug("scraper: Jina-first success for %s", url)
+                    return result
+            except Exception as exc:
+                logger.debug("scraper: Jina-first failed for %s: %s", url, exc)
 
         # 第一层：Trafilatura（本地，最快）
         try:
@@ -89,22 +131,13 @@ class ScraperClient:
         # 第二层：Jina Reader
         try:
             result = await self._jina.scrape(url, timeout_seconds=timeout)
-            if result.get("status") != "error":
+            if result.get("status") != "error" and result.get("markdown"):
                 logger.debug("scraper: Jina success for %s", url)
                 return result
         except Exception as exc:
             logger.debug("scraper: Jina failed for %s: %s", url, exc)
 
-        # 第三层：Firecrawl（最终兜底）
-        if self._firecrawl and self._firecrawl.enabled:
-            try:
-                result = await self._firecrawl.scrape(url, timeout_seconds=timeout)
-                logger.debug("scraper: Firecrawl success for %s", url)
-                return result
-            except Exception as exc:
-                logger.debug("scraper: Firecrawl failed for %s: %s", url, exc)
-
-        # 全部失败 → httpx fallback
+        # 第三层：direct_http fallback
         try:
             result = await self._jina._fallback_scrape(url, timeout)
             logger.debug("scraper: httpx fallback for %s", url)
@@ -113,6 +146,7 @@ class ScraperClient:
             logger.warning("scraper: all layers failed for %s: %s", url, exc)
             return {
                 "url": url,
+                "resolved_url": url,
                 "domain": extract_domain(url),
                 "title": "",
                 "markdown": "",
@@ -122,13 +156,35 @@ class ScraperClient:
                 "published_at": None,
                 "status": "error",
                 "error": str(exc),
+                "scrape_layer": "none",
             }
+
+    @staticmethod
+    def _prefer_jina_first(url: str) -> bool:
+        domain = extract_domain(url)
+        return any(
+            domain == candidate or domain.endswith(f".{candidate}")
+            for candidate in _JINA_FIRST_DOMAINS
+        )
 
     async def _trafilatura_scrape(self, url: str) -> dict[str, Any] | None:
         """用 Trafilatura 提取正文+内联图片，用 HTML meta 补充 title/og:image/date。"""
         import trafilatura
 
-        downloaded = await asyncio.to_thread(trafilatura.fetch_url, url)
+        # 用 httpx 下载（带浏览器 UA），避免 trafilatura.fetch_url 被反爬
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    return None
+                html_bytes = resp.content
+        except Exception:
+            return None
+
+        downloaded = html_bytes.decode("utf-8", errors="replace")
         if not downloaded:
             return None
 
@@ -147,12 +203,19 @@ class ScraperClient:
         # 从 HTML 补充 metadata
         title, image_url, published_at = _extract_html_meta(downloaded)
 
+        # Fallback: scan markdown for inline images if og:image not found
+        if not image_url and markdown:
+            m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+            if m:
+                image_url = m.group(1)
+
         # 如果 HTML meta 没有日期，尝试从文本中提取
         if published_at is None:
             published_at = _extract_datetime_from_text(markdown)
 
         return {
             "url": url,
+            "resolved_url": url,
             "domain": extract_domain(url),
             "title": title,
             "markdown": markdown,
@@ -161,6 +224,7 @@ class ScraperClient:
             "image_url": image_url,
             "published_at": published_at,
             "status": "success",
+            "scrape_layer": "trafilatura",
         }
 
 

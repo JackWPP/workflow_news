@@ -1,0 +1,233 @@
+{
+  "version": "v0",
+  "created_at": "2026-05-08",
+  "description": "初始合成评测集，基于现有 5 个用例扩展至 15 个，覆盖完整状态空间",
+  "items": [
+    {
+      "name": "policy_missing_time",
+      "payload": {
+        "selected_count": 1,
+        "section_coverage": 1,
+        "image_selected_count": 0,
+        "publishable_count": 1,
+        "borderline_count": 0,
+        "publish_grade": "partial",
+        "policy_gap_reason": "policy_missing_published_at"
+      },
+      "expect": { "content_score_min": 35, "relevance_score_min": 60 },
+      "note": "强政策稿缺时间时，内容仍应被记录，但不能伪装成 complete。"
+    },
+    {
+      "name": "industry_borderline_image",
+      "payload": {
+        "selected_count": 2,
+        "section_coverage": 1,
+        "image_selected_count": 1,
+        "publishable_count": 1,
+        "borderline_count": 1,
+        "publish_grade": "partial",
+        "image_gap_reason": "insufficient_verified_images"
+      },
+      "expect": { "image_lt_content": true },
+      "note": "边缘条目和弱图应被记作图片缺口，而不是误判为稳定 complete。"
+    },
+    {
+      "name": "academic_strong_content_weak_image",
+      "payload": {
+        "selected_count": 2,
+        "section_coverage": 2,
+        "image_selected_count": 0,
+        "publishable_count": 2,
+        "borderline_count": 0,
+        "publish_grade": "partial",
+        "image_gap_reason": "no_verified_images"
+      },
+      "expect": { "content_score_min": 55, "image_score_max": 20 },
+      "note": "强内容但弱图时，内容得分应保住，图片得分明显偏低。"
+    },
+    {
+      "name": "off_topic_and_pr_rejected",
+      "payload": {
+        "selected_count": 0,
+        "section_coverage": 0,
+        "image_selected_count": 0,
+        "publishable_count": 0,
+        "borderline_count": 0,
+        "publish_grade": "failed",
+        "rejection_counts": {
+          "off_topic_candidate": 6,
+          "pr_like_candidate": 4,
+          "blocked_domain": 2
+        },
+        "off_topic_escape_count": 0
+      },
+      "expect": { "relevance_score_min": 80 },
+      "note": "跑题稿和 PR 稿被挡住，本身应视为相关性控制成功。"
+    },
+    {
+      "name": "duplicate_event_collapsed",
+      "payload": {
+        "selected_count": 2,
+        "section_coverage": 2,
+        "image_selected_count": 2,
+        "publishable_count": 2,
+        "borderline_count": 0,
+        "publish_grade": "partial",
+        "duplicate_ratio": 0.55,
+        "round_count": 2
+      },
+      "expect": { "round2_recovery": true, "stability_score_min": 45 },
+      "note": "重复事件被压缩后，第二轮补救仍然要能恢复出可发布版本。"
+    },
+    {
+      "name": "complete_golden_run",
+      "payload": {
+        "selected_count": 4,
+        "section_coverage": 3,
+        "image_selected_count": 3,
+        "publishable_count": 4,
+        "borderline_count": 0,
+        "publish_grade": "complete",
+        "off_topic_escape_count": 0,
+        "round_count": 1
+      },
+      "expect": { "content_score_min": 80, "daily_report_score_min": 75 },
+      "note": "理想状态：4 篇文章、3 板块、3 张图，无降级、无 fallback。"
+    },
+    {
+      "name": "partial_two_sections_two_images",
+      "payload": {
+        "selected_count": 2,
+        "section_coverage": 2,
+        "image_selected_count": 2,
+        "publishable_count": 2,
+        "borderline_count": 0,
+        "publish_grade": "partial_auto_publish",
+        "off_topic_escape_count": 0,
+        "round_count": 1
+      },
+      "expect": { "content_score_min": 60, "daily_report_score_min": 55 },
+      "note": "partial_auto_publish 应能自动发布，2 条 + 2 板块 + 2 图是最低可接受标准。"
+    },
+    {
+      "name": "failed_empty_run",
+      "payload": {
+        "selected_count": 0,
+        "section_coverage": 0,
+        "image_selected_count": 0,
+        "publishable_count": 0,
+        "borderline_count": 0,
+        "publish_grade": "failed",
+        "off_topic_escape_count": 0
+      },
+      "expect": { "daily_report_score_max": 50 },
+      "note": "完全空跑应得到最低分。"
+    },
+    {
+      "name": "degraded_with_fallbacks",
+      "payload": {
+        "selected_count": 2,
+        "section_coverage": 1,
+        "image_selected_count": 1,
+        "publishable_count": 1,
+        "borderline_count": 1,
+        "publish_grade": "degraded",
+        "fallbacks_triggered": ["provider_error", "timeout"],
+        "provider_errors": ["openrouter_429"],
+        "round_count": 2,
+        "stage_durations": {"search": 180, "extract": 90}
+      },
+      "expect": { "stability_score_max": 60 },
+      "note": "多 fallback 触发时应拉低稳定性分。"
+    },
+    {
+      "name": "high_borderline_penalty",
+      "payload": {
+        "selected_count": 2,
+        "section_coverage": 1,
+        "image_selected_count": 1,
+        "publishable_count": 0,
+        "borderline_count": 2,
+        "publish_grade": "hold_for_missing_quality",
+        "off_topic_escape_count": 0
+      },
+      "expect": { "relevance_score_max": 60, "daily_report_score_max": 60 },
+      "note": "全部 borderline 时应触发 hold，相关性得分应偏低。"
+    },
+    {
+      "name": "off_topic_escape",
+      "payload": {
+        "selected_count": 3,
+        "section_coverage": 2,
+        "image_selected_count": 2,
+        "publishable_count": 2,
+        "borderline_count": 1,
+        "publish_grade": "partial",
+        "off_topic_escape_count": 2
+      },
+      "expect": { "relevance_score_max": 70 },
+      "note": "有跑题稿漏入时应降低相关性得分。"
+    },
+    {
+      "name": "many_images_but_poor_quality",
+      "payload": {
+        "selected_count": 3,
+        "section_coverage": 3,
+        "image_selected_count": 1,
+        "publishable_count": 3,
+        "borderline_count": 0,
+        "publish_grade": "partial",
+        "image_candidate_count": 8,
+        "image_rejections": {"logo_detected": 3, "low_resolution": 4},
+        "image_gap_reason": "only_one_verified_image"
+      },
+      "expect": { "image_score_max": 40 },
+      "note": "图片候选很多但质量差时应拉低图片得分。"
+    },
+    {
+      "name": "single_item_complete_section",
+      "payload": {
+        "selected_count": 1,
+        "section_coverage": 1,
+        "image_selected_count": 1,
+        "publishable_count": 1,
+        "borderline_count": 0,
+        "publish_grade": "partial",
+        "off_topic_escape_count": 0
+      },
+      "expect": { "content_score_max": 55 },
+      "note": "只有 1 篇文章即使质量高，内容覆盖得分也不应太高。"
+    },
+    {
+      "name": "stretched_duration",
+      "payload": {
+        "selected_count": 3,
+        "section_coverage": 3,
+        "image_selected_count": 3,
+        "publishable_count": 3,
+        "borderline_count": 0,
+        "publish_grade": "complete",
+        "round_count": 2,
+        "stage_durations": {"search": 300, "extract": 200, "synthesis": 120},
+        "off_topic_escape_count": 0
+      },
+      "expect": { "stability_score_max": 80 },
+      "note": "总耗时超过 600s 应拉低稳定性分。"
+    },
+    {
+      "name": "three_items_two_sections_no_images",
+      "payload": {
+        "selected_count": 3,
+        "section_coverage": 2,
+        "image_selected_count": 0,
+        "publishable_count": 3,
+        "borderline_count": 0,
+        "publish_grade": "partial_auto_publish",
+        "image_gap_reason": "no_verified_images",
+        "off_topic_escape_count": 0
+      },
+      "expect": { "image_score_max": 10 },
+      "note": "完全无图时图片得分应接近零。"
+    }
+  ]
+}

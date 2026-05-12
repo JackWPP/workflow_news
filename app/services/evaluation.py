@@ -52,22 +52,25 @@ def compute_run_scores(payload: dict[str, Any] | None, report_status: str | None
     fallback_component = 1.0 - _clamp01((fallback_count + provider_error_count) / 4.0)
     status_component = {
         "complete": 1.0,
+        "complete_auto_publish": 1.0,
         "partial": 0.82,
+        "partial_auto_publish": 0.82,
         "degraded": 0.55,
+        "hold_for_missing_quality": 0.55,
         "failed": 0.15,
     }.get(publish_grade, 0.45)
     stability_score = _round_score(100 * (0.40 * status_component + 0.35 * fallback_component + 0.25 * duration_component))
 
     daily_report_score = _round_score(
-        0.35 * content_score
-        + 0.30 * image_score
-        + 0.20 * relevance_score
-        + 0.15 * stability_score
+        0.40 * content_score
+        + 0.10 * image_score
+        + 0.25 * relevance_score
+        + 0.25 * stability_score
     )
 
     round2_recovery = bool(
         round_count >= 2
-        and publish_grade in {"partial", "complete"}
+        and publish_grade in {"partial", "complete", "partial_auto_publish", "complete_auto_publish"}
         and (selected_count >= 2 or section_coverage >= 2 or verified_image_count >= 2)
     )
 

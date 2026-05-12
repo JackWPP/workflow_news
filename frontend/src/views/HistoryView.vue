@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Calendar, Image as ImageIcon, Sparkles, FileText, CheckCircle2 } from 'lucide-vue-next'
+import { Calendar, Image as ImageIcon, Sparkles, FileText } from 'lucide-vue-next'
 
 import ReportItemCard from '../components/ReportItemCard.vue'
 import StatusPill from '../components/StatusPill.vue'
@@ -11,6 +11,16 @@ const reports = ref<Report[]>([])
 const selected = ref<Report | null>(null)
 const loading = ref(false)
 const error = ref('')
+
+function gradeLabel(grade?: string | null) {
+  const map: Record<string, string> = {
+    complete: '完整版',
+    partial: '补充版',
+    degraded: '降级版',
+    failed: '未发布',
+  }
+  return map[grade || ''] ?? '未评级'
+}
 
 async function loadReports() {
   loading.value = true
@@ -78,7 +88,7 @@ onMounted(() => {
           
           <div class="flex items-center gap-4 mt-1 pt-2 border-t border-white/5 text-[10px] text-[var(--text-muted)] uppercase tracking-wider">
             <span class="flex items-center gap-1"><FileText class="w-3 h-3"/> Round {{ report.round_count || 1 }}</span>
-            <span class="flex items-center gap-1"><CheckCircle2 class="w-3 h-3 text-[var(--status-ok)] opacity-70"/> {{ report.publish_grade || 'None' }}</span>
+            <span class="px-2 py-1 rounded bg-white/5 border border-white/10 normal-case tracking-normal">{{ gradeLabel(report.publish_grade) }}</span>
           </div>
         </button>
       </div>

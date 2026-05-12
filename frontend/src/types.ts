@@ -3,6 +3,27 @@ export interface Citation {
   url: string
 }
 
+export interface DecisionTrace {
+  search_query: string
+  evaluation_reason: string
+  key_finding: string
+  source_domain: string
+  section: string
+  category?: string                // "高材制造" | "清洁能源" | "AI"
+  source_tier?: string
+  source_reliability_label?: string
+  source_kind?: string
+  page_kind?: string
+  evidence_strength?: string
+  supports_numeric_claims?: boolean
+  allowed_for_trend_summary?: boolean
+  selection_reason?: string
+  topic_confidence?: string
+  recency_status?: string
+  published_at_source?: string
+  language?: string
+}
+
 export interface ReportItem {
   id: number
   section: string
@@ -29,6 +50,9 @@ export interface ReportItem {
   window_bucket: string
   citations: Citation[]
   combined_score: number
+  decision_trace: DecisionTrace
+  language: string              // "zh" | "en"
+  category: string              // "高材制造" | "清洁能源" | "AI"
 }
 
 export interface Report {
@@ -48,6 +72,11 @@ export interface Report {
   image_review_summary: Record<string, unknown>
   created_at: string
   items: ReportItem[]
+  report_type: string           // "global" | "lab"
+  categories: string[]          // ["高材制造", "清洁能源", "AI"]
+  english_section_count: number
+  chinese_section_count: number
+  overall_score: number | null  // LLM-as-Judge 加权总分
 }
 
 export interface SourceRule {
@@ -117,12 +146,21 @@ export interface RetrievalCandidate {
 export interface ReportSettings {
   report_hour: number
   report_minute: number
+  ai_report_enabled: boolean
+  ai_report_hour: number
+  ai_report_minute: number
+  ai_rss_feed_url: string
   shadow_mode: boolean
   scrape_timeout_seconds: number
   scrape_concurrency: number
   max_extractions_per_run: number
   report_primary_model: string
   report_fallback_model: string
+  strict_primary_model_for_tool_use?: boolean
+  strict_primary_model_for_all_llm?: boolean
+  tool_use_fallback_mode?: string
+  report_min_formal_topics?: number
+  report_target_items?: number
 }
 
 export interface QualityFeedback {
@@ -227,6 +265,44 @@ export interface EvaluationReportSample {
   selected_count: number
   verified_image_count: number
   sections: string[]
+}
+
+export interface EvaluationRun {
+  id: number
+  report_id: number
+  judge_model: string
+  evaluated_at: string
+  faithfulness_score: number | null
+  coverage_score: number | null
+  dedup_score: number | null
+  fluency_score: number | null
+  research_value_score: number | null
+  weighted_total: number | null
+  total_claims: number
+  supported_claims: number
+  faithfulness_ratio: number | null
+  precision_at_k: number | null
+  recall_at_k: number | null
+  top_issues: string[]
+}
+
+export interface EvaluationDashboard {
+  trend: EvaluationTrendPoint[]
+  latest: EvaluationTrendPoint | null
+  averages: {
+    avg_weighted_total: number
+    total_evaluations: number
+  }
+}
+
+export interface EvaluationTrendPoint {
+  date: string
+  weighted_total: number | null
+  faithfulness: number | null
+  coverage: number | null
+  dedup: number | null
+  fluency: number | null
+  research_value: number | null
 }
 
 export interface User {

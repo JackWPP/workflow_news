@@ -56,7 +56,7 @@ async function handleLogout() {
         <Activity class="w-8 h-8 text-[var(--accent-primary)] animate-pulse-glow" />
         <div>
           <h1 class="text-lg font-bold tracking-tight text-white leading-tight">高分子视野</h1>
-          <p class="text-[10px] text-[var(--accent-academic)] tracking-widest uppercase">Agent Console</p>
+          <p class="text-[10px] text-[var(--accent-academic)] tracking-widest">智能情报平台</p>
         </div>
       </div>
 
@@ -82,7 +82,7 @@ async function handleLogout() {
             <div class="flex-1 overflow-hidden">
               <p class="text-sm text-white truncate">{{ session.user.email }}</p>
               <p class="text-xs text-[var(--status-ok)] flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse-glow"></span> Online
+                <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse-glow"></span> 在线
               </p>
             </div>
           </div>

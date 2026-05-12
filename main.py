@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
+from sqlalchemy import select, text
+import mimetypes
 from pathlib import Path
+
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.bootstrap import init_db
@@ -42,11 +53,13 @@ from app.schemas import (
 )
 from app.services.auth import create_login_session, get_current_user, logout_session, register_user
 from app.services.chat import ChatService, append_message, create_conversation
+from app.services.ai_rss_pipeline import AiRssDailyPipeline, DEFAULT_AI_FEED_URL
 from app.services.daily_report_agent import DailyReportAgent
 from app.services.evaluation import enrich_debug_payload
 # pipeline kept for direct admin access (DailyReportAgent uses it as fallback internally)
 from app.services.pipeline import NativeReportPipeline
 from app.services.repository import (
+    get_combined_report_for_date,
     create_quality_feedback,
     favorite_conversation_ids,
     favorite_report_ids,
@@ -57,6 +70,7 @@ from app.services.repository import (
     get_evaluation_summary,
     get_quality_overview,
     list_conversations,
+    list_combined_reports,
     list_history_dates,
     list_quality_feedback,
     list_reports,
@@ -70,30 +84,128 @@ from app.services.repository import (
 from app.utils import now_local
 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+from app.log_context import run_id_var as _run_id_var, request_id_var as _request_id_var
+
+
+class _RunIDFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.run_id = _run_id_var.get()  # type: ignore[attr-defined]
+        record.request_id = _request_id_var.get()  # type: ignore[attr-defined]
+        return True
+
+
+def _setup_logging() -> None:
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    if settings.log_format == "json":
+        class JSONFormatter(logging.Formatter):
+            def format(self, record: logging.LogRecord) -> str:
+                entry: dict[str, object] = {
+                    "ts": self.formatTime(record, self.datefmt),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "msg": record.getMessage(),
+                }
+                rid = getattr(record, "run_id", None)
+                if rid is not None:
+                    entry["run_id"] = rid
+                req_id = getattr(record, "request_id", None)
+                if req_id is not None:
+                    entry["request_id"] = req_id
+                if record.exc_info and record.exc_info[0]:
+                    entry["exc"] = self.formatException(record.exc_info)
+                return json.dumps(entry, ensure_ascii=False)
+        handler = logging.StreamHandler()
+        handler.setFormatter(JSONFormatter())
+        logging.root.handlers = [handler]
+        logging.root.setLevel(level)
+    else:
+        logging.basicConfig(level=level, format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.root.addFilter(_RunIDFilter())
+
+
+_setup_logging()
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
 # Use DailyReportAgent as the primary pipeline (falls back to NativeReportPipeline on error)
 pipeline = DailyReportAgent() if settings.agent_mode else NativeReportPipeline()
+ai_pipeline = AiRssDailyPipeline()
 chat_service = ChatService()
 SESSION_COOKIE = "session_token"
 FRONTEND_DIR = Path("frontend/dist")
 LEGACY_STATIC_DIR = Path("static")
 
 
+def _default_report_settings() -> dict[str, object]:
+    return {
+        "report_hour": settings.report_hour,
+        "report_minute": settings.report_minute,
+        "ai_report_enabled": True,
+        "ai_report_hour": settings.report_hour,
+        "ai_report_minute": min(settings.report_minute + 5, 59),
+        "ai_rss_feed_url": DEFAULT_AI_FEED_URL,
+        "shadow_mode": settings.shadow_mode,
+        "scrape_timeout_seconds": settings.scrape_timeout_seconds,
+        "scrape_concurrency": settings.scrape_concurrency,
+        "max_extractions_per_run": settings.max_extractions_per_run,
+        "report_primary_model": settings.report_primary_model,
+        "report_fallback_model": settings.report_fallback_model,
+    }
+
+
 async def scheduled_report_run():
     logger.info("Starting scheduled native report run.")
-    with session_scope() as session:
-        await pipeline.run(session, shadow_mode=None)
+    if isinstance(pipeline, DailyReportAgent):
+        await pipeline.run(shadow_mode=None)
+    else:
+        with session_scope() as session:
+            await pipeline.run(session, shadow_mode=None)
     logger.info("Scheduled native report run finished.")
+
+
+async def scheduled_ingester_run():
+    from app.services.ingester import ContinuousIngester
+    logger.info("Starting hourly ingester run.")
+    try:
+        ingester = ContinuousIngester()
+        count = await ingester.run()
+        logger.info("Hourly ingester finished: %d new articles.", count)
+    except Exception as exc:
+        logger.error("Hourly ingester failed: %s", exc, exc_info=True)
+
+
+async def scheduled_ai_report_run():
+    logger.info("Starting scheduled AI RSS report run.")
+    with session_scope() as session:
+        report_settings = _default_report_settings()
+        report_settings.update(get_report_settings(session) or {})
+        feed_url = str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL)
+        await ai_pipeline.run(session, feed_url=feed_url)
+    logger.info("Scheduled AI RSS report run finished.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    trigger = CronTrigger(hour=settings.report_hour, minute=settings.report_minute, timezone=settings.timezone)
+    report_settings = _default_report_settings()
+    with session_scope() as session:
+        report_settings.update(get_report_settings(session) or {})
+
+    trigger = CronTrigger(hour=report_settings["report_hour"], minute=report_settings["report_minute"], timezone=settings.timezone)
     scheduler.add_job(scheduled_report_run, trigger, id="daily_native_report", replace_existing=True)
+    scheduler.add_job(
+        scheduled_ai_report_run,
+        CronTrigger(
+            hour=report_settings["ai_report_hour"],
+            minute=report_settings["ai_report_minute"],
+            timezone=settings.timezone,
+        ),
+        id="daily_ai_report",
+        replace_existing=True,
+    )
+    if not report_settings.get("ai_report_enabled", True):
+        scheduler.pause_job("daily_ai_report")
+    scheduler.add_job(scheduled_ingester_run, CronTrigger(hour="*"), id="hourly_ingester", replace_existing=True)
     scheduler.start()
     logger.info("Scheduler started. Job scheduled for %02d:%02d daily.", settings.report_hour, settings.report_minute)
     yield
@@ -101,6 +213,37 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Workflow News Native Pipeline", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith(("/assets/", "/favicon")):
+            return await call_next(request)
+        request_id = request.headers.get("X-Request-ID", uuid.uuid4().hex[:8])
+        _request_id_var.set(request_id)
+        start = time.monotonic()
+        response = await call_next(request)
+        duration_ms = round((time.monotonic() - start) * 1000, 1)
+        logger.info(
+            "HTTP %s %s -> %d (%.1fms)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+app.add_middleware(RequestLoggingMiddleware)
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -197,13 +340,13 @@ async def run_report(payload: ReportRunRequest):
     if _running_task and not _running_task.done():
         raise HTTPException(status_code=409, detail="A report is already being generated")
 
-    logger.info("Manual native report run requested (async mode).")
+    logger.info("Manual report run requested (async mode, report_type=%s).", payload.report_type)
 
     # 预创建 DB 记录以获取 ID
     with session_scope() as session:
         from app.models import AgentRun
         run_record = RetrievalRun(
-            run_date=now_local().date(),
+            run_date=now_local(),
             status="running",
         )
         session.add(run_record)
@@ -217,18 +360,34 @@ async def run_report(payload: ReportRunRequest):
     async def _run_pipeline():
         global _running_task, _running_agent_run_id
         try:
-            with session_scope() as session:
-                report = await pipeline.run(
-                    session,
-                    shadow_mode=payload.shadow_mode,
-                    mode=payload.mode,
-                    **({"event_queue": event_queue} if hasattr(pipeline, '_llm_client') else {}),
-                )
-                event_queue.put_nowait({
-                    "type": "complete",
-                    "report_id": report.id,
-                    "status": report.status,
-                })
+            if payload.report_type == "ai":
+                with session_scope() as session:
+                    report_settings = get_report_settings(session) or _default_report_settings()
+                    report = await ai_pipeline.run(
+                        session,
+                        run_id=run_id,
+                        feed_url=str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL),
+                    )
+            else:
+                if isinstance(pipeline, DailyReportAgent):
+                    report = await pipeline.run(
+                        run_id=run_id,
+                        shadow_mode=payload.shadow_mode,
+                        mode=payload.mode,
+                        event_queue=event_queue,
+                    )
+                else:
+                    with session_scope() as session:
+                        report = await pipeline.run(
+                            session,
+                            shadow_mode=payload.shadow_mode,
+                            mode=payload.mode,
+                        )
+            event_queue.put_nowait({
+                "type": "complete",
+                "report_id": report.id,
+                "status": report.status,
+            })
         except Exception as exc:
             logger.error("Pipeline failed: %s", exc, exc_info=True)
             event_queue.put_nowait({"type": "error", "message": str(exc)[:500]})
@@ -287,18 +446,26 @@ async def get_run_status():
 
 
 @app.get("/api/reports/today", response_model=ReportDetailOut)
-async def get_today_report():
+async def get_today_report(view: str = "combined"):
     with session_scope() as session:
-        report = get_latest_report_for_date(session, now_local().date())
+        report = (
+            get_combined_report_for_date(session, now_local().date())
+            if view == "combined"
+            else get_latest_report_for_date(session, now_local().date())
+        )
         if report is None:
             raise HTTPException(status_code=404, detail="No report found for today")
         return ReportDetailOut.model_validate(report)
 
 
 @app.get("/api/reports")
-async def get_report_list(limit: int = 30):
+async def get_report_list(limit: int = 30, view: str = "combined"):
     with session_scope() as session:
-        reports = list_reports(session, limit=max(1, min(limit, 100)))
+        reports = (
+            list_combined_reports(session, limit=max(1, min(limit, 100)))
+            if view == "combined"
+            else list_reports(session, limit=max(1, min(limit, 100)))
+        )
         return {"reports": [ReportDetailOut.model_validate(report).model_dump(mode="json") for report in reports]}
 
 
@@ -379,16 +546,8 @@ async def put_source_rules(payload: SourceRulesPayload, request: Request):
 async def get_admin_report_settings(request: Request):
     with session_scope() as session:
         _admin_user_or_403(session, request)
-        payload = get_report_settings(session) or {
-            "report_hour": settings.report_hour,
-            "report_minute": settings.report_minute,
-            "shadow_mode": settings.shadow_mode,
-            "scrape_timeout_seconds": settings.scrape_timeout_seconds,
-            "scrape_concurrency": settings.scrape_concurrency,
-            "max_extractions_per_run": settings.max_extractions_per_run,
-            "report_primary_model": settings.report_primary_model,
-            "report_fallback_model": settings.report_fallback_model,
-        }
+        payload = _default_report_settings()
+        payload.update(get_report_settings(session) or {})
         return payload
 
 
@@ -402,6 +561,14 @@ async def put_admin_report_settings(payload: ReportSettingsUpdate, request: Requ
         "daily_native_report",
         trigger=CronTrigger(hour=updated["report_hour"], minute=updated["report_minute"], timezone=settings.timezone),
     )
+    scheduler.reschedule_job(
+        "daily_ai_report",
+        trigger=CronTrigger(hour=updated["ai_report_hour"], minute=updated["ai_report_minute"], timezone=settings.timezone),
+    )
+    if updated["ai_report_enabled"]:
+        scheduler.resume_job("daily_ai_report")
+    else:
+        scheduler.pause_job("daily_ai_report")
     return updated
 
 
@@ -444,6 +611,66 @@ async def get_admin_evaluation_summary(request: Request, days: int = 7):
     with session_scope() as session:
         _admin_user_or_403(session, request)
         return get_evaluation_summary(session, days=max(1, min(days, 30)))
+
+
+@app.post("/api/admin/evaluation/evaluate/{report_id}")
+async def trigger_evaluation(report_id: int, request: Request):
+    from app.services.eval_runner import EvalRunner
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        from app.models import Article, Report
+        report = session.get(Report, report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="Report not found")
+        articles = list(
+            session.scalars(
+                select(Article).where(Article.run_id == report.retrieval_run_id)
+            ).all()
+        )
+        runner = EvalRunner(judge_model="claude-opus-4-7")
+        result = await runner.evaluate_report(session, report, articles)
+        return result
+
+
+@app.get("/api/admin/evaluation/dashboard")
+async def get_evaluation_dashboard(request: Request, days: int = 30):
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+        from app.models import EvaluationRun, Report
+        from app.utils import now_local
+        since = now_local() - timedelta(days=max(days - 1, 0))
+        runs = list(
+            session.scalars(
+                select(EvaluationRun)
+                .join(Report)
+                .where(Report.report_date >= since.date())
+                .order_by(Report.report_date)
+            ).all()
+        )
+        if not runs:
+            return {"trend": [], "latest": None, "averages": {}}
+        trend = [
+            {
+                "date": run.evaluated_at.date().isoformat(),
+                "weighted_total": run.weighted_total,
+                "faithfulness": run.faithfulness_score,
+                "coverage": run.coverage_score,
+                "dedup": run.dedup_score,
+                "fluency": run.fluency_score,
+                "research_value": run.research_value_score,
+            }
+            for run in runs
+        ]
+        scores = [r.weighted_total for r in runs if r.weighted_total is not None]
+        avg = sum(scores) / len(scores) if scores else 0
+        return {
+            "trend": trend,
+            "latest": trend[-1] if trend else None,
+            "averages": {
+                "avg_weighted_total": round(avg, 2),
+                "total_evaluations": len(runs),
+            },
+        }
 
 
 @app.get("/api/conversations")
@@ -574,7 +801,7 @@ async def unfavorite_conversation(conversation_id: int, request: Request):
 @app.get("/api/news/today")
 async def read_today_news():
     with session_scope() as session:
-        report = get_latest_report_for_date(session, now_local().date())
+        report = get_combined_report_for_date(session, now_local().date())
         if report is None:
             return {"content": None, "date": now_local().date().isoformat(), "status": "missing"}
         return {
@@ -599,7 +826,7 @@ async def read_news_by_date(report_date: str):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD") from exc
     with session_scope() as session:
-        report = get_latest_report_for_date(session, target_date)
+        report = get_combined_report_for_date(session, target_date)
         if report is None:
             raise HTTPException(status_code=404, detail="News not found for this date")
         return {
@@ -613,13 +840,8 @@ async def read_news_by_date(report_date: str):
 
 @app.post("/api/regenerate")
 async def regenerate_news():
-    report = await run_report(ReportRunRequest(shadow_mode=False))
-    return {
-        "status": "success",
-        "message": "Native report regenerated successfully",
-        "report_id": report.id,
-        "report_status": report.status,
-    }
+    result = await run_report(ReportRunRequest(shadow_mode=False))
+    return result
 
 
 
@@ -655,6 +877,207 @@ async def get_agent_step_detail_api(run_id: int, step_id: int, request: Request)
         return detail
 
 
+# ── Diagnostics API ──────────────────────────────────────────────────────────
+
+
+@app.get("/api/diagnostics/health")
+async def diagnostics_health(deep: bool = False):
+    from app.services.bocha_search import BochaSearchClient
+
+    components: dict[str, dict[str, object]] = {}
+    statuses: list[str] = []
+
+    # Database
+    try:
+        t0 = time.monotonic()
+        with session_scope() as session:
+            session.execute(text("SELECT 1"))
+        latency = round((time.monotonic() - t0) * 1000, 1)
+        components["database"] = {"status": "ok", "latency_ms": latency}
+        statuses.append("ok")
+    except Exception as exc:
+        components["database"] = {"status": "error", "error": str(exc)[:200]}
+        statuses.append("error")
+
+    # DeepSeek API
+    ds_key = bool(settings.deepseek_api_key)
+    if not ds_key:
+        components["deepseek_api"] = {"status": "not_configured", "key_present": False}
+        statuses.append("degraded")
+    elif deep:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    f"{settings.deepseek_base_url.rstrip('/')}/models",
+                    headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
+                )
+                ok = resp.status_code in (200, 401, 403)
+                components["deepseek_api"] = {
+                    "status": "ok" if ok else "error",
+                    "key_present": True,
+                    "http_status": resp.status_code,
+                }
+                statuses.append("ok" if ok else "error")
+        except Exception as exc:
+            components["deepseek_api"] = {"status": "unreachable", "key_present": True, "error": str(exc)[:200]}
+            statuses.append("error")
+    else:
+        components["deepseek_api"] = {"status": "ok", "key_present": True}
+        statuses.append("ok")
+
+    # Bocha API
+    bocha = BochaSearchClient()
+    if not bocha.enabled:
+        components["bocha_api"] = {"status": "not_configured", "key_present": False}
+        statuses.append("degraded")
+    else:
+        components["bocha_api"] = {"status": "ok", "key_present": True}
+        statuses.append("ok")
+
+    overall = "healthy"
+    if "error" in statuses:
+        overall = "unhealthy"
+    elif "degraded" in statuses:
+        overall = "degraded"
+
+    return {"overall": overall, "components": components}
+
+
+@app.get("/api/diagnostics/last-run")
+async def diagnostics_last_run():
+    from app.models import AgentRun, EvaluationRun, Report
+    from app.services.evaluation import enrich_debug_payload
+
+    with session_scope() as session:
+        run = session.scalars(
+            select(RetrievalRun).order_by(RetrievalRun.id.desc()).limit(1)
+        ).first()
+        if not run:
+            return {"error": "no runs found"}
+
+        debug = enrich_debug_payload(run.debug_payload or {})
+        agent_run = session.scalars(
+            select(AgentRun).where(AgentRun.retrieval_run_id == run.id).order_by(AgentRun.id.desc()).limit(1)
+        ).first()
+        report = session.scalars(
+            select(Report).where(Report.retrieval_run_id == run.id).limit(1)
+        ).first()
+        eval_run = None
+        if report:
+            eval_run = session.scalars(
+                select(EvaluationRun).where(EvaluationRun.report_id == report.id).order_by(EvaluationRun.id.desc()).limit(1)
+            ).first()
+
+        duration = None
+        if run.created_at and run.finished_at:
+            duration = round((run.finished_at - run.created_at).total_seconds(), 1)
+
+        harness = debug.get("harness_status", {})
+        memory = agent_run.memory_snapshot if agent_run else {}
+
+        key_failures: list[dict[str, str]] = []
+        pg = debug.get("publish_gate_reason", "")
+        if pg and pg != "meets_auto_publish_gate":
+            key_failures.append({"code": "publish_gate", "message": pg})
+        if debug.get("section_write_timeouts"):
+            key_failures.append({"code": "section_timeouts", "message": f"{len(debug['section_write_timeouts'])} section(s) timed out"})
+        if debug.get("phase2_rejected_missing_date_count", 0) > 0:
+            key_failures.append({"code": "missing_date", "message": f"{debug['phase2_rejected_missing_date_count']} articles rejected for missing date"})
+        domain_fails = memory.get("domain_failures", {}) if isinstance(memory, dict) else {}
+        for domain, info in domain_fails.items():
+            if isinstance(info, dict) and info.get("count", 0) >= 2:
+                key_failures.append({"code": "domain_failure", "message": f"{domain}: {info['count']} failures"})
+
+        search_health = memory.get("search_provider_health", {}) if isinstance(memory, dict) else {}
+
+        result: dict[str, object] = {
+            "run_id": run.id,
+            "agent_run_id": agent_run.id if agent_run else None,
+            "run_date": str(run.run_date) if run.run_date else None,
+            "status": run.status,
+            "finished_reason": agent_run.finished_reason if agent_run else None,
+            "duration_seconds": duration,
+            "total_steps": agent_run.total_steps if agent_run else debug.get("agent_steps", 0),
+            "total_tokens": agent_run.total_tokens if agent_run else 0,
+            "article_count": debug.get("selected_count", 0),
+            "section_coverage": debug.get("section_coverage", 0),
+            "verified_image_count": debug.get("image_selected_count", 0),
+            "publish_grade": debug.get("publish_grade"),
+            "scores": {
+                "content_score": debug.get("content_score"),
+                "image_score": debug.get("image_score"),
+                "relevance_score": debug.get("relevance_score"),
+                "stability_score": debug.get("stability_score"),
+                "daily_report_score": debug.get("daily_report_score"),
+            },
+            "llm_errors": {
+                "model_fallbacks": debug.get("model_fallbacks", []),
+                "bad_request_count": debug.get("llm_bad_request_count", 0),
+                "rate_limit_errors": debug.get("kimi_rate_limit_errors", 0),
+                "tool_use_model": debug.get("tool_use_model"),
+            },
+            "search_health": search_health,
+            "key_failures": key_failures,
+            "harness": {
+                "step_count": harness.get("step_count", 0),
+                "search_count": harness.get("search_count", 0),
+                "read_count": harness.get("read_count", 0),
+                "violations": len(harness.get("violations", [])),
+            },
+        }
+        if eval_run:
+            result["evaluation"] = {
+                "weighted_total": eval_run.weighted_total,
+                "faithfulness": eval_run.faithfulness_score,
+                "coverage": eval_run.coverage_score,
+            }
+        return result
+
+
+@app.get("/api/diagnostics/llm-metrics")
+async def diagnostics_llm_metrics():
+    from app.models import AgentRun
+
+    with session_scope() as session:
+        run = session.scalars(
+            select(AgentRun).order_by(AgentRun.id.desc()).limit(1)
+        ).first()
+        if not run:
+            return {"error": "no agent runs found"}
+
+        dp = run.debug_payload or {}
+        return {
+            "run_id": run.id,
+            "metrics": {
+                "tool_use_model": dp.get("tool_use_model"),
+                "model_fallbacks": dp.get("model_fallbacks", []),
+                "llm_bad_request_count": dp.get("llm_bad_request_count", 0),
+                "kimi_rate_limit_errors": dp.get("kimi_rate_limit_errors", 0),
+                "tool_use_history_reset_count": dp.get("tool_use_history_reset_count", 0),
+                "moonshot_reasoning_history_errors": dp.get("moonshot_reasoning_history_errors", 0),
+                "strict_primary_model_enabled": dp.get("strict_primary_model_enabled"),
+                "tool_use_fallback_mode": dp.get("tool_use_fallback_mode"),
+            },
+            "synthesis": {
+                "model_used": dp.get("synthesis_model_used"),
+                "fallback_triggered": dp.get("synthesis_fallback_triggered"),
+            },
+            "llm_metrics_on_crash": dp.get("llm_metrics_on_crash"),
+        }
+
+
+@app.get("/api/diagnostics/run/{run_id}/timeline")
+async def diagnostics_run_timeline(run_id: int):
+    from app.services.agent_observability import get_agent_run_timeline
+
+    with session_scope() as session:
+        timeline = get_agent_run_timeline(session, run_id)
+        if timeline is None:
+            raise HTTPException(status_code=404, detail=f"AgentRun {run_id} not found")
+        return timeline
+
+
 app.mount(
     "/",
     StaticFiles(directory=str(FRONTEND_DIR if FRONTEND_DIR.exists() else LEGACY_STATIC_DIR), html=True),
@@ -665,4 +1088,4 @@ app.mount(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8765, reload=True)

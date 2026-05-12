@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 250" fill="none">
+  <rect width="400" height="250" fill="#F1F3F4"/>
+  <g transform="translate(150,60)">
+    <rect x="10" y="10" width="80" height="60" rx="4" fill="#9AA0A6" opacity="0.3"/>
+    <circle cx="35" cy="30" r="8" fill="#9AA0A6" opacity="0.4"/>
+    <path d="M15 60 L35 40 L55 55 L70 35 L85 60" fill="#9AA0A6" opacity="0.3"/>
+    <rect x="20" y="80" width="60" height="8" rx="2" fill="#9AA0A6" opacity="0.25"/>
+    <rect x="30" y="95" width="40" height="6" rx="2" fill="#9AA0A6" opacity="0.2"/>
+  </g>
+  <text x="200" y="180" text-anchor="middle" font-family="system-ui" font-size="14" fill="#9AA0A6" opacity="0.5">资讯</text>
+</svg>

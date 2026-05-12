@@ -8,6 +8,7 @@ Harness 的设计哲学：
 
 不是 Rails（严格轨道），而是 Harness（安全操场）。
 """
+
 from __future__ import annotations
 
 import time
@@ -20,12 +21,12 @@ if TYPE_CHECKING:
 
 # ── 默认工具超时（秒） ──────────────────────────────────────
 DEFAULT_TOOL_TIMEOUTS: dict[str, float] = {
-    "web_search": 30.0,
+    "web_search": 45.0,
     "read_page": 25.0,
     "search_images": 20.0,
     "evaluate_article": 25.0,
     "write_section": 45.0,
-    "compare_sources": 30.0,
+    "compare_sources": 45.0,
     "verify_image": 15.0,
     "follow_references": 5.0,
     "check_coverage": 5.0,
@@ -36,37 +37,98 @@ DEFAULT_TOOL_TIMEOUT = 30.0
 
 # Default domain keywords — Agent 的内容必须与这些领域相关
 DEFAULT_DOMAIN_KEYWORDS: list[str] = [
-    "高分子", "塑料", "橡胶", "复合材料", "树脂", "改性",
-    "薄膜", "包装", "注塑", "挤出", "吹塑", "成型",
-    "回收", "再生", "生物基", "降解",
-    "polymer", "plastic", "rubber", "composite", "resin",
-    "recycling", "biodegradable", "processing",
-    "injection molding", "extrusion", "additive manufacturing",
+    "高分子",
+    "塑料",
+    "橡胶",
+    "复合材料",
+    "树脂",
+    "改性",
+    "薄膜",
+    "包装",
+    "注塑",
+    "挤出",
+    "吹塑",
+    "成型",
+    "回收",
+    "再生",
+    "生物基",
+    "降解",
+    "polymer",
+    "plastic",
+    "rubber",
+    "composite",
+    "resin",
+    "recycling",
+    "biodegradable",
+    "processing",
+    "injection molding",
+    "extrusion",
+    "additive manufacturing",
 ]
 
 # Default blocked domains (safety/quality boundary)
 # 合并了质量低劣来源（PR、百科）和台湾地区媒体
 DEFAULT_BLOCKED_DOMAINS: list[str] = [
     # ── PR / 营销类 ──
-    "openpr.com", "prnewswire.com", "prnasia.com",
-    "businesswire.com", "globenewswire.com",
-    "coherentmarketinsights.com", "gminsights.com",
+    "openpr.com",
+    "prnewswire.com",
+    "prnasia.com",
+    "businesswire.com",
+    "globenewswire.com",
+    "coherentmarketinsights.com",
+    "gminsights.com",
     "grandviewresearch.com",
     # ── 百科 / 社区 ──
-    "baike.baidu.com", "zhuanlan.zhihu.com", "bilibili.com",
+    "baike.baidu.com",
+    "zhuanlan.zhihu.com",
+    "bilibili.com",
     # ── 财经 / 投资类（非行业内容）──
     "cn.investing.com",
+    "investing.com",
+    # ── B2B 电商平台（非新闻来源）──
+    "made-in-china.com",
+    "alibaba.com",
+    "1688.com",
+    "globalsources.com",
+    "indiamart.com",
+    "b2b168.com",
+    "jdzj.com",
+    "hbsztv.com",
+    "stockstar.com",
+    "eastmoney.com",
+    "10jqka.com.cn",
+    "china-packcon.com",
+    "china-ipif.com",
     # ── 台湾媒体 ──
-    "digitimes.com.tw", "udn.com", "ltn.com.tw", "chinatimes.com",
-    "yahoo.com.tw", "tw.news.yahoo.com", "ctee.com.tw", "money.udn.com",
-    "technews.tw", "bnext.com.tw", "ettoday.net", "setn.com",
-    "storm.mg", "cna.com.tw", "taiwannews.com.tw",
+    "digitimes.com.tw",
+    "udn.com",
+    "ltn.com.tw",
+    "chinatimes.com",
+    "yahoo.com.tw",
+    "tw.news.yahoo.com",
+    "ctee.com.tw",
+    "money.udn.com",
+    "technews.tw",
+    "bnext.com.tw",
+    "ettoday.net",
+    "setn.com",
+    "storm.mg",
+    "cna.com.tw",
+    "taiwannews.com.tw",
+    # ── 已知不可访问站点（反爬/404/超时）──
+    "21cp.com",
+    "info.21cp.com",
+    "aibang.com",
+    "www.aibang.com",
+    "polymer.cn",
+    "www.polymer.cn",
 ]
 
 
 @dataclass
 class HarnessViolation:
     """记录一次 Harness 拦截事件。"""
+
     tool_name: str
     argument_key: str
     argument_value: str
@@ -88,57 +150,40 @@ class Harness:
     """
     Agent 的边界约束。
 
-    ✅ 设置资源上限（预算）
-    ✅ 设置领域边界（必须相关）
-    ✅ 设置安全边界（禁止域名）
-    ✅ 设置质量底线（必须有引用）
+    ✅ 设置资源上限（步骤数 + 超时）
+    ✅ 设置领域边界（blocked domains）
     ❌ 不规定每一步做什么（那是 Rails，不是 Harness）
     """
 
     # ── 资源限制 ──────────────────────────────────────────
-    max_steps: int = 40
+    max_steps: int = 50
     """Agent 最多执行多少步（每次工具调用算一步）。"""
 
-    max_search_calls: int = 15
-    """最多搜索多少次（web_search + search_images 合计）。"""
-
-    max_page_reads: int = 12
-    """最多深度阅读多少个页面（read_page + follow_references 合计）。"""
-
-    max_duration_seconds: float = 300.0
+    max_duration_seconds: float = 600.0
     """最长运行时间（秒）。超时后结束当前步骤并尝试输出。"""
 
-    max_llm_calls: int = 25
-    """最多 LLM 调用次数（含工具选择和工具内部 LLM 调用）。"""
-
-    tool_timeouts: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_TOOL_TIMEOUTS))
+    tool_timeouts: dict[str, float] = field(
+        default_factory=lambda: dict(DEFAULT_TOOL_TIMEOUTS)
+    )
     """每个工具的超时时间（秒）。未列出的工具使用 DEFAULT_TOOL_TIMEOUT。"""
 
     # ── 领域边界 ──────────────────────────────────────────
-    domain_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_DOMAIN_KEYWORDS))
+    domain_keywords: list[str] = field(
+        default_factory=lambda: list(DEFAULT_DOMAIN_KEYWORDS)
+    )
     """内容必须与这些关键词之一相关（逐 URL 内容检查在工具层完成）。"""
 
-    blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))
+    blocked_domains: list[str] = field(
+        default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS)
+    )
     """禁止访问这些域名（无论 Agent 想不想）。"""
 
     # ── 质量底线 ──────────────────────────────────────────
     min_sources_for_publish: int = 2
     """发布至少需要多少条不同来源。"""
 
-    must_have_citations: bool = True
-    """最终输出必须包含引用。"""
-
-    max_single_source_ratio: float = 0.6
-    """单一来源在最终报告中占比不能超过 60%。"""
-
     # ── Finish 前置条件 ─────────────────────────────────────
-    min_searches_before_finish: int = 6
-    """finish 前至少需要搜索多少次。设为 0 跳过检查。"""
-
-    min_articles_before_finish: int = 4
-    """finish 前至少需要多少篇可发布文章。设为 0 跳过检查。"""
-
-    max_consecutive_finish_rejects: int = 3
+    max_consecutive_finish_rejects: int = 1
     """连续拒绝 finish 的最大次数。超过后强制接受。"""
 
     # ── System Prompt ─────────────────────────────────────
@@ -147,24 +192,12 @@ class Harness:
 
     def __post_init__(self) -> None:
         self._violations: list[HarnessViolation] = []
-        self._search_count: int = 0
-        self._read_count: int = 0
         self._step_count: int = 0
-        self._llm_call_count: int = 0
         self._start_time: float = time.time()
 
     # ── 计数器 API ────────────────────────────────────────
-    def record_search(self) -> None:
-        self._search_count += 1
-
-    def record_read(self) -> None:
-        self._read_count += 1
-
     def record_step(self) -> None:
         self._step_count += 1
-
-    def record_llm_call(self) -> None:
-        self._llm_call_count += 1
 
     @property
     def elapsed_seconds(self) -> float:
@@ -188,11 +221,11 @@ class Harness:
     @property
     def should_wind_down(self) -> bool:
         """资源即将耗尽，应该进入收尾阶段。"""
-        if self.effective_budget_remaining < 5:
+        if self.effective_budget_remaining < 10:
             return True
         if self.max_duration_seconds > 0:
             remaining = self.max_duration_seconds - self.elapsed_seconds
-            if remaining < 60:
+            if remaining < 120:
                 return True
         return False
 
@@ -219,32 +252,21 @@ class Harness:
         """
         # 1. 步数预算
         if self._step_count >= self.max_steps:
-            return False, f"Budget exhausted: {self._step_count}/{self.max_steps} steps used"
+            return (
+                False,
+                f"Budget exhausted: {self._step_count}/{self.max_steps} steps used",
+            )
 
         # 2. 超时
         if self.timed_out:
-            return False, f"Timeout: {self.elapsed_seconds:.0f}s elapsed (limit {self.max_duration_seconds}s)"
+            return (
+                False,
+                f"Timeout: {self.elapsed_seconds:.0f}s elapsed (limit {self.max_duration_seconds}s)",
+            )
 
-        # 3. 搜索配额
-        if tool_call.tool_name in {"web_search", "search_images"}:
-            if self._search_count >= self.max_search_calls:
-                return False, f"Search quota exhausted: {self._search_count}/{self.max_search_calls}"
-
-        # 4. 阅读配额
-        if tool_call.tool_name in {"read_page", "follow_references"}:
-            if self._read_count >= self.max_page_reads:
-                return False, f"Read quota exhausted: {self._read_count}/{self.max_page_reads}"
-
-        # 5. LLM 调用配额
-        if tool_call.tool_name in {"evaluate_article", "compare_sources", "write_section"}:
-            if self._llm_call_count >= self.max_llm_calls:
-                return False, f"LLM call quota exhausted: {self._llm_call_count}/{self.max_llm_calls}"
-
-        # 6. Blocked domain 检查
+        # 3. Blocked domain 检查
         url_or_query = (
-            tool_call.arguments.get("url")
-            or tool_call.arguments.get("query")
-            or ""
+            tool_call.arguments.get("url") or tool_call.arguments.get("query") or ""
         )
         blocked = self._check_blocked_domain(url_or_query)
         if blocked:
@@ -271,9 +293,6 @@ class Harness:
         """返回当前 harness 状态，用于写入 AgentRun.debug_payload。"""
         return {
             "step_count": self._step_count,
-            "search_count": self._search_count,
-            "read_count": self._read_count,
-            "llm_call_count": self._llm_call_count,
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "budget_remaining": self.budget_remaining,
             "violations": [v.to_dict() for v in self._violations],
@@ -286,13 +305,13 @@ class Harness:
 
 def make_daily_report_harness() -> Harness:
     """日报生成 Agent 的 Harness 配置。"""
-    from app.services.daily_report_agent import DAILY_REPORT_SYSTEM_PROMPT  # lazy import
+    from app.services.daily_report_agent import (
+        DAILY_REPORT_SYSTEM_PROMPT,
+    )  # lazy import
+
     return Harness(
-        max_steps=40,
-        max_search_calls=15,
-        max_page_reads=12,
-        max_duration_seconds=300.0,
-        max_llm_calls=20,
+        max_steps=50,
+        max_duration_seconds=600.0,
         system_prompt=DAILY_REPORT_SYSTEM_PROMPT,
     )
 
@@ -300,13 +319,10 @@ def make_daily_report_harness() -> Harness:
 def make_research_harness() -> Harness:
     """研究型 Agent 的 Harness 配置。"""
     from app.services.research_agent import RESEARCH_SYSTEM_PROMPT  # lazy import
+
     return Harness(
         max_steps=25,
-        max_search_calls=10,
-        max_page_reads=8,
         max_duration_seconds=180.0,
-        max_llm_calls=15,
         min_sources_for_publish=2,
-        must_have_citations=True,
         system_prompt=RESEARCH_SYSTEM_PROMPT,
     )
