@@ -66,19 +66,6 @@ const stats = computed(() => ({
   images: (report.value?.image_review_summary?.verified_image_count as number | undefined) ?? filteredByReportType.value.filter(i => i.has_verified_image).length ?? 0
 }))
 
-const qualityChips = computed(() => {
-  if (!report.value) return []
-  const items = filteredByReportType.value
-  const highTrust = items.filter((item) => item.decision_trace?.source_tier === 'A').length
-  const primarySignals = items.filter((item) => item.decision_trace?.supports_numeric_claims).length
-  const primarySources = items.filter((item) => ['government', 'academic_journal', 'official_company_newsroom', 'standards'].includes(item.decision_trace?.source_kind || '')).length
-  return [
-    { label: 'A级来源', value: `${highTrust} 条` },
-    { label: '一手证据', value: `${primarySources} 条` },
-    { label: '数字可引', value: `${primarySignals} 条` },
-  ]
-})
-
 const qualityNote = computed(() => {
   if (!report.value) return ''
   const items = filteredByReportType.value
@@ -86,8 +73,8 @@ const qualityNote = computed(() => {
   const sectionCount = new Set(items.map((item) => item.section).filter(Boolean)).size
   if (reportType.value === 'lab' && itemCount === 0) return '暂无今天的实验室相关文章，英蓝实验室与英蓝云展的内容将在采集后自动展示。'
   if (itemCount >= 4 && sectionCount >= 2) return ''
-  if (itemCount === 0) return '本期仍未形成可发布条目，建议重跑并检查来源配置。'
-  return `本期属于${report.value.publish_grade === 'degraded' ? '降级' : '补充'}交付：已保留 ${itemCount} 条高相关内容，后续可优先补强${sectionCount < 2 ? '板块覆盖' : '配图与来源丰富度'}。`
+  if (itemCount === 0) return '今日暂未形成可发布内容，可稍后更新今日简报。'
+  return `本期已收录 ${itemCount} 条高相关内容，覆盖 ${sectionCount} 个板块。`
 })
 
 async function loadReport() {
@@ -156,7 +143,7 @@ onUnmounted(() => {
 
     <p v-if="error" class="status-error status-pill w-max mx-auto px-4 py-2">{{ error }}</p>
 
-    <!-- Agent Progress Panel (shown during generation) -->
+    <!-- 简洁更新进度 -->
     <AgentProgressPanel ref="progressPanel" :active="generating" />
 
     <template v-if="report && !generating">
@@ -219,11 +206,6 @@ onUnmounted(() => {
       <div v-if="qualityNote" class="text-sm text-[var(--text-secondary)] bg-white/5 border border-white/10 rounded-xl px-4 py-3">
         {{ qualityNote }}
       </div>
-      <div v-if="qualityChips.length" class="flex flex-wrap gap-2 mt-3">
-        <span v-for="chip in qualityChips" :key="chip.label" class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs text-[var(--text-secondary)]">
-          {{ chip.label }} · <strong class="text-white">{{ chip.value }}</strong>
-        </span>
-      </div>
 
       <!-- Main Content Flow -->
       <div v-if="viewMode === 'cards'" class="flex flex-col gap-4 mt-6">
@@ -251,12 +233,12 @@ onUnmounted(() => {
     
     <div v-else-if="loading && !generating" class="flex flex-col items-center justify-center p-20 gap-4">
       <div class="w-12 h-12 border-4 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin glow-[0_0_15px_rgba(100,180,255,0.4)]"></div>
-      <p class="text-[var(--text-secondary)] animate-pulse">正在获取情报矩阵...</p>
+      <p class="text-[var(--text-secondary)] animate-pulse">正在读取今日简报...</p>
     </div>
 
     <div v-else class="flex flex-col items-center justify-center p-20 gap-4 glass-panel border border-white/10 rounded-2xl text-center">
       <p class="text-white text-xl font-semibold">今日日报尚未生成</p>
-      <p class="text-[var(--text-secondary)] max-w-xl">可以先触发一次生成流程。系统会优先整理高质量行业动态、政策信号和研究进展，再输出可阅读的日报版本。</p>
+      <p class="text-[var(--text-secondary)] max-w-xl">可以先更新今日简报。系统会优先整理高质量行业动态、政策信号和研究进展，再输出可阅读的日报版本。</p>
     </div>
   </div>
 </template>

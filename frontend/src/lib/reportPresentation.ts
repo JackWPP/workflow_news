@@ -77,6 +77,25 @@ export function sourceReliabilityLabel(trace?: DecisionTrace | null) {
   return map[label] || '来源待判定'
 }
 
+export function selectionBasis(item: ReportItem) {
+  const trace = item.decision_trace
+  const why = trace?.selection_reason || trace?.key_finding || item.research_signal || item.summary
+  const sourceParts = [
+    trustLabel(trace),
+    sourceReliabilityLabel(trace),
+    presentSourceName(item.source_name, item.source_url),
+  ].filter(Boolean)
+  const category = trace?.category || item.category
+  const keywords = Array.isArray(trace?.keywords) ? trace.keywords.slice(0, 3) : []
+  const relevance = [category, ...keywords].filter(Boolean).join(' · ')
+
+  return {
+    why: normalizeSentence(why, '本条与今日高分子材料加工相关动态有直接关联。'),
+    source: sourceParts.join(' · '),
+    relevance: relevance || sectionFallback(item.section),
+  }
+}
+
 export function cardBrief(item: ReportItem) {
   const signal = item.research_signal?.trim()
   const summary = item.summary?.trim() || ''
@@ -85,4 +104,19 @@ export function cardBrief(item: ReportItem) {
   const normalized = base.replace(/^Signal[:：]\s*/i, '').replace(/\s+/g, ' ').trim()
   const clipped = normalized.length > 88 ? `${normalized.slice(0, 88).trim()}…` : normalized
   return /[。！？.!?]$/.test(clipped) ? clipped : `${clipped}。`
+}
+
+function normalizeSentence(value: string | undefined | null, fallback: string) {
+  const normalized = value?.trim().replace(/\s+/g, ' ') || fallback
+  const clipped = normalized.length > 96 ? `${normalized.slice(0, 96).trim()}…` : normalized
+  return /[。！？.!?]$/.test(clipped) ? clipped : `${clipped}。`
+}
+
+function sectionFallback(section: string) {
+  const map: Record<string, string> = {
+    academic: '学术前沿',
+    industry: '产业动态',
+    policy: '政策监管',
+  }
+  return map[section] || '综合动态'
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Play, Calendar, CheckSquare, Layers } from 'lucide-vue-next'
+import { Play, Calendar, Layers } from 'lucide-vue-next'
 import type { Report } from '../types'
 
 const props = defineProps<{ 
@@ -14,13 +14,13 @@ defineEmits(['regenerate'])
 const publishGradeLabel = computed(() => {
   const grade = props.report?.publish_grade || props.report?.status || 'partial'
   const map: Record<string, string> = {
-    complete: '完整版',
-    partial: '补充版',
-    degraded: '降级版',
-    failed: '未发布',
-    running: '生成中',
+    complete: '已更新',
+    partial: '内容较少',
+    degraded: '暂未完成',
+    failed: '未完成',
+    running: '更新中',
   }
-  return map[grade] ?? '补充版'
+  return map[grade] ?? '内容较少'
 })
 
 const itemCount = computed(() => props.report?.items?.length ?? 0)
@@ -28,23 +28,19 @@ const activeSectionCount = computed(() => {
   const items = props.report?.items ?? []
   return new Set(items.map((item) => item.section).filter(Boolean)).size
 })
-const imageCount = computed(() => (props.report?.image_review_summary?.verified_image_count as number | undefined) ?? 0)
-const highTrustCount = computed(() => (props.report?.items ?? []).filter((item) => item.decision_trace?.source_tier === 'A').length)
-const primarySignalCount = computed(() => (props.report?.items ?? []).filter((item) => item.decision_trace?.supports_numeric_claims).length)
 const thinReportNote = computed(() => {
   if (!props.report) return ''
   if (itemCount.value >= 4 && activeSectionCount.value >= 2) return ''
   const hints: string[] = []
-  if (itemCount.value < 4) hints.push(`当前仅沉淀 ${itemCount.value} 条可发布条目`)
-  if (activeSectionCount.value < 2) hints.push(`板块覆盖仅 ${activeSectionCount.value} 个`)
-  if (imageCount.value === 0) hints.push('可用配图仍在补强')
+  if (itemCount.value < 4) hints.push(`本期收录 ${itemCount.value} 条重点内容`)
+  if (activeSectionCount.value < 2) hints.push(`覆盖 ${activeSectionCount.value} 个板块`)
   return hints.join('，')
 })
 
 const supervisorSummary = computed(() => {
   const actions = props.report?.supervisor_actions ?? []
   if (!actions.length) return ''
-  return `本期已触发 ${actions.length} 轮补检索，系统正在尽量补齐来源和板块。`
+  return `本期已进行 ${actions.length} 轮来源复核。`
 })
 </script>
 
@@ -70,7 +66,7 @@ const supervisorSummary = computed(() => {
           </span>
           <span v-if="report && report.status === 'running'" class="flex items-center gap-2 text-xs text-[var(--accent-academic)] bg-[var(--accent-academic)]/10 px-3 py-1 rounded-full border border-[var(--accent-academic)]/20">
             <span class="w-2 h-2 rounded-full bg-[var(--accent-academic)] animate-pulse-glow"></span>
-            Agent 同步执行中...
+            正在更新...
           </span>
         </div>
         
@@ -89,21 +85,16 @@ const supervisorSummary = computed(() => {
             {{ supervisorSummary }}
           </p>
         </div>
-        <div v-if="report" class="mt-4 flex flex-wrap gap-2 max-w-xl text-[11px]">
-          <span class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[var(--text-secondary)]">A级来源 {{ highTrustCount }}</span>
-          <span class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[var(--text-secondary)]">数字证据 {{ primarySignalCount }}</span>
-          <span class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[var(--text-secondary)]">配图 {{ imageCount > 0 ? `${imageCount} 张` : '待补强' }}</span>
-        </div>
       </div>
 
       <div class="mt-8 flex flex-wrap items-center gap-4">
         <button 
           @click="$emit('regenerate')" 
           :disabled="loading"
-          class="flex items-center gap-2 bg-[var(--accent-primary)] text-[#0a0e1a] hover:bg-[var(--accent-primary)]/90 font-bold px-6 py-3 rounded-xl transition-all shadow-[0_0_20px_var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+          class="flex items-center gap-2 border border-[var(--accent-primary)]/35 bg-white/5 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/10 font-bold px-5 py-2.5 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Play class="w-5 h-5 fill-current" /> 
-          {{ loading ? '重新生成分析...' : '触发 Agent 深度挖掘' }}
+          {{ loading ? '正在更新...' : '更新今日简报' }}
         </button>
         
         <div v-if="report" class="flex items-center gap-6 px-4 py-2 border-l border-white/10 ml-2">
@@ -114,10 +105,6 @@ const supervisorSummary = computed(() => {
           <div class="flex flex-col">
             <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1"><Layers class="w-3 h-3"/> 覆盖</span>
             <span class="text-sm text-white font-medium">{{ itemCount }} 条 / {{ activeSectionCount }} 板块</span>
-          </div>
-          <div class="flex flex-col">
-            <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1"><CheckSquare class="w-3 h-3"/> 配图</span>
-            <span class="text-sm text-white font-medium">{{ imageCount > 0 ? `${imageCount} 张配图` : '待补图' }}</span>
           </div>
         </div>
       </div>
@@ -157,8 +144,6 @@ const supervisorSummary = computed(() => {
 .md\:p-12 { padding: 3rem; }
 .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
 .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
-.px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
-.py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
 .px-4 { padding-left: 1rem; padding-right: 1rem; }
 .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
 .mb-4 { margin-bottom: 1rem; }
@@ -172,10 +157,6 @@ const supervisorSummary = computed(() => {
 .gap-6 { gap: 1.5rem; }
 .bg-white\/10 { background-color: rgba(255, 255, 255, 0.1); }
 .bg-\[var\(--accent-academic\)\]\/10 { background-color: rgba(108, 180, 255, 0.1); }
-.bg-\[var\(--accent-primary\)\] { background-color: var(--accent-primary); }
-.hover\:bg-\[var\(--accent-primary\)\]\/90:hover { background-color: rgba(108, 180, 255, 0.9); }
-.rounded-full { border-radius: 9999px; }
-.rounded-xl { border-radius: 0.75rem; }
 .border { border-width: 1px; }
 .border-l { border-left-width: 1px; }
 .border-white\/10 { border-color: rgba(255, 255, 255, 0.1); }
@@ -196,10 +177,8 @@ const supervisorSummary = computed(() => {
 .text-white { color: white; }
 .text-\[var\(--text-secondary\)\] { color: var(--text-secondary); }
 .text-\[var\(--text-muted\)\] { color: var(--text-muted); }
-.text-\[\#0a0e1a\] { color: #0a0e1a; }
 .drop-shadow-md { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, 0.2)); }
 .drop-shadow-\[0_2px_10px_rgba\(0\,0\,0\,0\.5\)\] { filter: drop-shadow(0 2px 10px rgba(0,0,0,0.5)); }
-.shadow-\[0_0_20px_var\(--accent-primary\)\] { box-shadow: 0 0 20px var(--accent-primary); }
 .leading-tight { line-height: 1.25; }
 .leading-relaxed { line-height: 1.625; }
 .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

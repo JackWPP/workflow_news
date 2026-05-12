@@ -22,6 +22,7 @@ export interface DecisionTrace {
   recency_status?: string
   published_at_source?: string
   language?: string
+  keywords?: string[]              // 文章关键词标签
 }
 
 export interface ReportItem {

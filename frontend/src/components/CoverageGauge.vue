@@ -13,23 +13,18 @@ const activeSections = computed(() => [props.industryCount, props.academicCount,
 const coverageStatus = computed(() => {
   if (total.value >= 4 && activeSections.value >= 2 && props.imageCount >= 1) return '覆盖达标'
   if (total.value >= 3 && activeSections.value >= 2) return '基础可读'
-  return '内容偏薄'
+  return '内容较少'
 })
 
 const academicWidth = computed(() => `${(props.academicCount / total.value) * 100}%`)
 const industryWidth = computed(() => `${(props.industryCount / total.value) * 100}%`)
 const policyWidth = computed(() => `${(props.policyCount / total.value) * 100}%`)
-const diversityLabel = computed(() => {
-  if (activeSections.value >= 3) return '高'
-  if (activeSections.value === 2) return '中'
-  return '低'
-})
 </script>
 
 <template>
   <div class="glass-panel p-5 flex flex-col gap-4">
     <div class="flex justify-between items-center">
-      <h3 class="text-sm font-semibold tracking-wider text-[var(--text-secondary)] uppercase">内容覆盖度分析</h3>
+      <h3 class="text-sm font-semibold tracking-wider text-[var(--text-secondary)] uppercase">今日覆盖</h3>
       <div class="flex items-center gap-2 text-xs text-[var(--status-ok)] bg-[var(--status-ok)]/10 px-2 py-1 rounded-full border border-[var(--status-ok)]/20 shadow-[0_0_10px_rgba(52,211,153,0.1)]">
         <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse-glow"></span>
         {{ coverageStatus }}
@@ -57,11 +52,6 @@ const diversityLabel = computed(() => {
         <div class="w-3 h-3 rounded-sm bg-[var(--accent-policy)] shadow-[0_0_8px_var(--accent-policy)]/50"></div>
         <span class="text-[var(--text-primary)]">政策 <strong class="tabular-nums">{{ policyCount }}</strong></span>
       </div>
-    </div>
-    
-    <div class="mt-2 pt-3 border-t border-[var(--line)] flex justify-between text-xs text-[var(--text-secondary)]">
-      <span>{{ imageCount > 0 ? '验证配图' : '配图状态' }}: <strong class="tabular-nums text-white">{{ imageCount > 0 ? `${imageCount} 张` : '待补图' }}</strong></span>
-      <span>板块均衡度: <strong class="tabular-nums text-white">{{ diversityLabel }}</strong></span>
     </div>
   </div>
 </template>

@@ -59,6 +59,7 @@ class ArticleSummary:
     excluded_reason: str = ""
     recency_status: str = "unknown"
     published_at_source: str = ""
+    keywords: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +92,7 @@ class ArticleSummary:
             "excluded_reason": self.excluded_reason,
             "recency_status": self.recency_status,
             "published_at_source": self.published_at_source,
+            "keywords": self.keywords,
         }
 
 

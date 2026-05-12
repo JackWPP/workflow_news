@@ -14,10 +14,10 @@ const error = ref('')
 
 function gradeLabel(grade?: string | null) {
   const map: Record<string, string> = {
-    complete: '完整版',
-    partial: '补充版',
-    degraded: '降级版',
-    failed: '未发布',
+    complete: '已更新',
+    partial: '内容较少',
+    degraded: '暂未完成',
+    failed: '未完成',
   }
   return map[grade || ''] ?? '未评级'
 }
@@ -51,7 +51,7 @@ onMounted(() => {
             <Calendar class="w-5 h-5 text-[var(--accent-industry)]" />
             历史日报
           </h2>
-          <p class="text-xs text-[var(--text-muted)] mt-1 tracking-wider uppercase">Archives</p>
+          <p class="text-xs text-[var(--text-muted)] mt-1 tracking-wider">按日期查看往期智能日报</p>
         </div>
       </div>
 
@@ -87,14 +87,14 @@ onMounted(() => {
           </p>
           
           <div class="flex items-center gap-4 mt-1 pt-2 border-t border-white/5 text-[10px] text-[var(--text-muted)] uppercase tracking-wider">
-            <span class="flex items-center gap-1"><FileText class="w-3 h-3"/> Round {{ report.round_count || 1 }}</span>
+            <span class="flex items-center gap-1"><FileText class="w-3 h-3"/> {{ report.items?.length || 0 }} 条</span>
             <span class="px-2 py-1 rounded bg-white/5 border border-white/10 normal-case tracking-normal">{{ gradeLabel(report.publish_grade) }}</span>
           </div>
         </button>
       </div>
     </aside>
 
-    <!-- Main Content: Report Detail -->
+    <!-- Main Content: selected report -->
     <main class="flex-1 flex flex-col min-w-0 glass-panel border border-[var(--line)] rounded-2xl overflow-hidden relative z-10 shadow-2xl">
       <template v-if="selected">
         <!-- Header / Hero inside pane -->
@@ -106,7 +106,7 @@ onMounted(() => {
           </div>
           <div class="relative px-8 py-6 z-10">
             <p class="text-[10px] text-[var(--accent-industry)] uppercase tracking-widest font-bold mb-2 flex items-center gap-2">
-              <Sparkles class="w-3 h-3" /> Report Detail
+              <Sparkles class="w-3 h-3" /> 智能日报详情
             </p>
             <h2 class="text-2xl md:text-3xl font-bold text-white leading-tight drop-shadow-md">
               {{ selected.title }}
