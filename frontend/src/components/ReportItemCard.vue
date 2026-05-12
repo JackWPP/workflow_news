@@ -133,7 +133,7 @@ const publishedLabel = computed(() => {
       <div v-if="item.image_url" class="relative max-h-48 overflow-hidden bg-black/40 border-b border-white/5">
         <img :src="item.image_url" :alt="item.image_caption || item.title" loading="lazy" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
         <div v-if="item.has_verified_image" class="absolute top-2 right-2 bg-black/60 backdrop-blur-md rounded-full px-2 py-1 flex items-center gap-1 text-[10px] text-[var(--status-ok)] border border-[var(--status-ok)]/30">
-          <CheckCircle2 class="w-3 h-3" /> 高质量配图
+          <CheckCircle2 class="w-3 h-3" />
         </div>
       </div>
     <div v-else class="relative h-32 overflow-hidden bg-black/20 border-b border-white/5">
