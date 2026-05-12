@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Database, Settings, Activity, ShieldAlert, BarChart3, ListTree, Code, Fingerprint } from 'lucide-vue-next'
+import { Database, Settings, Activity, ShieldAlert, BarChart3, ListTree, Code, Fingerprint, AlertCircle, CheckCircle2 } from 'lucide-vue-next'
 
 import StatusPill from '../components/StatusPill.vue'
 import { api } from '../lib/api'
@@ -26,6 +26,10 @@ const evaluationSummary = ref<EvaluationSummary | null>(null)
 const settings = ref<ReportSettings>({
   report_hour: 10,
   report_minute: 0,
+  ai_report_enabled: true,
+  ai_report_hour: 10,
+  ai_report_minute: 5,
+  ai_rss_feed_url: 'https://imjuya.github.io/juya-ai-daily/rss.xml',
   shadow_mode: true,
   scrape_timeout_seconds: 20,
   scrape_concurrency: 3,
@@ -197,12 +201,20 @@ onMounted(() => {
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
           <div class="grid grid-cols-2 gap-4">
             <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
-              执行时机 (Hour)
+              主日报 Hour
               <input v-model.number="settings.report_hour" type="number" min="0" max="23" class="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-[var(--accent-primary)]" />
             </label>
             <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
-              执行时机 (Min)
+              主日报 Min
               <input v-model.number="settings.report_minute" type="number" min="0" max="59" class="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-[var(--accent-primary)]" />
+            </label>
+            <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
+              AI 日报 Hour
+              <input v-model.number="settings.ai_report_hour" type="number" min="0" max="23" class="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-[var(--accent-primary)]" />
+            </label>
+            <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
+              AI 日报 Min
+              <input v-model.number="settings.ai_report_minute" type="number" min="0" max="59" class="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-[var(--accent-primary)]" />
             </label>
             <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
               抽取超时 (Sec)
@@ -221,6 +233,17 @@ onMounted(() => {
                 <span class="font-bold">开启 Shadow-mode (只读日志)</span>
                 <span class="text-xs text-[var(--text-muted)] font-normal">记录抽取结果但不实际影响外网展示</span>
               </div>
+            </label>
+            <label class="flex items-center gap-3 text-sm text-[var(--text-primary)] bg-white/5 p-4 rounded-xl border border-white/10 select-none cursor-pointer">
+              <input v-model="settings.ai_report_enabled" type="checkbox" class="w-4 h-4 accent-[var(--accent-primary)]" />
+              <div class="flex flex-col">
+                <span class="font-bold">启用 AI RSS 日报</span>
+                <span class="text-xs text-[var(--text-muted)] font-normal">每天独立同步 Juya AI Daily RSS</span>
+              </div>
+            </label>
+            <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
+              AI RSS Feed
+              <input v-model="settings.ai_rss_feed_url" type="text" class="bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-[var(--accent-primary)]" />
             </label>
             
             <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">

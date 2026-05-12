@@ -131,11 +131,16 @@ class SourceRulesPayload(BaseModel):
 class ReportRunRequest(BaseModel):
     shadow_mode: bool | None = None
     mode: str = "publish"
+    report_type: str = "global"
 
 
 class ReportSettingsOut(BaseModel):
     report_hour: int
     report_minute: int
+    ai_report_enabled: bool = True
+    ai_report_hour: int
+    ai_report_minute: int
+    ai_rss_feed_url: str
     shadow_mode: bool
     scrape_timeout_seconds: int
     scrape_concurrency: int
@@ -147,6 +152,10 @@ class ReportSettingsOut(BaseModel):
 class ReportSettingsUpdate(BaseModel):
     report_hour: int
     report_minute: int
+    ai_report_enabled: bool = True
+    ai_report_hour: int
+    ai_report_minute: int
+    ai_rss_feed_url: str
     shadow_mode: bool
     scrape_timeout_seconds: int
     scrape_concurrency: int

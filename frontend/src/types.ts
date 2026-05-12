@@ -146,6 +146,10 @@ export interface RetrievalCandidate {
 export interface ReportSettings {
   report_hour: number
   report_minute: number
+  ai_report_enabled: boolean
+  ai_report_hour: number
+  ai_report_minute: number
+  ai_rss_feed_url: string
   shadow_mode: boolean
   scrape_timeout_seconds: number
   scrape_concurrency: number

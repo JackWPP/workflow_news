@@ -15,6 +15,64 @@ _ARTICLE_PUBLISHED_RE = re.compile(r'<meta\s+(?:property|name)=["\']article:publ
 _TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
+def _score_image_src(src: str, html: str) -> int:
+    """Score an image candidate. Higher = more likely to be real article content.
+    Returns -1000 to reject outright (logos, icons, tracking pixels)."""
+    src_lower = src.lower()
+    score = 5  # base score
+
+    # Hard reject: tiny/tracking/UI images
+    for reject in (
+        "logo", "icon", "avatar", "banner", "qr", "weixin", "微信",
+        "footer", "sidebar", "arrow", "pixel", "1x1", "blank",
+        "loading", "spinner", "sprite", "dot", "bullet",
+    ):
+        if reject in src_lower:
+            return -1000
+
+    # Hard reject: common template/homepage image names
+    for reject in (
+        "back_home", "back-home", "logoshare", "logo-share",
+        "default", "placeholder", "no-image", "noimage",
+        "share_icon", "share-icon",
+    ):
+        if reject in src_lower:
+            return -1000
+
+    # Penalize small/social share dimensions
+    for bad_size in ("32x32", "16x16", "200200", "120x120", "100x100", "50x50"):
+        if bad_size in src_lower:
+            score -= 15
+
+    # Bonus for likely content images
+    for good in ("content", "article", "news", "upload", "editor", "image"):
+        if good in src_lower:
+            score += 8
+
+    # Bonus for larger images (common dimension hints)
+    for good_size in ("1200", "1920", "800x", "x800", "700x", "x700", "large", "original"):
+        if good_size in src_lower:
+            score += 5
+
+    # Bonus: image appears after <article> or <main> in HTML
+    article_pos = html.lower().find("<article")
+    if article_pos > 0 and src in html[article_pos:].lower():
+        score += 8
+    main_pos = html.lower().find("<main")
+    if main_pos > 0 and src in html[main_pos:].lower():
+        score += 8
+
+    # File extension bonus
+    if src_lower.endswith((".jpg", ".jpeg", ".png")):
+        score += 3
+    elif src_lower.endswith(".gif"):
+        score -= 3  # GIFs are often decorative
+    elif src_lower.endswith(".svg"):
+        score -= 5  # SVGs are often logos/icons
+
+    return score
+
+
 class JinaReaderClient:
     """Scrape web pages via Jina Reader API.
 
@@ -154,32 +212,33 @@ class JinaReaderClient:
         if m:
             image_url = m.group(1).strip()
 
-        # Fallback: scan raw HTML for first content <img> (before HTML is stripped)
+        # Fallback: score all images, pick the best (prefer content over template)
         if not image_url:
-            # Extract base URL for resolving relative paths
             base_match = re.search(r'(https?://[^/]+)', url)
             base = base_match.group(1) if base_match else ""
-            img_candidates = []
-            # Multiple patterns for different image sources
+            candidates = []  # (score, src)
             for pattern in [
-                r'<img[^>]+src=["\'](https?://[^"\']+)["\']',     # absolute
-                r'<img[^>]+src=["\'](//[^"\']+)["\']',            # protocol-relative
-                r'<img[^>]+data-src=["\'](https?://[^"\']+)["\']', # lazy-load
+                r'<img[^>]+src=["\'](https?://[^"\']+)["\']',
+                r'<img[^>]+src=["\'](//[^"\']+)["\']',
+                r'<img[^>]+data-src=["\'](https?://[^"\']+)["\']',
                 r'<img[^>]+data-original=["\'](https?://[^"\']+)["\']',
             ]:
                 for src in re.findall(pattern, html, re.IGNORECASE):
                     if src.startswith('//'):
                         src = 'https:' + src
-                    img_candidates.append(src)
-            # Also try relative paths (src="/path/to/img.jpg")
+                    score = _score_image_src(src, html)
+                    if score > -999:
+                        candidates.append((score, src))
             if base:
                 for src in re.findall(r'<img[^>]+src=["\'](/[^"\']+\.(?:jpg|jpeg|png|gif|webp))["\']', html, re.IGNORECASE):
-                    img_candidates.append(base + src)
-            for src in img_candidates:
-                src_lower = src.lower()
-                if not any(skip in src_lower for skip in ("logo", "icon", "avatar", "banner", "qr", "weixin", "微信", "footer", "sidebar")):
-                    image_url = src.strip()
-                    break
+                    full = base + src
+                    score = _score_image_src(full, html)
+                    if score > -999:
+                        candidates.append((score, full))
+            if candidates:
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                image_url = candidates[0][1]
+                logger.debug("Image scoring: best=%s score=%d (total %d candidates)", image_url[:80], candidates[0][0], len(candidates))
 
         # Extract published time
         published_at = None

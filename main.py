@@ -53,11 +53,13 @@ from app.schemas import (
 )
 from app.services.auth import create_login_session, get_current_user, logout_session, register_user
 from app.services.chat import ChatService, append_message, create_conversation
+from app.services.ai_rss_pipeline import AiRssDailyPipeline, DEFAULT_AI_FEED_URL
 from app.services.daily_report_agent import DailyReportAgent
 from app.services.evaluation import enrich_debug_payload
 # pipeline kept for direct admin access (DailyReportAgent uses it as fallback internally)
 from app.services.pipeline import NativeReportPipeline
 from app.services.repository import (
+    get_combined_report_for_date,
     create_quality_feedback,
     favorite_conversation_ids,
     favorite_report_ids,
@@ -68,6 +70,7 @@ from app.services.repository import (
     get_evaluation_summary,
     get_quality_overview,
     list_conversations,
+    list_combined_reports,
     list_history_dates,
     list_quality_feedback,
     list_reports,
@@ -126,10 +129,28 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
 # Use DailyReportAgent as the primary pipeline (falls back to NativeReportPipeline on error)
 pipeline = DailyReportAgent() if settings.agent_mode else NativeReportPipeline()
+ai_pipeline = AiRssDailyPipeline()
 chat_service = ChatService()
 SESSION_COOKIE = "session_token"
 FRONTEND_DIR = Path("frontend/dist")
 LEGACY_STATIC_DIR = Path("static")
+
+
+def _default_report_settings() -> dict[str, object]:
+    return {
+        "report_hour": settings.report_hour,
+        "report_minute": settings.report_minute,
+        "ai_report_enabled": True,
+        "ai_report_hour": settings.report_hour,
+        "ai_report_minute": min(settings.report_minute + 5, 59),
+        "ai_rss_feed_url": DEFAULT_AI_FEED_URL,
+        "shadow_mode": settings.shadow_mode,
+        "scrape_timeout_seconds": settings.scrape_timeout_seconds,
+        "scrape_concurrency": settings.scrape_concurrency,
+        "max_extractions_per_run": settings.max_extractions_per_run,
+        "report_primary_model": settings.report_primary_model,
+        "report_fallback_model": settings.report_fallback_model,
+    }
 
 
 async def scheduled_report_run():
@@ -153,11 +174,37 @@ async def scheduled_ingester_run():
         logger.error("Hourly ingester failed: %s", exc, exc_info=True)
 
 
+async def scheduled_ai_report_run():
+    logger.info("Starting scheduled AI RSS report run.")
+    with session_scope() as session:
+        report_settings = _default_report_settings()
+        report_settings.update(get_report_settings(session) or {})
+        feed_url = str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL)
+        await ai_pipeline.run(session, feed_url=feed_url)
+    logger.info("Scheduled AI RSS report run finished.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    trigger = CronTrigger(hour=settings.report_hour, minute=settings.report_minute, timezone=settings.timezone)
+    report_settings = _default_report_settings()
+    with session_scope() as session:
+        report_settings.update(get_report_settings(session) or {})
+
+    trigger = CronTrigger(hour=report_settings["report_hour"], minute=report_settings["report_minute"], timezone=settings.timezone)
     scheduler.add_job(scheduled_report_run, trigger, id="daily_native_report", replace_existing=True)
+    scheduler.add_job(
+        scheduled_ai_report_run,
+        CronTrigger(
+            hour=report_settings["ai_report_hour"],
+            minute=report_settings["ai_report_minute"],
+            timezone=settings.timezone,
+        ),
+        id="daily_ai_report",
+        replace_existing=True,
+    )
+    if not report_settings.get("ai_report_enabled", True):
+        scheduler.pause_job("daily_ai_report")
     scheduler.add_job(scheduled_ingester_run, CronTrigger(hour="*"), id="hourly_ingester", replace_existing=True)
     scheduler.start()
     logger.info("Scheduler started. Job scheduled for %02d:%02d daily.", settings.report_hour, settings.report_minute)
@@ -293,7 +340,7 @@ async def run_report(payload: ReportRunRequest):
     if _running_task and not _running_task.done():
         raise HTTPException(status_code=409, detail="A report is already being generated")
 
-    logger.info("Manual native report run requested (async mode).")
+    logger.info("Manual report run requested (async mode, report_type=%s).", payload.report_type)
 
     # 预创建 DB 记录以获取 ID
     with session_scope() as session:
@@ -313,20 +360,29 @@ async def run_report(payload: ReportRunRequest):
     async def _run_pipeline():
         global _running_task, _running_agent_run_id
         try:
-            if isinstance(pipeline, DailyReportAgent):
-                report = await pipeline.run(
-                    run_id=run_id,
-                    shadow_mode=payload.shadow_mode,
-                    mode=payload.mode,
-                    event_queue=event_queue,
-                )
-            else:
+            if payload.report_type == "ai":
                 with session_scope() as session:
-                    report = await pipeline.run(
+                    report_settings = get_report_settings(session) or _default_report_settings()
+                    report = await ai_pipeline.run(
                         session,
+                        run_id=run_id,
+                        feed_url=str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL),
+                    )
+            else:
+                if isinstance(pipeline, DailyReportAgent):
+                    report = await pipeline.run(
+                        run_id=run_id,
                         shadow_mode=payload.shadow_mode,
                         mode=payload.mode,
+                        event_queue=event_queue,
                     )
+                else:
+                    with session_scope() as session:
+                        report = await pipeline.run(
+                            session,
+                            shadow_mode=payload.shadow_mode,
+                            mode=payload.mode,
+                        )
             event_queue.put_nowait({
                 "type": "complete",
                 "report_id": report.id,
@@ -390,18 +446,26 @@ async def get_run_status():
 
 
 @app.get("/api/reports/today", response_model=ReportDetailOut)
-async def get_today_report():
+async def get_today_report(view: str = "combined"):
     with session_scope() as session:
-        report = get_latest_report_for_date(session, now_local().date())
+        report = (
+            get_combined_report_for_date(session, now_local().date())
+            if view == "combined"
+            else get_latest_report_for_date(session, now_local().date())
+        )
         if report is None:
             raise HTTPException(status_code=404, detail="No report found for today")
         return ReportDetailOut.model_validate(report)
 
 
 @app.get("/api/reports")
-async def get_report_list(limit: int = 30):
+async def get_report_list(limit: int = 30, view: str = "combined"):
     with session_scope() as session:
-        reports = list_reports(session, limit=max(1, min(limit, 100)))
+        reports = (
+            list_combined_reports(session, limit=max(1, min(limit, 100)))
+            if view == "combined"
+            else list_reports(session, limit=max(1, min(limit, 100)))
+        )
         return {"reports": [ReportDetailOut.model_validate(report).model_dump(mode="json") for report in reports]}
 
 
@@ -482,16 +546,8 @@ async def put_source_rules(payload: SourceRulesPayload, request: Request):
 async def get_admin_report_settings(request: Request):
     with session_scope() as session:
         _admin_user_or_403(session, request)
-        payload = get_report_settings(session) or {
-            "report_hour": settings.report_hour,
-            "report_minute": settings.report_minute,
-            "shadow_mode": settings.shadow_mode,
-            "scrape_timeout_seconds": settings.scrape_timeout_seconds,
-            "scrape_concurrency": settings.scrape_concurrency,
-            "max_extractions_per_run": settings.max_extractions_per_run,
-            "report_primary_model": settings.report_primary_model,
-            "report_fallback_model": settings.report_fallback_model,
-        }
+        payload = _default_report_settings()
+        payload.update(get_report_settings(session) or {})
         return payload
 
 
@@ -505,6 +561,14 @@ async def put_admin_report_settings(payload: ReportSettingsUpdate, request: Requ
         "daily_native_report",
         trigger=CronTrigger(hour=updated["report_hour"], minute=updated["report_minute"], timezone=settings.timezone),
     )
+    scheduler.reschedule_job(
+        "daily_ai_report",
+        trigger=CronTrigger(hour=updated["ai_report_hour"], minute=updated["ai_report_minute"], timezone=settings.timezone),
+    )
+    if updated["ai_report_enabled"]:
+        scheduler.resume_job("daily_ai_report")
+    else:
+        scheduler.pause_job("daily_ai_report")
     return updated
 
 
@@ -737,7 +801,7 @@ async def unfavorite_conversation(conversation_id: int, request: Request):
 @app.get("/api/news/today")
 async def read_today_news():
     with session_scope() as session:
-        report = get_latest_report_for_date(session, now_local().date())
+        report = get_combined_report_for_date(session, now_local().date())
         if report is None:
             return {"content": None, "date": now_local().date().isoformat(), "status": "missing"}
         return {
@@ -762,7 +826,7 @@ async def read_news_by_date(report_date: str):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD") from exc
     with session_scope() as session:
-        report = get_latest_report_for_date(session, target_date)
+        report = get_combined_report_for_date(session, target_date)
         if report is None:
             raise HTTPException(status_code=404, detail="News not found for this date")
         return {

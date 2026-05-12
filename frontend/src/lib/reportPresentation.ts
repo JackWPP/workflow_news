@@ -46,6 +46,8 @@ export function evidenceLabel(trace?: DecisionTrace | null) {
   if (strength === 'high') return '高证据'
   if (strength === 'medium') return '中证据'
   if (strength === 'low') return '低证据'
+  if (strength === 'rss_embedded_digest') return 'RSS摘要'
+  if (strength === 'rss') return 'RSS直连'
   return '待评估'
 }
 
@@ -59,8 +61,20 @@ export function sourceKindLabel(trace?: DecisionTrace | null) {
     academic_journal: '学术期刊',
     vertical_media: '垂直媒体',
     academic: '高校研究',
+    ai_rss_digest: '日报聚合',
   }
   return map[kind] || '一般来源'
+}
+
+export function sourceReliabilityLabel(trace?: DecisionTrace | null) {
+  const label = trace?.source_reliability_label || ''
+  const map: Record<string, string> = {
+    official_source: '官方源',
+    social_or_channel: '社交源',
+    secondary_source: '整理源',
+    rss_direct: 'RSS直连',
+  }
+  return map[label] || '来源待判定'
 }
 
 export function cardBrief(item: ReportItem) {

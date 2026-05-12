@@ -2,12 +2,12 @@
 import { computed, ref } from 'vue'
 import type { ReportItem } from '../types'
 import { ExternalLink, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-vue-next'
-import { cardBrief, evidenceLabel, presentSourceName, sourceKindLabel, trustLabel } from '../lib/reportPresentation'
+import { cardBrief, evidenceLabel, presentSourceName, sourceKindLabel, sourceReliabilityLabel, trustLabel } from '../lib/reportPresentation'
 
-import fallbackManufacturing from '../assets/fallback-manufacturing.svg'
-import fallbackEnergy from '../assets/fallback-energy.svg'
-import fallbackAi from '../assets/fallback-ai.svg'
-import fallbackDefault from '../assets/fallback-default.svg'
+import fallbackManufacturing from '../assets/fallback-manufacturing.png'
+import fallbackEnergy from '../assets/fallback-energy.png'
+import fallbackAi from '../assets/fallback-ai.png'
+import fallbackDefault from '../assets/fallback-default.png'
 
 function categoryFallback(category?: string): string {
   switch (category) {
@@ -54,6 +54,7 @@ const friendlySourceName = computed(() => {
 const sourceTrust = computed(() => trustLabel(props.item.decision_trace))
 const evidenceText = computed(() => evidenceLabel(props.item.decision_trace))
 const sourceKindText = computed(() => sourceKindLabel(props.item.decision_trace))
+const sourceReliabilityText = computed(() => sourceReliabilityLabel(props.item.decision_trace))
 const brief = computed(() => cardBrief(props.item))
 
 const publishedLabel = computed(() => {
@@ -100,6 +101,7 @@ const publishedLabel = computed(() => {
         <span class="px-2 py-1 rounded-full bg-white/5 text-[var(--text-muted)] border border-white/10">{{ sourceTrust }}</span>
         <span class="px-2 py-1 rounded-full bg-[var(--card-accent)]/10 text-[var(--card-accent)] border border-[var(--card-accent)]/20">{{ evidenceText }}</span>
         <span class="px-2 py-1 rounded-full bg-white/5 text-white/80 border border-white/10">{{ sourceKindText }}</span>
+        <span class="px-2 py-1 rounded-full source-reliability-chip">{{ sourceReliabilityText }}</span>
         <span v-if="item.decision_trace?.supports_numeric_claims" class="px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-400/20">数字可引</span>
       </div>
 
@@ -153,7 +155,7 @@ const publishedLabel = computed(() => {
           </div>
           <div v-if="item.decision_trace!.source_reliability_label" class="mt-2">
             <span class="opacity-50">🛡 来源等级：</span>
-            <span class="text-[var(--text-secondary)]">{{ item.decision_trace!.source_tier }} / {{ item.decision_trace!.source_reliability_label }}</span>
+            <span class="text-[var(--text-secondary)]">{{ item.decision_trace!.source_tier }} / {{ sourceReliabilityText }}</span>
           </div>
           <div v-if="item.decision_trace!.source_kind || item.decision_trace!.page_kind" class="mt-2">
             <span class="opacity-50">🧭 证据类型：</span>
@@ -190,6 +192,12 @@ const publishedLabel = computed(() => {
 
 .trace-panel {
   animation: trace-fade-in 0.2s ease-out;
+}
+
+.source-reliability-chip {
+  background: rgba(56, 189, 248, 0.12);
+  color: #bae6fd;
+  border: 1px solid rgba(56, 189, 248, 0.24);
 }
 
 @keyframes trace-fade-in {
