@@ -179,8 +179,7 @@ onUnmounted(() => {
           <CoverageGauge 
             :academicCount="stats.academic" 
             :industryCount="stats.industry" 
-            :policyCount="stats.policy" 
-            :imageCount="stats.images"
+            :policyCount="stats.policy"
           />
         </div>
 

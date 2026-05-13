@@ -3,7 +3,6 @@ import { onMounted, ref } from 'vue'
 import { Calendar, Image as ImageIcon, Sparkles, FileText } from 'lucide-vue-next'
 
 import ReportItemCard from '../components/ReportItemCard.vue'
-import StatusPill from '../components/StatusPill.vue'
 import { api } from '../lib/api'
 import type { Report } from '../types'
 
@@ -11,16 +10,6 @@ const reports = ref<Report[]>([])
 const selected = ref<Report | null>(null)
 const loading = ref(false)
 const error = ref('')
-
-function gradeLabel(grade?: string | null) {
-  const map: Record<string, string> = {
-    complete: '已更新',
-    partial: '内容较少',
-    degraded: '暂未完成',
-    failed: '未完成',
-  }
-  return map[grade || ''] ?? '未评级'
-}
 
 async function loadReports() {
   loading.value = true
@@ -79,7 +68,6 @@ onMounted(() => {
             <strong class="text-white font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-[var(--text-secondary)]">
               {{ report.report_date }}
             </strong>
-            <StatusPill :status="report.status" />
           </div>
           
           <p class="text-sm text-[var(--text-secondary)] line-clamp-2 leading-relaxed">
@@ -88,7 +76,6 @@ onMounted(() => {
           
           <div class="flex items-center gap-4 mt-1 pt-2 border-t border-white/5 text-[10px] text-[var(--text-muted)] uppercase tracking-wider">
             <span class="flex items-center gap-1"><FileText class="w-3 h-3"/> {{ report.items?.length || 0 }} 条</span>
-            <span class="px-2 py-1 rounded bg-white/5 border border-white/10 normal-case tracking-normal">{{ gradeLabel(report.publish_grade) }}</span>
           </div>
         </button>
       </div>
@@ -113,7 +100,6 @@ onMounted(() => {
             </h2>
             <div class="flex items-center gap-4 mt-4 text-xs font-medium">
               <span class="text-[var(--text-secondary)] bg-white/5 px-3 py-1 rounded-full border border-white/10">{{ selected.report_date }}</span>
-              <StatusPill :status="selected.status" />
             </div>
           </div>
         </div>

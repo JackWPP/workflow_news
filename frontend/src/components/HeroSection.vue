@@ -11,18 +11,6 @@ const props = defineProps<{
 
 defineEmits(['regenerate'])
 
-const publishGradeLabel = computed(() => {
-  const grade = props.report?.publish_grade || props.report?.status || 'partial'
-  const map: Record<string, string> = {
-    complete: '已更新',
-    partial: '内容较少',
-    degraded: '暂未完成',
-    failed: '未完成',
-    running: '更新中',
-  }
-  return map[grade] ?? '内容较少'
-})
-
 const itemCount = computed(() => props.report?.items?.length ?? 0)
 const activeSectionCount = computed(() => {
   const items = props.report?.items ?? []
@@ -60,9 +48,6 @@ const supervisorSummary = computed(() => {
         <div class="flex items-center gap-3 mb-4">
           <span class="px-3 py-1 bg-white/10 rounded-full text-xs font-semibold tracking-widest text-[var(--accent-academic)] border border-white/10 uppercase drop-shadow-md">
             今日日报
-          </span>
-          <span v-if="report" class="px-3 py-1 bg-white/10 rounded-full text-xs font-semibold text-white border border-white/10">
-            {{ publishGradeLabel }}
           </span>
           <span v-if="report && report.status === 'running'" class="flex items-center gap-2 text-xs text-[var(--accent-academic)] bg-[var(--accent-academic)]/10 px-3 py-1 rounded-full border border-[var(--accent-academic)]/20">
             <span class="w-2 h-2 rounded-full bg-[var(--accent-academic)] animate-pulse-glow"></span>

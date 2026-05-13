@@ -5,16 +5,9 @@ const props = defineProps<{
   academicCount: number
   industryCount: number
   policyCount: number
-  imageCount: number
 }>()
 
 const total = computed(() => props.academicCount + props.industryCount + props.policyCount || 1)
-const activeSections = computed(() => [props.industryCount, props.academicCount, props.policyCount].filter((count) => count > 0).length)
-const coverageStatus = computed(() => {
-  if (total.value >= 4 && activeSections.value >= 2 && props.imageCount >= 1) return '覆盖达标'
-  if (total.value >= 3 && activeSections.value >= 2) return '基础可读'
-  return '内容较少'
-})
 
 const academicWidth = computed(() => `${(props.academicCount / total.value) * 100}%`)
 const industryWidth = computed(() => `${(props.industryCount / total.value) * 100}%`)
@@ -25,10 +18,6 @@ const policyWidth = computed(() => `${(props.policyCount / total.value) * 100}%`
   <div class="glass-panel p-5 flex flex-col gap-4">
     <div class="flex justify-between items-center">
       <h3 class="text-sm font-semibold tracking-wider text-[var(--text-secondary)] uppercase">今日覆盖</h3>
-      <div class="flex items-center gap-2 text-xs text-[var(--status-ok)] bg-[var(--status-ok)]/10 px-2 py-1 rounded-full border border-[var(--status-ok)]/20 shadow-[0_0_10px_rgba(52,211,153,0.1)]">
-        <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse-glow"></span>
-        {{ coverageStatus }}
-      </div>
     </div>
 
     <!-- Progress Bar -->
