@@ -18,6 +18,11 @@ function categoryFallback(category?: string): string {
   }
 }
 
+const categoryLabel = computed(() => {
+  const cat = props.item.decision_trace?.patent_category || props.item.category
+  return cat || ''
+})
+
 const props = defineProps<{ item: ReportItem }>()
 
 const showBasis = ref(false)
@@ -26,7 +31,8 @@ const hasBasis = computed(() => {
   const t = props.item.decision_trace
   return t && (
     t.evaluation_reason || t.key_finding || t.selection_reason ||
-    t.source_tier || t.source_reliability_label || t.keywords?.length
+    t.source_tier || t.source_reliability_label || t.keywords?.length ||
+    t.patent_number || t.inventors
   )
 })
 
@@ -35,6 +41,9 @@ const sectionColor = computed(() => {
     case 'academic': return 'var(--accent-academic)'
     case 'industry': return 'var(--accent-industry)'
     case 'policy': return 'var(--accent-policy)'
+    case 'patent': return '#f59e0b'
+    case 'wechat': return '#22c55e'
+    case 'lab_news': return '#8b5cf6'
     default: return 'var(--accent-academic)'
   }
 })
@@ -43,7 +52,10 @@ const cardStyle = computed(() => {
   return {
     '--card-accent': sectionColor.value,
     '--card-glow': props.item.section === 'industry' ? 'var(--glow-green)' :
-                   props.item.section === 'policy' ? 'var(--glow-purple)' : 'var(--glow-blue)'
+                   props.item.section === 'policy' ? 'var(--glow-purple)' :
+                   props.item.section === 'patent' ? '0 0 20px rgba(245,158,11,0.2)' :
+                   props.item.section === 'wechat' ? '0 0 20px rgba(34,197,94,0.2)' :
+                   'var(--glow-blue)'
   }
 })
 
@@ -52,7 +64,10 @@ const friendlySourceName = computed(() => {
 })
 
 const sectionLabel = computed(() => {
-  const map: Record<string, string> = { academic: '学术前沿', industry: '产业动态', policy: '政策监管' }
+  const map: Record<string, string> = {
+    academic: '学术前沿', industry: '产业动态', policy: '政策监管',
+    patent: '专利精选', wechat: '英蓝云展', lab_news: '实验室资讯',
+  }
   return map[props.item.section] || props.item.section
 })
 
@@ -153,7 +168,7 @@ const publishedLabel = computed(() => {
 
       <div class="flex flex-wrap items-center gap-2 text-[10px]">
         <span class="px-2 py-1 rounded-full bg-[var(--card-accent)]/10 text-[var(--card-accent)] border border-[var(--card-accent)]/20">{{ sectionLabel }}</span>
-        <span class="px-2 py-1 rounded-full bg-white/5 text-white/80 border border-white/10">{{ item.category }}</span>
+        <span v-if="categoryLabel" class="px-2 py-1 rounded-full bg-white/5 text-white/80 border border-white/10">{{ categoryLabel }}</span>
         <span class="px-2 py-1 rounded-full bg-white/5 text-[var(--text-muted)] border border-white/10">{{ languageLabel }}</span>
         <span v-for="kw in keywords" :key="kw" class="px-2 py-1 rounded-full bg-white/[0.03] text-[var(--text-muted)] border border-white/[0.06]">{{ kw }}</span>
       </div>

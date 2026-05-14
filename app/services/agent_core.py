@@ -717,10 +717,19 @@ class AgentCore:
         sections_from_finish: dict[str, str] = (
             raw_sections if isinstance(raw_sections, dict) else {}
         )
-        merged_sections: dict[str, str] = {
+        merged_raw: dict[str, str] = {
             **sections_from_memory,
             **sections_from_finish,
         }
+        # 强制按规范顺序排列，避免 LLM finish 参数打乱板块顺序
+        _CANONICAL_ORDER = ["industry", "policy", "academic", "patent", "wechat", "lab_news"]
+        merged_sections: dict[str, str] = {}
+        for key in _CANONICAL_ORDER:
+            if key in merged_raw:
+                merged_sections[key] = merged_raw[key]
+        for key in merged_raw:
+            if key not in merged_sections:
+                merged_sections[key] = merged_raw[key]
 
         return AgentResult(
             success=True,

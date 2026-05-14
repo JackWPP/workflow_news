@@ -61,6 +61,11 @@ HEADING_PATTERN = re.compile(
     r"^##\s+\[(?P<title>.+?)\]\((?P<url>https?://[^)]+)\)(?:\s+`#(?P<rank>\d+)`)?\s*$",
     re.MULTILINE,
 )
+# HTML format: <li>Title <a href="URL">↗</a> <code>#N</code></li>
+HTML_ITEM_PATTERN = re.compile(
+    r"<li>\s*(?P<title>.+?)\s*<a\s+href=\"(?P<url>https?://[^\"]+)\"[^>]*>↗</a>\s*(?:<code>#(?P<rank>\d+)</code>)?\s*</li>",
+    re.DOTALL,
+)
 RELATED_LINK_PATTERN = re.compile(r"https?://[^\s)]+")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
@@ -245,6 +250,14 @@ class AiRssDailyPipeline:
         return text.strip()
 
     def _extract_issue_items(self, issue: dict[str, Any]) -> list[dict[str, Any]]:
+        # Try HTML format from content:encoded first
+        content_encoded = str(issue.get("content_encoded") or "")
+        if "<li>" in content_encoded:
+            items = self._extract_html_items(content_encoded)
+            if items:
+                return items
+
+        # Fallback: markdown format from summary
         body = self._normalize_issue_body(str(issue.get("snippet") or ""))
         if not body:
             return []
@@ -274,6 +287,29 @@ class AiRssDailyPipeline:
                     "rank_hint": int(match.group("rank") or idx + 1),
                 }
             )
+        items.sort(key=lambda item: item["rank_hint"])
+        return items[:MAX_AI_ITEMS]
+
+    def _extract_html_items(self, html_content: str) -> list[dict[str, Any]]:
+        items = []
+        for idx, match in enumerate(HTML_ITEM_PATTERN.finditer(html_content)):
+            title = HTML_TAG_PATTERN.sub("", match.group("title")).strip()
+            # Remove trailing "↗" if still present
+            title = title.rstrip("↗ ").strip()
+            source_url = canonicalize_url(match.group("url").strip())
+            if not title or not source_url:
+                continue
+            section = self._classify_section(title=title, block="")
+            rank = int(match.group("rank") or idx + 1)
+            items.append({
+                "title": title,
+                "source_url": source_url,
+                "domain": self._extract_domain(source_url),
+                "summary": title,
+                "section": section,
+                "related_links": [],
+                "rank_hint": rank,
+            })
         items.sort(key=lambda item: item["rank_hint"])
         return items[:MAX_AI_ITEMS]
 

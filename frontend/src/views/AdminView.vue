@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { Database, Settings, Activity, ShieldAlert, BarChart3, ListTree, Code, Fingerprint, AlertCircle, CheckCircle2 } from 'lucide-vue-next'
 
 import StatusPill from '../components/StatusPill.vue'
@@ -39,6 +39,15 @@ const settings = ref<ReportSettings>({
 })
 const error = ref('')
 const saved = ref('')
+const wechatTokenConfigured = ref(false)
+const wechatTokenInput = ref('')
+const wechatCookieInput = ref('')
+const wechatAccountName = ref('英蓝云展')
+const wechatSyncing = ref(false)
+const wechatSyncResult = ref('')
+const wechatSyncPages = ref(0)
+const wechatSyncArticles = ref(0)
+let wechatPollTimer: ReturnType<typeof setInterval> | null = null
 const feedbackDraft = ref({
   target_type: 'candidate',
   target_id: 0,
@@ -154,8 +163,103 @@ function formatScore(value: unknown) {
   return Number.isFinite(score) ? score.toFixed(1) : '0.0'
 }
 
+async function loadWeChatStatus() {
+  try {
+    const res = await api.getWeChatTokenStatus()
+    wechatTokenConfigured.value = res.configured
+  } catch {
+    wechatTokenConfigured.value = false
+  }
+}
+
+async function clearWeChatToken() {
+  error.value = ''
+  saved.value = ''
+  try {
+    await api.clearWeChatToken()
+    wechatTokenConfigured.value = false
+    wechatTokenInput.value = ''
+    wechatCookieInput.value = ''
+    saved.value = 'WeChat Token 已清除'
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Token 清除失败'
+  }
+}
+
+async function saveWeChatToken() {
+  error.value = ''
+  saved.value = ''
+  if (!wechatTokenInput.value.trim() || !wechatCookieInput.value.trim()) {
+    error.value = '请填写 Token 和 Cookie'
+    return
+  }
+  try {
+    await api.setWeChatToken(wechatTokenInput.value.trim(), wechatCookieInput.value.trim())
+    wechatTokenConfigured.value = true
+    wechatTokenInput.value = ''
+    wechatCookieInput.value = ''
+    saved.value = 'WeChat Token 已保存'
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Token 保存失败'
+  }
+}
+
+async function syncWeChatAccount() {
+  error.value = ''
+  wechatSyncResult.value = ''
+  wechatSyncPages.value = 0
+  wechatSyncArticles.value = 0
+  if (!wechatAccountName.value.trim()) {
+    error.value = '请填写公众号名称'
+    return
+  }
+  wechatSyncing.value = true
+  try {
+    await api.syncWeChatAccount(wechatAccountName.value.trim())
+    startWeChatPolling()
+  } catch (err) {
+    wechatSyncing.value = false
+    error.value = err instanceof Error ? err.message : '同步启动失败'
+  }
+}
+
+function startWeChatPolling() {
+  if (wechatPollTimer) clearInterval(wechatPollTimer)
+  wechatPollTimer = setInterval(async () => {
+    try {
+      const status = await api.getWeChatSyncStatus()
+      wechatSyncPages.value = status.pages_done
+      wechatSyncArticles.value = status.articles_added
+      if (!status.running) {
+        stopWeChatPolling()
+        wechatSyncing.value = false
+        if (status.error) {
+          error.value = `同步出错：${status.error}`
+        } else {
+          wechatSyncResult.value = `同步完成：共新增 ${status.articles_added} 篇文章（${status.pages_done} 页）`
+          saved.value = wechatSyncResult.value
+        }
+      }
+    } catch {
+      // ignore polling errors
+    }
+  }, 2000)
+}
+
+function stopWeChatPolling() {
+  if (wechatPollTimer) {
+    clearInterval(wechatPollTimer)
+    wechatPollTimer = null
+  }
+}
+
 onMounted(() => {
   void loadAdmin()
+  void loadWeChatStatus()
+})
+
+onUnmounted(() => {
+  stopWeChatPolling()
 })
 </script>
 
@@ -258,6 +362,49 @@ onMounted(() => {
         </div>
       </section>
     </div>
+
+    <!-- WeChat Token & Sync -->
+    <section class="glass-panel">
+      <div class="p-6 border-b border-[var(--line)] flex items-center gap-2">
+        <Database class="w-5 h-5 text-green-400" />
+        <h2 class="text-lg font-bold text-white">公众号同步</h2>
+        <span class="ml-auto text-xs font-mono" :class="wechatTokenConfigured ? 'text-green-400' : 'text-red-400'">
+          Token: {{ wechatTokenConfigured ? '已配置' : '未配置' }}
+        </span>
+      </div>
+      <div class="p-6 space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-3">
+            <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
+              Token
+              <input v-model="wechatTokenInput" type="text" placeholder="从 mp.weixin.qq.com 抓取的 token" class="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-green-400" />
+            </label>
+            <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
+              Cookie
+              <textarea v-model="wechatCookieInput" placeholder="从 mp.weixin.qq.com 抓取的 Cookie" rows="2" class="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-green-400 resize-none" />
+            </label>
+            <div class="flex gap-2">
+              <button @click="saveWeChatToken" class="btn-primary bg-green-500/20 text-green-400 border-green-500/30 hover:bg-green-500/30 text-sm">保存 Token</button>
+              <button @click="clearWeChatToken" class="btn-ghost border border-white/10 text-[var(--text-muted)] hover:text-white text-sm">清除 Token</button>
+            </div>
+          </div>
+          <div class="space-y-3">
+            <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
+              公众号名称
+              <input v-model="wechatAccountName" type="text" placeholder="例: 英蓝云展" class="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-green-400" />
+            </label>
+            <button @click="syncWeChatAccount" :disabled="wechatSyncing || !wechatTokenConfigured" class="btn-primary bg-green-500/20 text-green-400 border-green-500/30 hover:bg-green-500/30 disabled:opacity-40 disabled:cursor-not-allowed text-sm">
+              {{ wechatSyncing ? '同步中...' : '增量同步（最多100篇）' }}
+            </button>
+            <div v-if="wechatSyncing" class="text-xs text-green-400 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 flex items-center gap-2">
+              <div class="w-3 h-3 border-2 border-green-400 border-t-transparent rounded-full animate-spin"></div>
+              正在同步：已翻 {{ wechatSyncPages }} 页，新增 {{ wechatSyncArticles }} 篇
+            </div>
+            <p v-else-if="wechatSyncResult" class="text-xs text-green-400 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">{{ wechatSyncResult }}</p>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- Alert Bar -->
     <div v-if="error" class="bg-[var(--status-error)]/10 border border-[var(--status-error)]/20 text-[var(--status-error)] p-4 rounded-xl flex items-center gap-3">

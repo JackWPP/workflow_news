@@ -129,6 +129,12 @@ def _ensure_sqlite_schema() -> None:
         if "article_pool" not in tables:
             Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["article_pool"]])
 
+        if "patents" not in tables:
+            Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["patents"]])
+
+        if "wechat_articles" not in tables:
+            Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["wechat_articles"]])
+
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)

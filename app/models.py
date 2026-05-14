@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, date
 
 from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -490,3 +490,34 @@ class ArticlePool(TimestampMixin, Base):
     section: Mapped[str | None] = mapped_column(String(32))
     category: Mapped[str | None] = mapped_column(String(32))
     eval_metadata: Mapped[dict | None] = mapped_column(JSON)
+
+
+class Patent(TimestampMixin, Base):
+    __tablename__ = "patents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    patent_number: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    publication_number: Mapped[str | None] = mapped_column(String(64))
+    grant_date: Mapped[date | None] = mapped_column(Date)
+    application_date: Mapped[date | None] = mapped_column(Date)
+    inventors: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class WeChatArticle(TimestampMixin, Base):
+    __tablename__ = "wechat_articles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    url: Mapped[str] = mapped_column(String(2048), nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    account_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
+    scraped_at: Mapped[datetime | None] = mapped_column(DateTime)
+    scrape_status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    raw_content: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(String(1024))
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    article_pool_id: Mapped[int | None] = mapped_column(ForeignKey("article_pool.id"))

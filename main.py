@@ -184,6 +184,49 @@ async def scheduled_ai_report_run():
     logger.info("Scheduled AI RSS report run finished.")
 
 
+async def scheduled_lab_report_run():
+    logger.info("Starting scheduled lab report run.")
+    try:
+        from app.services.lab_report_composer import LabReportComposer
+        composer = LabReportComposer()
+        report = composer.compose()
+        if report:
+            logger.info("Lab report generated: %s", report.title)
+        else:
+            logger.warning("Lab report generation skipped (no content).")
+    except Exception as exc:
+        logger.error("Lab report generation failed: %s", exc, exc_info=True)
+
+    # Also trigger AI report
+    try:
+        await scheduled_ai_report_run()
+    except Exception as exc:
+        logger.error("AI report co-trigger failed: %s", exc, exc_info=True)
+
+
+async def scheduled_weixin_ingester_run():
+    logger.info("Starting WeChat ingester run.")
+    # Try API-based sync first
+    try:
+        from app.services.wechat_client import get_credentials, sync_account_articles, search_account
+        creds = get_credentials()
+        if creds:
+            accounts = await search_account("英蓝云展")
+            if accounts:
+                added = await sync_account_articles(accounts[0]["fakeid"], accounts[0].get("nickname", "英蓝云展"))
+                logger.info("WeChat API sync: %d new articles.", added)
+    except Exception as exc:
+        logger.warning("WeChat API sync failed: %s", exc)
+
+    # Scrape pending articles
+    try:
+        from app.services.ingester import ingest_weixin_articles
+        count = await ingest_weixin_articles()
+        logger.info("WeChat ingester finished: %d articles scraped.", count)
+    except Exception as exc:
+        logger.error("WeChat ingester failed: %s", exc, exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -206,6 +249,18 @@ async def lifespan(app: FastAPI):
     if not report_settings.get("ai_report_enabled", True):
         scheduler.pause_job("daily_ai_report")
     scheduler.add_job(scheduled_ingester_run, CronTrigger(hour="*"), id="hourly_ingester", replace_existing=True)
+    scheduler.add_job(
+        scheduled_lab_report_run,
+        CronTrigger(hour=report_settings["report_hour"], minute=report_settings["report_minute"] + 30, timezone=settings.timezone),
+        id="daily_lab_report",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        scheduled_weixin_ingester_run,
+        CronTrigger(hour="*/6"),
+        id="weixin_ingester",
+        replace_existing=True,
+    )
     scheduler.start()
     logger.info("Scheduler started. Job scheduled for %02d:%02d daily.", settings.report_hour, settings.report_minute)
     yield
@@ -360,7 +415,23 @@ async def run_report(payload: ReportRunRequest):
     async def _run_pipeline():
         global _running_task, _running_agent_run_id
         try:
-            if payload.report_type == "ai":
+            if payload.report_type == "lab":
+                from app.services.lab_report_composer import LabReportComposer
+                composer = LabReportComposer()
+                report = composer.compose()
+                if report is None:
+                    raise RuntimeError("No content available for lab report")
+                # Also trigger AI report
+                try:
+                    with session_scope() as ai_session:
+                        report_settings = get_report_settings(ai_session) or _default_report_settings()
+                        await ai_pipeline.run(
+                            ai_session,
+                            feed_url=str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL),
+                        )
+                except Exception as ai_exc:
+                    logger.warning("AI report co-trigger failed (non-fatal): %s", ai_exc)
+            elif payload.report_type == "ai":
                 with session_scope() as session:
                     report_settings = get_report_settings(session) or _default_report_settings()
                     report = await ai_pipeline.run(
@@ -446,26 +517,30 @@ async def get_run_status():
 
 
 @app.get("/api/reports/today", response_model=ReportDetailOut)
-async def get_today_report(view: str = "combined"):
+async def get_today_report(view: str = "combined", report_type: str | None = None):
     with session_scope() as session:
-        report = (
-            get_combined_report_for_date(session, now_local().date())
-            if view == "combined"
-            else get_latest_report_for_date(session, now_local().date())
-        )
+        if report_type == "lab":
+            report = get_latest_report_for_date(session, now_local().date(), report_type="lab")
+        elif report_type == "ai":
+            report = get_latest_report_for_date(session, now_local().date(), report_type="ai")
+        elif view == "combined":
+            report = get_combined_report_for_date(session, now_local().date())
+        else:
+            report = get_latest_report_for_date(session, now_local().date())
         if report is None:
             raise HTTPException(status_code=404, detail="No report found for today")
         return ReportDetailOut.model_validate(report)
 
 
 @app.get("/api/reports")
-async def get_report_list(limit: int = 30, view: str = "combined"):
+async def get_report_list(limit: int = 30, view: str = "combined", report_type: str | None = None):
     with session_scope() as session:
-        reports = (
-            list_combined_reports(session, limit=max(1, min(limit, 100)))
-            if view == "combined"
-            else list_reports(session, limit=max(1, min(limit, 100)))
-        )
+        if report_type:
+            reports = list_reports(session, limit=max(1, min(limit, 100)), report_type=report_type)
+        elif view == "combined":
+            reports = list_combined_reports(session, limit=max(1, min(limit, 100)))
+        else:
+            reports = list_reports(session, limit=max(1, min(limit, 100)))
         return {"reports": [ReportDetailOut.model_validate(report).model_dump(mode="json") for report in reports]}
 
 
@@ -597,6 +672,161 @@ async def post_admin_quality_feedback(payload: QualityFeedbackCreate, request: R
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return QualityFeedbackOut.model_validate(item)
+
+
+@app.post("/api/admin/wechat-token")
+async def set_wechat_token(payload: dict, request: Request):
+    """设置微信公众号平台 token 和 cookie。"""
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+    from app.services.wechat_client import set_credentials
+    token = payload.get("token", "").strip()
+    cookie = payload.get("cookie", "").strip()
+    if not token or not cookie:
+        raise HTTPException(status_code=400, detail="token and cookie required")
+    set_credentials(token, cookie)
+    return {"status": "ok"}
+
+
+@app.get("/api/admin/wechat-token")
+async def get_wechat_token_status(request: Request):
+    """检查微信公众号 token 是否已配置。"""
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+    from app.services.wechat_client import get_credentials
+    creds = get_credentials()
+    return {"configured": bool(creds)}
+
+
+@app.delete("/api/admin/wechat-token")
+async def clear_wechat_token(request: Request):
+    """清除微信公众号 token 和 cookie。"""
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+    from app.services.wechat_client import clear_credentials
+    clear_credentials()
+    return {"status": "cleared"}
+
+
+_wechat_sync_status: dict[str, Any] = {
+    "running": False,
+    "account": "",
+    "pages_done": 0,
+    "articles_added": 0,
+    "last_page_count": 0,
+    "error": "",
+    "done": False,
+}
+
+
+@app.post("/api/admin/wechat-sync")
+async def sync_wechat_account(payload: dict, request: Request):
+    """启动后台公众号文章同步（异步）。"""
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+    from app.services.wechat_client import search_account, sync_account_articles, get_credentials
+    if not get_credentials():
+        raise HTTPException(status_code=400, detail="WeChat token not configured")
+    if _wechat_sync_status["running"]:
+        raise HTTPException(status_code=409, detail="同步任务正在进行中")
+
+    account_name = payload.get("account_name", "英蓝云展")
+    fakeid = payload.get("fakeid")
+    max_pages = max(1, min(int(payload.get("max_pages", 10)), 20))
+
+    if not fakeid:
+        accounts = await search_account(account_name)
+        if not accounts:
+            raise HTTPException(status_code=404, detail=f"Account '{account_name}' not found")
+        fakeid = accounts[0]["fakeid"]
+        account_name = accounts[0].get("nickname", account_name)
+
+    _wechat_sync_status.update(
+        running=True, account=account_name, pages_done=0,
+        articles_added=0, last_page_count=0, error="", done=False,
+    )
+
+    async def _run_sync():
+        try:
+            async def on_progress(page: int, added: int, page_count: int):
+                _wechat_sync_status["pages_done"] = page
+                _wechat_sync_status["articles_added"] = added
+                _wechat_sync_status["last_page_count"] = page_count
+
+            added = await sync_account_articles(
+                fakeid, account_name, max_pages=max_pages, progress_callback=on_progress,
+            )
+            _wechat_sync_status["articles_added"] = added
+
+            # Scrape pending articles
+            if added > 0:
+                try:
+                    from app.services.ingester import ingest_weixin_articles
+                    await ingest_weixin_articles()
+                except Exception as exc:
+                    logger.warning("WeChat scrape after sync failed: %s", exc)
+        except Exception as exc:
+            _wechat_sync_status["error"] = str(exc)[:300]
+            logger.error("WeChat background sync failed: %s", exc, exc_info=True)
+        finally:
+            _wechat_sync_status["running"] = False
+            _wechat_sync_status["done"] = True
+
+    import asyncio
+    asyncio.create_task(_run_sync())
+    return {"status": "started", "account": account_name, "max_pages": max_pages}
+
+
+@app.get("/api/admin/wechat-sync/status")
+async def get_wechat_sync_status(request: Request):
+    """查询公众号同步进度。"""
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+    return dict(_wechat_sync_status)
+
+
+@app.post("/api/admin/wechat-urls")
+async def import_wechat_urls(payload: dict, request: Request):
+    """手动导入公众号文章 URL，自动触发爬取。"""
+    with session_scope() as session:
+        _admin_user_or_403(session, request)
+
+    urls = payload.get("urls", [])
+    if not urls:
+        raise HTTPException(status_code=400, detail="urls list required")
+
+    from app.models import WeChatArticle
+    from app.utils import canonicalize_url
+
+    added = 0
+    with session_scope() as session:
+        for url in urls:
+            if not isinstance(url, str) or "weixin" not in url:
+                continue
+            normalized = canonicalize_url(url.strip())
+            existing = session.scalar(
+                select(WeChatArticle).where(WeChatArticle.url == normalized)
+            )
+            if existing:
+                continue
+            wa = WeChatArticle(
+                url=normalized,
+                title=url.split("/")[-1][:200] or "待爬取",
+                account_name="英蓝云展",
+                scrape_status="pending",
+            )
+            session.add(wa)
+            added += 1
+        session.commit()
+
+    if added > 0:
+        try:
+            from app.services.ingester import ingest_weixin_articles
+            await ingest_weixin_articles()
+        except Exception as exc:
+            logger.warning("WeChat scrape after import failed: %s", exc)
+
+    return {"added": added, "total_submitted": len(urls)}
 
 
 @app.get("/api/admin/quality-overview")

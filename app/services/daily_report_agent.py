@@ -1954,7 +1954,15 @@ class DailyReportAgent:
         publish_grade = self._publish_grade_from_status(status)
 
         if result.sections_content:
-            markdown_content = "\n\n".join(result.sections_content.values())
+            _CANONICAL_ORDER = ["industry", "policy", "academic", "patent", "wechat", "lab_news"]
+            ordered_sections: dict[str, str] = {}
+            for key in _CANONICAL_ORDER:
+                if key in result.sections_content:
+                    ordered_sections[key] = result.sections_content[key]
+            for key in result.sections_content:
+                if key not in ordered_sections:
+                    ordered_sections[key] = result.sections_content[key]
+            markdown_content = "\n\n".join(ordered_sections.values())
         else:
             markdown_content = "报告生成失败/内容不足。"
 

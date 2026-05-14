@@ -23,6 +23,12 @@ export interface DecisionTrace {
   published_at_source?: string
   language?: string
   keywords?: string[]              // 文章关键词标签
+  patent_number?: string           // 专利号
+  publication_number?: string      // 公开号
+  inventors?: string               // 发明人
+  patent_category?: string         // 专利技术类别
+  grant_date?: string              // 授权日
+  source_type?: string             // 来源类型 (wechat 等)
 }
 
 export interface ReportItem {
