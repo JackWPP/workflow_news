@@ -8,3 +8,5 @@ psycopg[binary]
 feedparser
 trafilatura
 alembic
+numpy
+pydantic
