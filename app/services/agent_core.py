@@ -47,6 +47,7 @@ class AgentResult:
     articles: list[dict[str, Any]] = field(default_factory=list)
     sections_content: dict[str, str] = field(default_factory=dict)
     editorial: str = ""
+    daily_briefing: str = ""
     memory_snapshot: dict[str, Any] = field(default_factory=dict)
     harness_status: dict[str, Any] = field(default_factory=dict)
     finished_reason: str = "unknown"  # "complete" | "budget_exhausted" | "timeout" | "error" | "finish_tool"
@@ -482,42 +483,42 @@ class AgentCore:
                 msg = f"⚠️ 检查点：你已经搜索了 {searched} 轮但还没有阅读任何文章。现在必须用 read_page 阅读最相关的 2-3 篇，然后用 evaluate_article 评估。"
                 messages.append({"role": "user", "content": msg})
 
-            # Checkpoint 1 (step >= 10): 强制评估
-            if step_index == 10 and not has_evaluated:
+            # Checkpoint 1 (step >= 12): 强制评估
+            if step_index == 12 and not has_evaluated:
                 read_count = len(memory.read_urls)
                 if read_count > 0:
                     msg = f"⚠️ 检查点：你已经阅读了 {read_count} 篇文章，但还没有评估任何一篇。现在必须用 evaluate_article 评估它们，不要继续搜索。"
                 else:
-                    msg = "⚠️ 检查点：步数已到 10。如果你还没有读到有价值的文章，请先读几篇然后用 evaluate_article 评估。不要只搜索不读。"
+                    msg = "⚠️ 检查点：步数已到 12。如果你还没有读到有价值的文章，请先读几篇然后用 evaluate_article 评估。不要只搜索不读。"
                 messages.append({"role": "user", "content": msg})
 
-            # Checkpoint 1.5 (step >= 12): 板块多样性
-            if step_index == 12 and len(articles) >= 3:
+            # Checkpoint 1.5 (step >= 15): 板块多样性
+            if step_index == 15 and len(articles) >= 3:
                 sections = {a.section for a in articles}
                 if len(sections) == 1:
                     sec = list(sections)[0]
                     msg = f"⚠️ 检查点：所有 {len(articles)} 篇文章都在同一个板块。请搜索其他方向（政策法规/学术前沿），确保覆盖至少 2 个板块。然后继续评估和写作。"
                     messages.append({"role": "user", "content": msg})
 
-            # Checkpoint 2 (step >= 16): 强制开始写作
-            if step_index == 16 and not has_written:
+            # Checkpoint 2 (step >= 22): 强制开始写作
+            if step_index == 22 and not has_written:
                 if len(articles) >= 2:
-                    msg = f"⚠️ 检查点：步数已到 20。你已经有 {len(articles)} 篇可发布文章。现在必须停止搜索，用 write_section 撰写各板块内容，然后 finish。"
+                    msg = f"⚠️ 检查点：步数已到 22。你已经有 {len(articles)} 篇可发布文章。现在必须停止搜索，用 write_section 撰写各板块内容，然后 finish。"
                 else:
-                    msg = f"⚠️ 检查点：步数已到 20。立即用 evaluate_article 评估所有已读文章，然后用 write_section + finish 完成日报。"
+                    msg = f"⚠️ 检查点：步数已到 22。立即用 evaluate_article 评估所有已读文章，然后用 write_section + finish 完成日报。"
                 messages.append({"role": "user", "content": msg})
 
-            # Checkpoint 3 (step >= 22): 如果已写作但未 finish，强制催促
-            if step_index == 22 and has_written:
+            # Checkpoint 3 (step >= 30): 如果已写作但未 finish，强制催促
+            if step_index == 30 and has_written:
                 has_finished = any(s.tool_name == "finish" for s in memory.step_history)
                 if not has_finished:
                     msg = "检查点：你已经写了板块内容。现在必须立即调用 finish 完成日报，不要继续搜索或阅读。"
                     messages.append({"role": "user", "content": msg})
 
-            # Checkpoint 3.5 (step >= 28): 还没 finish 就直接中断
-            if step_index >= 28:
+            # Checkpoint 3.5 (step >= 38): 还没 finish 就直接中断
+            if step_index >= 38:
                 has_finished = any(s.tool_name == "finish" for s in memory.step_history)
-                if not has_finished and (has_written or len(articles) >= 2):
+                if not has_finished and (has_written or len(articles) >= 4):
                     logger.info("[AgentCore] Step %d: forcing auto-finish", step_index)
                     return self._build_fallback_result(
                         memory, "auto_finish", step_index, total_tokens,
@@ -716,16 +717,26 @@ class AgentCore:
         sections_from_finish: dict[str, str] = (
             raw_sections if isinstance(raw_sections, dict) else {}
         )
-        merged_sections: dict[str, str] = {
+        merged_raw: dict[str, str] = {
             **sections_from_memory,
             **sections_from_finish,
         }
+        # 强制按规范顺序排列，避免 LLM finish 参数打乱板块顺序
+        _CANONICAL_ORDER = ["industry", "policy", "academic", "patent", "wechat", "lab_news"]
+        merged_sections: dict[str, str] = {}
+        for key in _CANONICAL_ORDER:
+            if key in merged_raw:
+                merged_sections[key] = merged_raw[key]
+        for key in merged_raw:
+            if key not in merged_sections:
+                merged_sections[key] = merged_raw[key]
 
         return AgentResult(
             success=True,
             title=finish_data.get("title", "高分子加工全视界日报"),
             summary=finish_data.get("summary", ""),
             editorial=finish_data.get("editorial", ""),
+            daily_briefing=finish_data.get("daily_briefing", ""),
             articles=articles,
             sections_content=merged_sections,
             memory_snapshot=memory.snapshot(),
@@ -778,7 +789,7 @@ class AgentCore:
         """
         持久化 AgentStep 到数据库。
 
-        使用独立短生命周期 session，避免长事务占用 SQLite 写锁。
+        使用独立短生命周期 session，避免长事务占用数据库连接。
         """
         try:
             from app.models import AgentStep

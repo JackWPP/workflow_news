@@ -20,11 +20,17 @@ async def fetch_feed_entries(feed_url: str, source_name: str, source_type: str) 
         title = entry.get("title")
         if not link or not title:
             continue
+        # content:encoded has the full body; summary (description) is truncated
+        content_encoded = ""
+        content_list = entry.get("content", [])
+        if content_list and isinstance(content_list, list):
+            content_encoded = content_list[0].get("value", "")
         entries.append(
             {
                 "url": link,
                 "title": title,
                 "snippet": entry.get("summary"),
+                "content_encoded": content_encoded,
                 "image_url": None,
                 "published_at": parse_datetime(entry.get("published") or entry.get("updated")),
                 "domain": extract_domain(link),

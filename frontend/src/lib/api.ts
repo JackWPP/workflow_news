@@ -14,8 +14,10 @@ import type {
   User,
 } from '../types'
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     credentials: 'include',
     headers: {
@@ -51,16 +53,23 @@ export const api = {
   me() {
     return request<User>('/api/me')
   },
-  listReports(limit = 30) {
-    return request<{ reports: Report[] }>(`/api/reports?limit=${limit}&view=combined`)
+  listReports(limit = 30, reportType?: string) {
+    const params = reportType ? `report_type=${reportType}` : 'view=combined'
+    return request<{ reports: Report[] }>(`/api/reports?limit=${limit}&${params}`)
   },
-  todayReport() {
-    return request<Report>('/api/reports/today?view=combined')
+  todayGlobalReport() {
+    return request<Report>('/api/reports/today')
+  },
+  todayAiReport() {
+    return request<Report>('/api/reports/today?report_type=ai')
+  },
+  todayLabReport() {
+    return request<Report>('/api/reports/today?report_type=lab')
   },
   getReport(id: number) {
     return request<Report>(`/api/reports/${id}`)
   },
-  runReport(reportType: 'global' | 'ai' = 'global') {
+  runReport(reportType: 'global' | 'ai' | 'lab' = 'global') {
     return request<{ run_id: number; status: string }>('/api/reports/run', {
       method: 'POST',
       body: JSON.stringify({ shadow_mode: false, report_type: reportType }),
@@ -75,7 +84,7 @@ export const api = {
     onComplete?: (data: any) => void
     onError?: (data: any) => void
   }) {
-    const es = new EventSource(`/api/reports/run/${runId}/stream`)
+    const es = new EventSource(`${API_BASE}/api/reports/run/${runId}/stream`)
     es.addEventListener('step', (e) => handlers.onStep?.(JSON.parse(e.data)))
     es.addEventListener('phase', (e) => handlers.onPhase?.(JSON.parse(e.data)))
     es.addEventListener('complete', (e) => {
@@ -104,7 +113,7 @@ export const api = {
     return request<ConversationDetail>(`/api/conversations/${id}`)
   },
   async sendChatStream(content: string, conversationId?: number): Promise<ChatResponse> {
-    const response = await fetch('/api/chat/stream', {
+    const response = await fetch(`${API_BASE}/api/chat/stream`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -166,6 +175,27 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     })
+  },
+  getWeChatTokenStatus() {
+    return request<{ configured: boolean }>('/api/admin/wechat-token')
+  },
+  setWeChatToken(token: string, cookie: string) {
+    return request<{ status: string }>('/api/admin/wechat-token', {
+      method: 'POST',
+      body: JSON.stringify({ token, cookie }),
+    })
+  },
+  clearWeChatToken() {
+    return request<{ status: string }>('/api/admin/wechat-token', { method: 'DELETE' })
+  },
+  syncWeChatAccount(accountName: string, maxPages = 10) {
+    return request<{ status: string; account: string; max_pages: number }>('/api/admin/wechat-sync', {
+      method: 'POST',
+      body: JSON.stringify({ account_name: accountName, max_pages: maxPages }),
+    })
+  },
+  getWeChatSyncStatus() {
+    return request<{ running: boolean; account: string; pages_done: number; articles_added: number; last_page_count: number; error: string; done: boolean }>('/api/admin/wechat-sync/status')
   },
   listQualityFeedback(limit = 50) {
     return request<{ items: QualityFeedback[] }>(`/api/admin/quality-feedback?limit=${limit}`)

@@ -32,6 +32,7 @@ load_dotenv()
 @dataclass(frozen=True)
 class Settings:
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./news.db")
+    port: int = int(os.getenv("PORT", "8765"))
     app_timezone: str = os.getenv("APP_TIMEZONE", "Asia/Hong_Kong")
     sqlite_busy_timeout_seconds: int = int(
         os.getenv("SQLITE_BUSY_TIMEOUT_SECONDS", "30")

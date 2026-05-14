@@ -1,21 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Bot, User, Database, Globe, CheckCircle2, Search, BrainCircuit } from 'lucide-vue-next'
+import { Bot, User, Globe } from 'lucide-vue-next'
 import type { Message } from '../types'
 
 const props = defineProps<{ message: Message }>()
 
 const isUser = computed(() => props.message.role === 'user')
 
-// Simulated thought process for Assistant messages (since backend real-time streaming of steps might not be fully wired to the UI yet, we show a sleek static trace if it has citations).
-const hasThinking = computed(() => !isUser.value && props.message.citations && props.message.citations.length > 0)
-
-// Simulated steps for demonstration in styling
-const mockSteps = [
-  { icon: Globe, text: 'Search & Evaluate Coverage' },
-  { icon: Search, text: 'Deep Scrape Candidates' },
-  { icon: Database, text: 'Update Working Memory' },
-]
 </script>
 
 <template>
@@ -29,21 +20,6 @@ const mockSteps = [
 
     <!-- Bubble Wrapper -->
     <div class="flex flex-col gap-2 max-w-[85%] md:max-w-[75%]">
-      <!-- Agent Thinking Trace (Only for Assistants with data) -->
-      <div v-if="hasThinking" class="mb-2 p-3 rounded-lg bg-black/30 border border-white/5 shadow-inner">
-        <div class="flex items-center gap-2 mb-2">
-          <BrainCircuit class="w-4 h-4 text-[var(--accent-policy)] animate-pulse" />
-          <span class="text-xs font-semibold tracking-wider text-[var(--accent-policy)] uppercase">Agent Trace</span>
-        </div>
-        <div class="flex flex-col gap-2">
-          <div v-for="(step, i) in mockSteps" :key="i" class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-            <CheckCircle2 class="w-3 h-3 text-[var(--status-ok)]" />
-            <component :is="step.icon" class="w-3 h-3" />
-            <span>{{ step.text }}</span>
-          </div>
-        </div>
-      </div>
-
       <!-- Main Message Bubble -->
       <!-- Added prose for rich text rendering inside bubble -->
       <div class="p-4 rounded-2xl relative"

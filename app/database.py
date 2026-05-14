@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, QueuePool
 
 from app.config import settings
 
@@ -15,26 +15,35 @@ logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 
-
-def _connect_args() -> dict:
-    if settings.database_url.startswith("sqlite"):
-        return {"check_same_thread": False, "timeout": settings.sqlite_busy_timeout_seconds}
-    return {}
-
-
 _is_sqlite = settings.database_url.startswith("sqlite")
+
+
+def _build_engine_args() -> dict:
+    if _is_sqlite:
+        return {
+            "pool_pre_ping": False,
+            "poolclass": NullPool,
+            "connect_args": {"check_same_thread": False, "timeout": settings.sqlite_busy_timeout_seconds},
+        }
+    return {
+        "pool_pre_ping": True,
+        "poolclass": QueuePool,
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_recycle": 300,
+        "connect_args": {},
+    }
+
 
 engine = create_engine(
     settings.database_url,
     future=True,
-    pool_pre_ping=not _is_sqlite,
-    **({"poolclass": NullPool} if _is_sqlite else {}),
-    connect_args=_connect_args(),
+    **_build_engine_args(),
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
 
 
-if settings.database_url.startswith("sqlite"):
+if _is_sqlite:
     @event.listens_for(engine, "connect")
     def _configure_sqlite(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
@@ -47,13 +56,7 @@ if settings.database_url.startswith("sqlite"):
 
 @contextmanager
 def session_scope():
-    """Provide a transactional scope with automatic retry on database lock.
-
-    Retries up to 3 times with exponential backoff (0.5s, 1s, 2s) when
-    SQLite reports "database is locked" — typically caused by concurrent
-    writers or stale processes holding the write lock.
-    """
-    max_retries = 3
+    max_retries = 3 if _is_sqlite else 0
     for attempt in range(max_retries + 1):
         session = SessionLocal()
         try:
@@ -62,7 +65,7 @@ def session_scope():
             return
         except OperationalError as exc:
             session.rollback()
-            if "database is locked" in str(exc) and attempt < max_retries:
+            if _is_sqlite and "database is locked" in str(exc) and attempt < max_retries:
                 wait = 0.5 * (2 ** attempt)
                 logger.warning(
                     "database is locked, retry %d/%d in %.1fs",

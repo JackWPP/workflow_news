@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Microscope, Construction, ScrollText } from 'lucide-vue-next'
+import { Microscope, Construction, ScrollText, FileText, MessageCircle, FlaskConical } from 'lucide-vue-next'
 
 const props = defineProps<{
   section: string
@@ -11,20 +11,27 @@ const icon = computed(() => {
   if (props.section === 'academic') return Microscope
   if (props.section === 'industry') return Construction
   if (props.section === 'policy') return ScrollText
+  if (props.section === 'patent') return FileText
+  if (props.section === 'wechat') return MessageCircle
+  if (props.section === 'lab_news') return FlaskConical
   return Microscope
 })
 
 const sectionLabel = computed(() => {
-  if (props.section === 'academic') return '学术前沿'
-  if (props.section === 'industry') return '产业动态'
-  if (props.section === 'policy') return '政策标准'
-  return props.section
+  const map: Record<string, string> = {
+    academic: '学术前沿', industry: '产业动态', policy: '政策标准',
+    patent: '专利精选', wechat: '英蓝云展', lab_news: '实验室资讯',
+  }
+  return map[props.section] || props.section
 })
 
 const colorClass = computed(() => {
   if (props.section === 'academic') return 'text-[var(--accent-academic)] glow-academic'
   if (props.section === 'industry') return 'text-[var(--accent-industry)] glow-industry'
   if (props.section === 'policy') return 'text-[var(--accent-policy)] glow-policy'
+  if (props.section === 'patent') return 'text-amber-400 glow-patent'
+  if (props.section === 'wechat') return 'text-green-400 glow-wechat'
+  if (props.section === 'lab_news') return 'text-purple-400 glow-lab'
   return 'text-[var(--accent-academic)]'
 })
 </script>
@@ -85,4 +92,11 @@ const colorClass = computed(() => {
 .glow-academic { box-shadow: 0 0 15px rgba(108, 180, 255, 0.2); border-color: rgba(108, 180, 255, 0.4); }
 .glow-industry { box-shadow: 0 0 15px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.4); }
 .glow-policy { box-shadow: 0 0 15px rgba(167, 139, 250, 0.2); border-color: rgba(167, 139, 250, 0.4); }
+.glow-patent { box-shadow: 0 0 15px rgba(245, 158, 11, 0.2); border-color: rgba(245, 158, 11, 0.4); }
+.glow-wechat { box-shadow: 0 0 15px rgba(34, 197, 94, 0.2); border-color: rgba(34, 197, 94, 0.4); }
+.glow-lab { box-shadow: 0 0 15px rgba(139, 92, 246, 0.2); border-color: rgba(139, 92, 246, 0.4); }
+
+.text-amber-400 { color: #fbbf24; }
+.text-green-400 { color: #4ade80; }
+.text-purple-400 { color: #c084fc; }
 </style>

@@ -203,11 +203,26 @@ class ScraperClient:
         # 从 HTML 补充 metadata
         title, image_url, published_at = _extract_html_meta(downloaded)
 
-        # Fallback: scan markdown for inline images if og:image not found
+        # Validate og:image through scoring to avoid logo/header images
+        if image_url:
+            from app.services.jina_reader import _score_image_src
+            og_score = _score_image_src(image_url, downloaded)
+            if og_score < 0:
+                logger.debug("scraper: og:image rejected by scoring: %s score=%d", image_url[:80], og_score)
+                image_url = None
+
+        # Fallback: score inline markdown images if og:image not found
         if not image_url and markdown:
-            m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
-            if m:
-                image_url = m.group(1)
+            md_images = re.findall(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+            md_candidates = []
+            for src in md_images:
+                from app.services.jina_reader import _score_image_src
+                score = _score_image_src(src, downloaded if downloaded else "")
+                if score > -999:
+                    md_candidates.append((score, src))
+            if md_candidates:
+                md_candidates.sort(key=lambda x: x[0], reverse=True)
+                image_url = md_candidates[0][1]
 
         # 如果 HTML meta 没有日期，尝试从文本中提取
         if published_at is None:

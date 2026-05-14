@@ -941,6 +941,12 @@ class EvaluateArticleTool(Tool):
                 "  - image_worthiness: true/false（这个主题值不值得配图）\n"
                 "  - zh_title: 文章的中文翻译标题（如果原文是中文则原样保留）\n"
                 "  - zh_summary: 提炼后的中文内容摘要（约80字，如果原文是中文则用中文总结）\n"
+                "  - keywords: 3-5个关键词标签（字符串数组），要求：\n"
+                "      * 每个标签2-6个汉字，或常见英文缩写如PE、PP、PVC、AI等\n"
+                "      * 必须包含：具体材料/技术/工艺名称（如聚乙烯、注塑成型、碳纤维、锂电池）\n"
+                "      * 可选包含：应用领域（如汽车轻量化、医疗器械、光伏）\n"
+                "      * 不要泛泛的词汇如'技术'、'创新'、'发展'\n"
+                "      * 优先使用行业通用术语\n"
             )
             user_content = (
                 f"标题：{title}\n"
@@ -971,6 +977,9 @@ class EvaluateArticleTool(Tool):
             # 查找发现此 URL 的搜索 query
             search_query = memory.url_search_query.get(url, "")
 
+            raw_keywords = result.get("keywords", [])
+            keywords = raw_keywords if isinstance(raw_keywords, list) else []
+
             article = ArticleSummary(
                 title=zh_title,
                 url=url,
@@ -998,6 +1007,7 @@ class EvaluateArticleTool(Tool):
                 requires_observation_only=quality["requires_observation_only"],
                 recency_status=recency_status,
                 published_at_source=published_at_source,
+                keywords=keywords,
             )
             memory.add_article(article)
 
@@ -1434,6 +1444,8 @@ class WriteSectionTool(Tool):
 
         topics = memory.get_compiled_topics(section)
         if not topics:
+            topics = self._build_topics_from_articles(memory, section)
+        if not topics:
             return ToolResult(
                 success=False,
                 summary=f"板块 '{section}' 没有足够高可信主题",
@@ -1479,7 +1491,7 @@ class WriteSectionTool(Tool):
                 "3. 可靠度只能照抄给定的来源等级标签，不得自创高/中/低判断。\n"
                 "4. 若主题证据不足以支撑行业影响分析，只写事实摘要与谨慎观察，不要拔高。\n"
                 "5. 每个主题最后必须带来源引用，格式为 [来源名称](URL)。\n"
-                "6. 不要生成行业趋势综述，不要跨主题补数。\n"
+                "6. 不要在同一板块内跨主题补数。日报末尾的每日洞察由系统自动生成，不需要 write_section 处理。\n"
                 "输出纯 markdown，不要代码块。"
             )
             try:
@@ -1515,6 +1527,24 @@ class WriteSectionTool(Tool):
             summary=summary,
             data={"section": section, "content": content, "topic_count": len(topics)},
         )
+
+    @staticmethod
+    def _build_topics_from_articles(memory: "WorkingMemory", section: str) -> list[dict[str, Any]]:
+        articles = [a for a in memory.publishable_articles() if a.section == section]
+        if not articles:
+            return []
+        topics = []
+        for a in articles:
+            topics.append({
+                "title": a.title,
+                "source_tier": a.source_tier,
+                "source_reliability_label": a.source_reliability_label,
+                "evidence_strength": a.evidence_strength,
+                "supports_numeric_claims": a.supports_numeric_claims,
+                "facts": [a.key_finding] if a.key_finding else [a.summary[:120]] if a.summary else [],
+                "citations": [{"title": a.title, "domain": a.domain, "source_tier": a.source_tier, "url": a.resolved_url or a.url}],
+            })
+        return topics
 
     @staticmethod
     def _render_safe_section_template(
@@ -1724,8 +1754,9 @@ class FinishTool(Tool):
                 data={"ready": False},
             )
 
-        # ── 生成"编者按"洞察摘要 ──
+        daily_briefing = ""
         editorial = ""
+
         trusted_findings = [
             a.key_finding
             for a in articles
@@ -1736,6 +1767,9 @@ class FinishTool(Tool):
         if trusted_findings:
             editorial = "今日关注：" + "；".join(trusted_findings[:3]) + "。"
 
+        if self._llm and self._llm.enabled and articles:
+            daily_briefing = await self._generate_daily_briefing(articles, memory.key_findings)
+
         return ToolResult(
             success=True,
             summary=f"✅ 报告完成：{title}（{len(articles)} 篇文章）",
@@ -1743,12 +1777,42 @@ class FinishTool(Tool):
                 "title": title,
                 "summary": summary_text,
                 "editorial": editorial,
+                "daily_briefing": daily_briefing,
                 "sections_content": sections_content,
                 "articles": [a.to_dict() for a in articles],
                 "coverage": memory.coverage.to_dict(),
                 "is_finish": True,
             },
         )
+
+    async def _generate_daily_briefing(
+        self, articles: list, key_findings: list[str]
+    ) -> str:
+        article_digest = "\n".join(
+            f"- [{a.section}] {a.title}（{a.domain}）：{a.key_finding or a.summary[:80]}"
+            for a in articles[:10]
+        )
+        findings_text = "；".join(key_findings[:5]) if key_findings else "暂无"
+        system_prompt = (
+            "你是高分子材料加工领域的资深分析师。请基于今日收集的文章素材，生成一段150-200字的「每日洞察」摘要。\n"
+            "要求：\n"
+            "1. 概括今日最重要的2-3个行业动态\n"
+            "2. 指出跨文章的趋势信号或关联\n"
+            "3. 给出值得后续跟踪的方向建议\n"
+            "4. 术语准确，中文输出，无「机翻感」\n"
+            "5. 不得补充素材中没有的事实、数字或预测\n"
+            "6. 如果素材不足以支撑趋势判断，仅做事实概括，不要强行外推\n"
+            "输出纯文本，不要标题、不要 markdown 格式。"
+        )
+        user_prompt = f"今日文章素材：\n{article_digest}\n\n趋势洞察数据：{findings_text}"
+        try:
+            briefing = await asyncio.wait_for(
+                self._llm.simple_completion(system_prompt, user_prompt, temperature=0.3),
+                timeout=20.0,
+            )
+            return (briefing or "").strip()
+        except Exception:
+            return ""
 
 
 # ── Factory ───────────────────────────────────────────────

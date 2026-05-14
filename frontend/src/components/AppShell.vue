@@ -7,8 +7,7 @@ import {
   MessageSquare, 
   Settings, 
   LogOut,
-  User,
-  Activity
+  User
 } from 'lucide-vue-next'
 
 import { useSessionStore } from '../stores/session'
@@ -52,8 +51,8 @@ async function handleLogout() {
     
     <!-- Sidebar Navigation -->
     <aside class="sidebar w-64 flex-shrink-0 flex flex-col z-10 glass-panel border-y-0 border-l-0 rounded-none h-full relative">
-      <div class="p-6 flex items-center gap-3">
-        <Activity class="w-8 h-8 text-[var(--accent-primary)] animate-pulse-glow" />
+      <div class="p-6 flex flex-col items-center gap-2 text-center">
+        <img src="/logo.png" alt="logo" class="logo-img" />
         <div>
           <h1 class="text-lg font-bold tracking-tight text-white leading-tight">高分子视野</h1>
           <p class="text-[10px] text-[var(--accent-academic)] tracking-widest">智能情报平台</p>
@@ -117,6 +116,13 @@ async function handleLogout() {
   background: rgba(100, 180, 255, 0.1) !important;
   border-left: 3px solid var(--accent-primary);
   box-shadow: inset 0 0 20px rgba(100, 180, 255, 0.05);
+}
+
+.logo-img {
+  width: 8rem;
+  height: 8rem;
+  object-fit: contain;
+  border-radius: 1.25rem;
 }
 
 /* Add Tailwind-like utility classes used above since we dropped Tailwind but I used some Tailwind classes in the template out of habit */

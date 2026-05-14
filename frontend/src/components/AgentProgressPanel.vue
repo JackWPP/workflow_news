@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
-import { Search, FileText, Link, PenTool, AlertTriangle, Loader } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { Search, FileText, PenTool, AlertTriangle, Loader } from 'lucide-vue-next'
 
 interface StepEvent {
   tool_name: string
@@ -29,15 +29,25 @@ const emit = defineEmits<{
 const currentPhase = ref<PhaseEvent | null>(null)
 const steps = ref<StepEvent[]>([])
 const errorMessage = ref('')
-const stepsContainer = ref<HTMLElement | null>(null)
+
+const stageIndex = computed(() => {
+  const phase = Number(currentPhase.value?.phase ?? 1)
+  if (phase >= 3) return 2
+  if (phase >= 2) return 1
+  const latestTool = steps.value.at(-1)?.tool_name || ''
+  if (['write_section', 'finish', 'check_coverage'].includes(latestTool)) return 2
+  if (['read_page', 'evaluate_article', 'search_images'].includes(latestTool)) return 1
+  return 0
+})
+
+const stages = [
+  { label: '检索来源', detail: '正在查找今日相关信息', icon: Search },
+  { label: '整理内容', detail: '正在筛选重点和来源依据', icon: FileText },
+  { label: '生成简报', detail: '正在组织今日智能日报', icon: PenTool },
+]
 
 function handleStep(data: StepEvent) {
   steps.value.push(data)
-  nextTick(() => {
-    if (stepsContainer.value) {
-      stepsContainer.value.scrollTop = stepsContainer.value.scrollHeight
-    }
-  })
 }
 
 function handlePhase(data: PhaseEvent) {
@@ -49,7 +59,7 @@ function handleComplete(data: any) {
 }
 
 function handleError(data: any) {
-  errorMessage.value = data.message || 'Unknown error'
+  errorMessage.value = data.message || '本次更新未完成，请稍后重试'
   emit('error', errorMessage.value)
 }
 
@@ -58,51 +68,24 @@ defineExpose({ handleStep, handlePhase, handleComplete, handleError })
 
 <template>
   <div v-if="active" class="agent-progress-panel">
-    <!-- Phase indicator -->
+    <div class="phase-status">
+      <Loader class="w-4 h-4 animate-spin" />
+      <span>正在更新今日简报</span>
+    </div>
+
     <div class="phase-bar">
       <div
-        v-for="p in [1, 2, 2.5, 3]"
-        :key="p"
+        v-for="(stage, index) in stages"
+        :key="stage.label"
         class="phase-dot"
         :class="{
-          'phase-active': currentPhase?.phase === p,
-          'phase-done': currentPhase && currentPhase.phase > p
+          'phase-active': stageIndex === index,
+          'phase-done': stageIndex > index
         }"
       >
-        <Search v-if="p === 1" class="w-4 h-4" />
-        <FileText v-else-if="p === 2" class="w-4 h-4" />
-        <Link v-else-if="p === 2.5" class="w-4 h-4" />
-        <PenTool v-else class="w-4 h-4" />
-        <span class="phase-label">{{ p === 2.5 ? '验证' : ['', '搜索', '处理', '', '综合'][p as number] }}</span>
-      </div>
-    </div>
-
-    <!-- Current phase description -->
-    <div v-if="currentPhase" class="phase-status">
-      <Loader class="w-4 h-4 animate-spin" />
-      <span>{{ currentPhase.name }}...</span>
-      <span v-if="currentPhase.article_count" class="text-xs opacity-60">
-        ({{ currentPhase.article_count }} 篇)
-      </span>
-    </div>
-
-    <!-- Step log -->
-    <div ref="stepsContainer" class="steps-log">
-      <div
-        v-for="(step, idx) in steps"
-        :key="idx"
-        class="step-item"
-        :class="{ 'step-blocked': step.harness_blocked }"
-      >
-        <div class="step-header">
-          <span class="step-tool">{{ step.tool_name }}</span>
-          <span class="step-duration">{{ step.duration }}s</span>
-        </div>
-        <p v-if="step.thought" class="step-thought">{{ step.thought }}</p>
-        <p class="step-result">{{ step.result_summary }}</p>
-      </div>
-      <div v-if="steps.length === 0" class="step-item opacity-50">
-        <Loader class="w-4 h-4 animate-spin inline" /> 等待 Agent 执行第一步...
+        <component :is="stage.icon" class="w-4 h-4" />
+        <span class="phase-label">{{ stage.label }}</span>
+        <span class="phase-detail">{{ stage.detail }}</span>
       </div>
     </div>
 
@@ -112,11 +95,7 @@ defineExpose({ handleStep, handlePhase, handleComplete, handleError })
       <span>{{ errorMessage }}</span>
     </div>
 
-    <!-- Stats bar -->
-    <div class="stats-bar">
-      <span>步数: {{ steps.length }}</span>
-      <span>搜索: {{ steps.filter(s => s.tool_name === 'web_search').length }} 次</span>
-    </div>
+    <p class="stats-bar">更新完成后将自动显示最新内容。</p>
   </div>
 </template>
 

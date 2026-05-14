@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import time
 from typing import Any
@@ -8,6 +9,8 @@ import httpx
 
 from app.config import settings
 from app.utils import extract_domain, parse_datetime
+
+logger = logging.getLogger(__name__)
 
 # Common patterns for extracting metadata from raw HTML (used by fallback scraper)
 _OG_IMAGE_RE = re.compile(r'<meta\s+(?:property|name)=["\']og:image["\']\s+content=["\']([^"\']+)["\']', re.IGNORECASE)
@@ -157,22 +160,37 @@ class JinaReaderClient:
         markdown = data.get("content") or ""
         published_at = self._parse_published_time(data)
 
-        # Try to extract image from Jina response
+        # Try to extract image from Jina response (validate through scoring)
         image_url = None
         images = data.get("images")
+        img_candidates = []
         if isinstance(images, dict):
-            # Jina may return {url: description} mapping
             for img_url in images:
-                image_url = img_url
-                break
-        elif isinstance(images, list) and images:
-            image_url = images[0] if isinstance(images[0], str) else None
+                score = _score_image_src(img_url, "")
+                if score > -999:
+                    img_candidates.append((score, img_url))
+        elif isinstance(images, list):
+            for img in images:
+                src = img if isinstance(img, str) else None
+                if src:
+                    score = _score_image_src(src, "")
+                    if score > -999:
+                        img_candidates.append((score, src))
+        if img_candidates:
+            img_candidates.sort(key=lambda x: x[0], reverse=True)
+            image_url = img_candidates[0][1]
 
-        # Fallback: scan markdown for inline images if no image found yet
+        # Fallback: score inline markdown images if no image found yet
         if not image_url and markdown:
-            m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
-            if m:
-                image_url = m.group(1)
+            md_images = re.findall(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+            md_candidates = []
+            for src in md_images:
+                score = _score_image_src(src, "")
+                if score > -999:
+                    md_candidates.append((score, src))
+            if md_candidates:
+                md_candidates.sort(key=lambda x: x[0], reverse=True)
+                image_url = md_candidates[0][1]
 
         # If Jina didn't provide published_at, try extracting from markdown
         if published_at is None and markdown:
@@ -206,13 +224,18 @@ class JinaReaderClient:
         if m:
             title = m.group(1).strip()
 
-        # Extract og:image
+        # Extract og:image (validate through scoring to avoid logo/header images)
         image_url = None
         m = _OG_IMAGE_RE.search(html)
         if m:
-            image_url = m.group(1).strip()
+            og_candidate = m.group(1).strip()
+            og_score = _score_image_src(og_candidate, html)
+            if og_score >= 0:
+                image_url = og_candidate
+            else:
+                logger.debug("og:image rejected by scoring: %s score=%d", og_candidate[:80], og_score)
 
-        # Fallback: score all images, pick the best (prefer content over template)
+        # Score all HTML images, pick the best (prefer content over template)
         if not image_url:
             base_match = re.search(r'(https?://[^/]+)', url)
             base = base_match.group(1) if base_match else ""
@@ -275,11 +298,18 @@ class JinaReaderClient:
         md = md.strip()
         markdown = md[:8000]
 
-        # Fallback: scan for inline markdown images if og:image not found
+        # Fallback: score inline markdown images if still no image
         if not image_url and markdown:
-            m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
-            if m:
-                image_url = m.group(1)
+            md_images = re.findall(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+            if md_images:
+                md_candidates = []
+                for src in md_images:
+                    score = _score_image_src(src, html)
+                    if score > -999:
+                        md_candidates.append((score, src))
+                if md_candidates:
+                    md_candidates.sort(key=lambda x: x[0], reverse=True)
+                    image_url = md_candidates[0][1]
 
         if published_at is None:
             published_at = self._extract_datetime_from_text(markdown)

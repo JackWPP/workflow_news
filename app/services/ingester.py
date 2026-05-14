@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.database import session_scope
-from app.models import ArticlePool
+from app.models import ArticlePool, WeChatArticle
 from app.services.repository import list_sources
 from app.services.rss import fetch_feed_entries
 from app.services.source_quality import classify_source
@@ -175,15 +175,24 @@ class ContinuousIngester:
             for r in results:
                 if not _row_is_relevant(r):
                     continue
-                ingested += await self._try_write_pool(
-                    url=str(r.get("url") or ""),
-                    title=str(r.get("title") or ""),
-                    domain=str(r.get("domain") or extract_domain(str(r.get("url") or ""))),
-                    source_type="template_search",
-                    language=lang,
-                    snippet=str(r.get("snippet") or ""),
-                    published_at=r.get("published_at"),
-                )
+                url = str(r.get("url") or "")
+                if _is_weixin_url(url):
+                    ingested += await self._try_write_wechat(
+                        url=url,
+                        title=str(r.get("title") or ""),
+                        snippet=str(r.get("snippet") or ""),
+                        published_at=r.get("published_at"),
+                    )
+                else:
+                    ingested += await self._try_write_pool(
+                        url=url,
+                        title=str(r.get("title") or ""),
+                        domain=str(r.get("domain") or extract_domain(url)),
+                        source_type="template_search",
+                        language=lang,
+                        snippet=str(r.get("snippet") or ""),
+                        published_at=r.get("published_at"),
+                    )
         return ingested
 
     async def _try_write_pool(
@@ -220,6 +229,110 @@ class ContinuousIngester:
         except Exception as exc:
             logger.debug("ContinuousIngester: skip duplicate %s: %s", normalized, exc)
             return 0
+
+    async def _try_write_wechat(
+        self, *, url: str, title: str, snippet: str = "", published_at: Any = None,
+    ) -> int:
+        normalized = canonicalize_url(url)
+        if not normalized:
+            return 0
+        try:
+            with session_scope() as session:
+                existing = session.scalar(
+                    select(WeChatArticle).where(WeChatArticle.url == normalized)
+                )
+                if existing:
+                    return 0
+                session.add(WeChatArticle(
+                    url=normalized,
+                    title=title,
+                    account_name="英蓝云展",
+                    published_at=_normalize_published_at(published_at),
+                    scrape_status="pending",
+                    summary=snippet[:200] if snippet else None,
+                ))
+                session.commit()
+                return 1
+        except Exception as exc:
+            logger.debug("ContinuousIngester: skip duplicate wechat %s: %s", normalized, exc)
+            return 0
+
+
+def _is_weixin_url(url: str) -> bool:
+    return "mp.weixin.qq.com" in url or "weixin.qq.com" in url
+
+
+async def ingest_weixin_articles() -> int:
+    """Scrape pending WeChatArticle entries and promote to ArticlePool."""
+    from app.services.scraper import ScraperClient
+    scraper = ScraperClient()
+    processed = 0
+
+    with session_scope() as session:
+        pending = list(session.scalars(
+            select(WeChatArticle)
+            .where(WeChatArticle.scrape_status == "pending")
+            .limit(10)
+        ).all())
+
+    for wa in pending:
+        try:
+            result = await scraper.scrape(wa.url)
+            if result and result.get("markdown"):
+                with session_scope() as session:
+                    db_wa = session.get(WeChatArticle, wa.id)
+                    if not db_wa:
+                        continue
+                    db_wa.raw_content = result["markdown"]
+                    db_wa.summary = result.get("title", wa.title)[:200]
+                    db_wa.scraped_at = now_local()
+                    db_wa.scrape_status = "scraped"
+
+                    # Promote to ArticlePool
+                    normalized = canonicalize_url(wa.url)
+                    content_hash = hashlib.sha256((wa.title + normalized).encode()).hexdigest()
+                    existing = session.scalar(
+                        select(ArticlePool).where(ArticlePool.url == normalized)
+                    )
+                    if not existing:
+                        article = ArticlePool(
+                            url=normalized,
+                            content_hash=content_hash,
+                            title=wa.title,
+                            domain="mp.weixin.qq.com",
+                            source_type="wechat",
+                            language="zh",
+                            raw_content=result["markdown"][:50000],
+                            summary=wa.summary or result.get("title", "")[:200],
+                            published_at=wa.published_at,
+                            ingested_at=now_local(),
+                        )
+                        session.add(article)
+                        session.flush()
+                        db_wa.article_pool_id = article.id
+                        db_wa.scrape_status = "promoted"
+                    else:
+                        db_wa.scrape_status = "promoted"
+                        db_wa.article_pool_id = existing.id
+                    session.commit()
+                processed += 1
+                logger.info("WeChat: scraped and promoted '%s'", wa.title[:50])
+            else:
+                with session_scope() as session:
+                    db_wa = session.get(WeChatArticle, wa.id)
+                    if db_wa:
+                        db_wa.scrape_status = "failed"
+                        session.commit()
+                logger.warning("WeChat: scrape failed for '%s'", wa.title[:50])
+        except Exception as exc:
+            logger.warning("WeChat: error scraping '%s': %s", wa.title[:50], exc)
+            with session_scope() as session:
+                db_wa = session.get(WeChatArticle, wa.id)
+                if db_wa:
+                    db_wa.scrape_status = "failed"
+                    session.commit()
+
+    return processed
 
 
 def _normalize_published_at(value: Any) -> datetime | None:

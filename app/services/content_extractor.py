@@ -127,11 +127,25 @@ class ContentExtractor:
 
             title, image_url, published_dt = _extract_html_meta(downloaded)
 
-            # Fallback: scan markdown for inline images if og:image not found
+            # Validate og:image through scoring to avoid logo/header images
+            if image_url:
+                from app.services.jina_reader import _score_image_src
+                og_score = _score_image_src(image_url, downloaded)
+                if og_score < 0:
+                    image_url = None
+
+            # Fallback: score inline markdown images if og:image not found
             if not image_url and markdown:
-                m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
-                if m:
-                    image_url = m.group(1)
+                md_images = re.findall(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+                md_candidates = []
+                for src in md_images:
+                    from app.services.jina_reader import _score_image_src
+                    score = _score_image_src(src, downloaded if downloaded else "")
+                    if score > -999:
+                        md_candidates.append((score, src))
+                if md_candidates:
+                    md_candidates.sort(key=lambda x: x[0], reverse=True)
+                    image_url = md_candidates[0][1]
 
             if published_dt is None:
                 published_dt = _extract_datetime_from_text(markdown)
@@ -171,11 +185,18 @@ class ContentExtractor:
             published_dt = result.get("published_at")
             image_url = result.get("image_url")
 
-            # Fallback: scan markdown for inline images if no image found yet
+            # Fallback: score inline markdown images if no image found yet
             if not image_url and markdown:
-                m = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
-                if m:
-                    image_url = m.group(1)
+                md_images = re.findall(r'!\[.*?\]\((https?://[^\)]+)\)', markdown)
+                md_candidates = []
+                for src in md_images:
+                    from app.services.jina_reader import _score_image_src
+                    score = _score_image_src(src, "")
+                    if score > -999:
+                        md_candidates.append((score, src))
+                if md_candidates:
+                    md_candidates.sort(key=lambda x: x[0], reverse=True)
+                    image_url = md_candidates[0][1]
 
             content = self._extract_content(markdown)
 
@@ -220,7 +241,11 @@ class ContentExtractor:
             image_url = None
             m = _OG_IMAGE_RE.search(html) or _OG_IMAGE_RE_ALT.search(html)
             if m:
-                image_url = m.group(1).strip()
+                og_candidate = m.group(1).strip()
+                from app.services.jina_reader import _score_image_src
+                og_score = _score_image_src(og_candidate, html)
+                if og_score >= 0:
+                    image_url = og_candidate
 
             published_dt = None
             m = _ARTICLE_PUBLISHED_RE.search(html) or _ARTICLE_PUBLISHED_RE_ALT.search(html)

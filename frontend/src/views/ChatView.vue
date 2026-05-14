@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
-import { Plus, MessageSquare, Send, Sparkles, Loader2 } from 'lucide-vue-next'
+import { Bot, Plus, MessageSquare, Send, Sparkles, Loader2 } from 'lucide-vue-next'
 
 import { api } from '../lib/api'
 import { useSessionStore } from '../stores/session'
@@ -131,7 +131,7 @@ onMounted(() => {
           <h3 class="text-lg font-bold text-white tracking-tight">{{ activeConversation?.title || '新对话' }}</h3>
           <p class="text-xs text-[var(--status-ok)] flex items-center gap-1.5 mt-0.5">
             <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse"></span>
-            Agent 内核已就绪
+            助手已就绪
           </p>
         </div>
       </div>
@@ -156,7 +156,7 @@ onMounted(() => {
               <Bot class="w-8 h-8 text-[var(--accent-primary)]" />
             </div>
             <h4 class="text-xl font-bold text-white mb-2">研究助手在等待指示</h4>
-            <p class="text-[var(--text-secondary)] text-sm max-w-sm">我会通过多轮 Agent 思维模式自动检索文献、新闻和政策，来解答您的高分子专业问题。</p>
+            <p class="text-[var(--text-secondary)] text-sm max-w-sm">可基于日报、来源和公开资料回答高分子材料加工相关问题。</p>
           </div>
         </template>
         
@@ -164,7 +164,7 @@ onMounted(() => {
         <div v-if="loading" class="flex justify-center py-4">
           <div class="flex items-center gap-2 text-[var(--accent-policy)] bg-black/40 px-4 py-2 rounded-full border border-[var(--accent-policy)]/20">
             <Loader2 class="w-4 h-4 animate-spin" />
-            <span class="text-xs font-medium">Agent 正在执行...</span>
+            <span class="text-xs font-medium">正在整理回答...</span>
           </div>
         </div>
       </div>
@@ -320,7 +320,7 @@ onMounted(() => {
 .focus\:outline-none:focus { outline: 2px solid transparent; outline-offset: 2px; }
 .focus\:border-\[var\(--accent-primary\)\]:focus { border-color: var(--accent-primary); }
 .focus\:bg-\[rgba\(255\,255\,255\,0\.06\)\]:focus { background-color: rgba(255, 255, 255, 0.06); }
-.placeholder-\[var\(--text-muted\)\]:placeholder { color: var(--text-muted); }
+.placeholder-\[var\(--text-muted\)\]::placeholder { color: var(--text-muted); }
 .disabled\:opacity-50:disabled { opacity: 0.5; }
 .disabled\:cursor-not-allowed:disabled { cursor: not-allowed; }
 

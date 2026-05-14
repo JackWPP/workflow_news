@@ -1799,7 +1799,7 @@ class DailyReportAgent:
             f"规则层批准的正式主题：\n{compiled_summary}\n\n"
             f"请基于这些素材撰写《{settings.report_title}》（{target_date.isoformat()}）。\n"
             f"先调用 compare_sources 做辅助去重和主题说明，再只对规则层批准的主题使用 write_section 撰写各板块，最后 finish。\n"
-            f"不要生成行业趋势综述，除非明确有两个以上高可信主题可互相支撑。\n"
+            f"日报末尾会自动生成每日洞察板块，你只需关注各板块内容撰写。\n"
         )
 
     def _build_task_prompt(
@@ -1954,7 +1954,15 @@ class DailyReportAgent:
         publish_grade = self._publish_grade_from_status(status)
 
         if result.sections_content:
-            markdown_content = "\n\n".join(result.sections_content.values())
+            _CANONICAL_ORDER = ["industry", "policy", "academic", "patent", "wechat", "lab_news"]
+            ordered_sections: dict[str, str] = {}
+            for key in _CANONICAL_ORDER:
+                if key in result.sections_content:
+                    ordered_sections[key] = result.sections_content[key]
+            for key in result.sections_content:
+                if key not in ordered_sections:
+                    ordered_sections[key] = result.sections_content[key]
+            markdown_content = "\n\n".join(ordered_sections.values())
         else:
             markdown_content = "报告生成失败/内容不足。"
 
@@ -1962,6 +1970,15 @@ class DailyReportAgent:
         if result.editorial:
             editorial_block = f"> **编者按**：{result.editorial}"
             markdown_content = editorial_block + "\n\n---\n\n" + markdown_content
+
+        if result.daily_briefing:
+            briefing_block = f"## 每日洞察\n\n{result.daily_briefing}"
+            markdown_content = markdown_content + "\n\n---\n\n" + briefing_block
+
+        final_summary = result.summary
+        if result.daily_briefing:
+            final_summary = result.daily_briefing[:120]
+
         title = (
             result.title
             or f"高分子材料加工每日资讯 ({target_date.strftime('%Y-%m-%d')})"
@@ -1978,7 +1995,7 @@ class DailyReportAgent:
                 status=status,
                 title=title,
                 markdown_content=markdown_content,
-                summary=result.summary or "无摘要",
+                summary=final_summary or result.summary or "无摘要",
                 pipeline_version="agent-v2",
                 retrieval_run_id=run_id,
                 error_message=result.finished_reason if status == "failed" else None,
@@ -2038,6 +2055,7 @@ class DailyReportAgent:
                         "recency_status": article.get("recency_status", "unknown"),
                         "published_at_source": article.get("published_at_source", ""),
                         "language": article.get("language", self._infer_language(article.get("domain", ""))),
+                        "keywords": article.get("keywords", []),
                     },
                 )
                 session.add(item)
