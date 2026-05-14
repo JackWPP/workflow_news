@@ -137,8 +137,6 @@ def init_db() -> None:
     if _is_sqlite:
         Base.metadata.create_all(bind=engine)
         _ensure_sqlite_schema()
-    else:
-        Base.metadata.create_all(bind=engine)
     with session_scope() as session:
         seed_defaults(session)
     _check_db_writable()
