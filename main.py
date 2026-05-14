@@ -227,8 +227,24 @@ async def scheduled_weixin_ingester_run():
         logger.error("WeChat ingester failed: %s", exc, exc_info=True)
 
 
+def _run_alembic_migrations() -> None:
+    from app.database import _is_sqlite
+    if _is_sqlite:
+        return
+    try:
+        from alembic.config import Config as AlembicConfig
+        from alembic import command
+        alembic_cfg = AlembicConfig("alembic.ini")
+        alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Alembic migrations applied successfully.")
+    except Exception as exc:
+        logger.warning("Alembic migration skipped (non-fatal): %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _run_alembic_migrations()
     init_db()
     report_settings = _default_report_settings()
     with session_scope() as session:
@@ -1318,4 +1334,4 @@ app.mount(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8765, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=settings.port, reload=True)

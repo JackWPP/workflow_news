@@ -14,8 +14,10 @@ import type {
   User,
 } from '../types'
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     credentials: 'include',
     headers: {
@@ -82,7 +84,7 @@ export const api = {
     onComplete?: (data: any) => void
     onError?: (data: any) => void
   }) {
-    const es = new EventSource(`/api/reports/run/${runId}/stream`)
+    const es = new EventSource(`${API_BASE}/api/reports/run/${runId}/stream`)
     es.addEventListener('step', (e) => handlers.onStep?.(JSON.parse(e.data)))
     es.addEventListener('phase', (e) => handlers.onPhase?.(JSON.parse(e.data)))
     es.addEventListener('complete', (e) => {
@@ -111,7 +113,7 @@ export const api = {
     return request<ConversationDetail>(`/api/conversations/${id}`)
   },
   async sendChatStream(content: string, conversationId?: number): Promise<ChatResponse> {
-    const response = await fetch('/api/chat/stream', {
+    const response = await fetch(`${API_BASE}/api/chat/stream`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

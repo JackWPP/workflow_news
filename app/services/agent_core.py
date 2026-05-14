@@ -789,7 +789,7 @@ class AgentCore:
         """
         持久化 AgentStep 到数据库。
 
-        使用独立短生命周期 session，避免长事务占用 SQLite 写锁。
+        使用独立短生命周期 session，避免长事务占用数据库连接。
         """
         try:
             from app.models import AgentStep
