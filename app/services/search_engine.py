@@ -8,6 +8,8 @@ from app.config import settings
 from app.services.harness import DEFAULT_BLOCKED_DOMAINS
 from app.utils import extract_domain
 
+_BATCH_DELAY = 0.5  # seconds between batch_search requests to avoid 429
+
 logger = logging.getLogger(__name__)
 
 _BLOCKED_SET: set[str] = set(DEFAULT_BLOCKED_DOMAINS)
@@ -119,9 +121,11 @@ class SearchEngine:
 
         async def _search_one(query: str) -> list[dict[str, Any]]:
             async with semaphore:
-                return await self.search(
+                result = await self.search(
                     query, language=language, max_results=max_results
                 )
+                await asyncio.sleep(_BATCH_DELAY)
+                return result
 
         tasks = [_search_one(q) for q in queries]
         all_batches = await asyncio.gather(*tasks)

@@ -28,6 +28,9 @@ _TRUSTED_SOURCE_TIER_RANK = {
 }
 _TRUSTED_SOURCE_SEED_LIMIT = 20
 _TRUSTED_SOURCE_ITEMS_PER_FEED = 5
+_RSS_FAILURE_THRESHOLD = 3
+
+_rss_consecutive_failures: dict[str, int] = {}
 
 _POSITIVE_KEYWORDS = [
     "高分子", "塑料", "树脂", "改性", "注塑", "挤出", "吹塑",
@@ -132,15 +135,31 @@ class ContinuousIngester:
             return 0
 
         ingested = 0
+        active = [
+            s for s in selected
+            if _rss_consecutive_failures.get(str(s.rss_or_listing_url), 0) < _RSS_FAILURE_THRESHOLD
+        ]
+        skipped = len(selected) - len(active)
+        if skipped:
+            logger.info("RSS: skipping %d feeds with %d+ consecutive failures", skipped, _RSS_FAILURE_THRESHOLD)
         results = await asyncio.gather(
-            *[fetch_feed_entries(str(s.rss_or_listing_url), s.name, s.type) for s in selected],
+            *[fetch_feed_entries(str(s.rss_or_listing_url), s.name, s.type) for s in active],
             return_exceptions=True,
         )
-        for source, result in zip(selected, results, strict=False):
+        for source, result in zip(active, results, strict=False):
+            feed_url = str(source.rss_or_listing_url)
             if isinstance(result, Exception):
-                logger.warning("RSS feed failed for %s (%s): %s", source.name, source.rss_or_listing_url, result)
+                _rss_consecutive_failures[feed_url] = _rss_consecutive_failures.get(feed_url, 0) + 1
+                if _rss_consecutive_failures[feed_url] >= _RSS_FAILURE_THRESHOLD:
+                    logger.warning(
+                        "RSS feed disabled after %d consecutive failures: %s (%s): %s",
+                        _rss_consecutive_failures[feed_url], source.name, feed_url, result,
+                    )
+                else:
+                    logger.warning("RSS feed failed for %s (%s): %s", source.name, feed_url, result)
                 continue
             elif isinstance(result, list):
+                _rss_consecutive_failures.pop(feed_url, None)
                 logger.info("RSS feed OK for %s: %d entries", source.name, len(result))
             else:
                 continue

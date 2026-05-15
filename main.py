@@ -153,7 +153,19 @@ def _default_report_settings() -> dict[str, object]:
     }
 
 
+def _today_has_global_report() -> bool:
+    try:
+        with session_scope() as session:
+            existing = get_latest_report_for_date(session, now_local().date(), report_type="global")
+            return existing is not None and existing.status in ("complete", "complete_auto_publish", "partial", "partial_auto_publish")
+    except Exception:
+        return False
+
+
 async def scheduled_report_run():
+    if _today_has_global_report():
+        logger.info("Skipping scheduled native report run: today's report already exists.")
+        return
     logger.info("Starting scheduled native report run.")
     if isinstance(pipeline, DailyReportAgent):
         await pipeline.run(shadow_mode=None)
@@ -175,6 +187,14 @@ async def scheduled_ingester_run():
 
 
 async def scheduled_ai_report_run():
+    try:
+        with session_scope() as session:
+            existing = get_latest_report_for_date(session, now_local().date(), report_type="ai")
+            if existing is not None:
+                logger.info("Skipping scheduled AI report run: today's AI report already exists.")
+                return
+    except Exception:
+        pass
     logger.info("Starting scheduled AI RSS report run.")
     with session_scope() as session:
         report_settings = _default_report_settings()
@@ -185,6 +205,14 @@ async def scheduled_ai_report_run():
 
 
 async def scheduled_lab_report_run():
+    try:
+        with session_scope() as session:
+            existing = get_latest_report_for_date(session, now_local().date(), report_type="lab")
+            if existing is not None:
+                logger.info("Skipping scheduled lab report run: today's lab report already exists.")
+                return
+    except Exception:
+        pass
     logger.info("Starting scheduled lab report run.")
     try:
         from app.services.lab_report_composer import LabReportComposer
@@ -197,7 +225,6 @@ async def scheduled_lab_report_run():
     except Exception as exc:
         logger.error("Lab report generation failed: %s", exc, exc_info=True)
 
-    # Also trigger AI report
     try:
         await scheduled_ai_report_run()
     except Exception as exc:
@@ -413,9 +440,7 @@ async def run_report(payload: ReportRunRequest):
 
     logger.info("Manual report run requested (async mode, report_type=%s).", payload.report_type)
 
-    # 预创建 DB 记录以获取 ID
     with session_scope() as session:
-        from app.models import AgentRun
         run_record = RetrievalRun(
             run_date=now_local(),
             status="running",
@@ -425,11 +450,11 @@ async def run_report(payload: ReportRunRequest):
         run_id = run_record.id
         session.commit()
 
-    # 创建事件队列
     event_queue: _asyncio.Queue = _asyncio.Queue()
 
-    async def _run_pipeline():
+    async def _run_all_reports():
         global _running_task, _running_agent_run_id
+        reports_generated: list[Report] = []
         try:
             if payload.report_type == "lab":
                 from app.services.lab_report_composer import LabReportComposer
@@ -437,14 +462,16 @@ async def run_report(payload: ReportRunRequest):
                 report = composer.compose()
                 if report is None:
                     raise RuntimeError("No content available for lab report")
-                # Also trigger AI report
+                reports_generated.append(report)
                 try:
                     with session_scope() as ai_session:
                         report_settings = get_report_settings(ai_session) or _default_report_settings()
-                        await ai_pipeline.run(
+                        ai_report = await ai_pipeline.run(
                             ai_session,
                             feed_url=str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL),
                         )
+                        if ai_report:
+                            reports_generated.append(ai_report)
                 except Exception as ai_exc:
                     logger.warning("AI report co-trigger failed (non-fatal): %s", ai_exc)
             elif payload.report_type == "ai":
@@ -455,6 +482,8 @@ async def run_report(payload: ReportRunRequest):
                         run_id=run_id,
                         feed_url=str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL),
                     )
+                    if report:
+                        reports_generated.append(report)
             else:
                 if isinstance(pipeline, DailyReportAgent):
                     report = await pipeline.run(
@@ -470,24 +499,52 @@ async def run_report(payload: ReportRunRequest):
                             shadow_mode=payload.shadow_mode,
                             mode=payload.mode,
                         )
+                if report:
+                    reports_generated.append(report)
+
+                try:
+                    from app.services.lab_report_composer import LabReportComposer
+                    composer = LabReportComposer()
+                    lab_report = composer.compose()
+                    if lab_report:
+                        reports_generated.append(lab_report)
+                        logger.info("Lab report generated: %s", lab_report.title)
+                except Exception as lab_exc:
+                    logger.warning("Lab report generation failed (non-fatal): %s", lab_exc)
+
+                try:
+                    with session_scope() as ai_session:
+                        report_settings = get_report_settings(ai_session) or _default_report_settings()
+                        ai_report = await ai_pipeline.run(
+                            ai_session,
+                            feed_url=str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL),
+                        )
+                        if ai_report:
+                            reports_generated.append(ai_report)
+                except Exception as ai_exc:
+                    logger.warning("AI report generation failed (non-fatal): %s", ai_exc)
+
+            primary_report = reports_generated[0] if reports_generated else None
             event_queue.put_nowait({
                 "type": "complete",
-                "report_id": report.id,
-                "status": report.status,
+                "report_id": primary_report.id if primary_report else None,
+                "status": primary_report.status if primary_report else "unknown",
+                "reports_generated": [
+                    {"id": r.id, "type": r.report_type, "status": r.status}
+                    for r in reports_generated
+                ],
             })
         except Exception as exc:
             logger.error("Pipeline failed: %s", exc, exc_info=True)
             event_queue.put_nowait({"type": "error", "message": str(exc)[:500]})
         finally:
-            # 发送结束标记
             event_queue.put_nowait(None)
             _running_task = None
             _running_agent_run_id = None
-            # 清理队列引用（延迟清理以允许 SSE 消费完）
             await _asyncio.sleep(30)
             _run_event_queues.pop(run_id, None)
 
-    _running_task = _asyncio.create_task(_run_pipeline())
+    _running_task = _asyncio.create_task(_run_all_reports())
     _run_event_queues[run_id] = event_queue
     _running_agent_run_id = run_id
 

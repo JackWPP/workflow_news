@@ -528,7 +528,7 @@ DEFAULT_SOURCES = [
         "allow_images": True,
         "language": "en",
         "country": "US",
-        "enabled": True,
+        "enabled": False,  # 403 Forbidden
     },
     {
         "name": "CompositesWorld",
@@ -548,7 +548,7 @@ DEFAULT_SOURCES = [
         "allow_images": True,
         "language": "en",
         "country": "US",
-        "enabled": True,
+        "enabled": False,  # 403 Forbidden
     },
     {
         "name": "C&EN News",
@@ -568,7 +568,7 @@ DEFAULT_SOURCES = [
         "allow_images": True,
         "language": "en",
         "country": "US",
-        "enabled": True,
+        "enabled": False,  # 404 Not Found
     },
     # English — Academic Journals
     {
@@ -663,6 +663,7 @@ DEFAULT_SOURCES = [
         "crawl_mode": "rss",
         "use_direct_source": True,
         "language": "en",
+        "enabled": False,  # 403 Restricted Content
     },
     {
         "name": "Plastics Europe",
@@ -675,6 +676,7 @@ DEFAULT_SOURCES = [
         "crawl_mode": "rss",
         "use_direct_source": True,
         "language": "en",
+        "enabled": False,  # 403 Forbidden
     },
     {
         "name": "Stanford MSE News",
@@ -751,7 +753,7 @@ DEFAULT_SOURCES = [
         "allow_images": True,
         "language": "zh",
         "country": "CN",
-        "enabled": True,
+        "enabled": False,  # 404 Not Found
     },
     # Chinese — Academic & Industry
     {
@@ -777,6 +779,7 @@ DEFAULT_SOURCES = [
         "crawl_mode": "rss",
         "use_direct_source": True,
         "language": "zh",
+        "enabled": False,  # 404 Not Found
     },
     {
         "name": "艾邦高分子 (微信公众号)",
@@ -789,6 +792,7 @@ DEFAULT_SOURCES = [
         "crawl_mode": "rss",
         "use_direct_source": True,
         "language": "zh",
+        "enabled": False,  # feeddd.org returning 0 entries
     },
     {
         "name": "废塑料新观察 (微信公众号)",
@@ -801,6 +805,7 @@ DEFAULT_SOURCES = [
         "crawl_mode": "rss",
         "use_direct_source": True,
         "language": "zh",
+        "enabled": False,  # feeddd.org returning 0 entries
     },
     {
         "name": "塑料行业 (微信公众号)",
@@ -813,6 +818,7 @@ DEFAULT_SOURCES = [
         "crawl_mode": "rss",
         "use_direct_source": True,
         "language": "zh",
+        "enabled": False,  # feeddd.org returning 0 entries
     },
     {
         "name": "Plastemart 塑料行业聚合",
@@ -950,6 +956,8 @@ def seed_defaults(session) -> None:
             elif field == "use_direct_source" and not current and value:
                 setattr(existing, field, value)
             elif field == "crawl_mode" and current == "search" and value != "search":
+                setattr(existing, field, value)
+            elif field == "enabled" and current and not value:
                 setattr(existing, field, value)
         if existing.domain in direct_source_disabled_domains:
             existing.use_direct_source = False

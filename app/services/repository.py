@@ -130,17 +130,20 @@ def build_combined_report_payload(reports: list[Report]) -> SimpleNamespace | No
 
     global_report = next((report for report in reports if report.report_type == "global"), None)
     ai_report = next((report for report in reports if report.report_type == "ai"), None)
-    primary = global_report or ai_report or reports[0]
+    lab_report = next((report for report in reports if report.report_type == "lab"), None)
+    primary = global_report or ai_report or lab_report or reports[0]
     items: list[SimpleNamespace] = []
 
     if global_report:
         items.extend(_clone_report_item(item) for item in global_report.items)
     if ai_report:
         items.extend(_clone_report_item(item, category_override="AI") for item in ai_report.items)
+    if lab_report:
+        items.extend(_clone_report_item(item, category_override="实验室") for item in lab_report.items)
 
     items.sort(
         key=lambda item: (
-            item.decision_trace.get("category") != "AI",
+            item.decision_trace.get("category") not in ("AI", "实验室"),
             item.section,
             -float(item.combined_score or 0.0),
             item.rank,
@@ -157,6 +160,10 @@ def build_combined_report_payload(reports: list[Report]) -> SimpleNamespace | No
         ai_count = len(ai_report.items)
         ai_summary = str(ai_report.summary or "").strip()
         summary_parts.append(ai_summary or f"AI 日报同步 {ai_count} 条 RSS 条目。")
+    if lab_report:
+        lab_count = len(lab_report.items)
+        lab_summary = str(lab_report.summary or "").strip()
+        summary_parts.append(lab_summary or f"实验室日报 {lab_count} 条。")
 
     hero_item = next((item for item in items if item.has_verified_image), items[0] if items else None)
     image_count = sum(1 for item in items if item.has_verified_image)
@@ -171,6 +178,7 @@ def build_combined_report_payload(reports: list[Report]) -> SimpleNamespace | No
             for content in [
                 getattr(global_report, "markdown_content", None),
                 getattr(ai_report, "markdown_content", None),
+                getattr(lab_report, "markdown_content", None),
             ]
             if content
         ),

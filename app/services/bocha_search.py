@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.bochaai.com/v1/web-search"
 _AI_SEARCH_URL = "https://api.bochaai.com/v1/ai-search"
+_MAX_RETRIES = 3
+_RETRY_BACKOFF = [2.0, 5.0, 10.0]
 
 
 class BochaSearchClient:
@@ -33,6 +37,34 @@ class BochaSearchClient:
     @property
     def enabled(self) -> bool:
         return bool(self.api_key)
+
+    async def _post_with_retry(
+        self, url: str, payload: dict, headers: dict, query_label: str
+    ) -> dict[str, Any] | None:
+        for attempt in range(_MAX_RETRIES):
+            self._request_count += 1
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    return resp.json()
+                if resp.status_code == 429 and attempt < _MAX_RETRIES - 1:
+                    wait = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
+                    wait += random.uniform(0.0, 0.5)
+                    logger.warning(
+                        "BochaSearch 429 for '%s', retrying in %.1fs (attempt %d/%d)",
+                        query_label, wait, attempt + 1, _MAX_RETRIES,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                self._failure_count += 1
+                self._consecutive_failures += 1
+                self._last_error = f"http_{resp.status_code}"
+                logger.warning(
+                    "BochaSearch returned %d for '%s': %s",
+                    resp.status_code, query_label, resp.text[:300],
+                )
+                return None
+        return None
 
     async def search(
         self,
@@ -64,24 +96,14 @@ class BochaSearchClient:
         }
 
         try:
-            self._request_count += 1
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(_BASE_URL, json=payload, headers=headers)
-                if resp.status_code != 200:
-                    self._failure_count += 1
-                    self._consecutive_failures += 1
-                    self._last_error = f"http_{resp.status_code}"
-                    logger.warning(
-                        "BochaSearch returned %d for '%s': %s",
-                        resp.status_code, query, resp.text[:300],
-                    )
-                    return []
-                data = resp.json()
+            data = await self._post_with_retry(_BASE_URL, payload, headers, query)
         except Exception as exc:
             self._failure_count += 1
             self._consecutive_failures += 1
             self._last_error = str(exc)[:200]
             logger.warning("BochaSearch request failed for '%s': %s", query, exc)
+            return []
+        if data is None:
             return []
 
         # 响应格式：{code: 200, data: {_type, webPages: {value: [...]}}}
@@ -157,24 +179,14 @@ class BochaSearchClient:
         }
 
         try:
-            self._request_count += 1
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(_AI_SEARCH_URL, json=payload, headers=headers)
-                if resp.status_code != 200:
-                    self._failure_count += 1
-                    self._consecutive_failures += 1
-                    self._last_error = f"ai_search_http_{resp.status_code}"
-                    logger.warning(
-                        "Bocha ai_search returned %d for '%s': %s",
-                        resp.status_code, query, resp.text[:300],
-                    )
-                    return []
-                data = resp.json()
+            data = await self._post_with_retry(_AI_SEARCH_URL, payload, headers, query)
         except Exception as exc:
             self._failure_count += 1
             self._consecutive_failures += 1
             self._last_error = str(exc)[:200]
             logger.warning("Bocha ai_search request failed for '%s': %s", query, exc)
+            return []
+        if data is None:
             return []
 
         import json as _json
