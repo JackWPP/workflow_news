@@ -10,3 +10,4 @@ trafilatura
 alembic
 numpy
 pydantic
+openpyxl

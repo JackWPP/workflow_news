@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -140,6 +142,41 @@ def init_db() -> None:
     with session_scope() as session:
         seed_defaults(session)
     _check_db_writable()
+    _seed_patents_if_empty()
+
+
+def _seed_patents_if_empty() -> None:
+    from sqlalchemy import select
+    from app.models import Patent
+    with session_scope() as session:
+        count = session.scalar(select(select(Patent).exists()))
+        if count:
+            return
+
+    excel_path = Path(os.getenv("PATENT_EXCEL_PATH", "全部专利-纠错后.xlsx"))
+    candidates = [
+        excel_path,
+        Path("/app") / excel_path.name,
+        Path(__file__).resolve().parent.parent / excel_path.name,
+    ]
+    found = None
+    for path in candidates:
+        if path.exists():
+            found = path
+            break
+
+    if found is None:
+        logger.info("Patent Excel not found, skipping auto-import (looked in: %s)", [str(p) for p in candidates])
+        return
+
+    logger.info("Patent table empty, auto-importing from %s...", found)
+    try:
+        from scripts.import_patents import read_excel, import_patents
+        patents = read_excel(str(found))
+        inserted, updated = import_patents(patents)
+        logger.info("Patent import complete: %d inserted, %d updated.", inserted, updated)
+    except Exception as exc:
+        logger.warning("Patent auto-import failed (non-fatal): %s", exc)
 
 
 def _check_db_writable() -> None:
