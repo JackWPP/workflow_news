@@ -533,14 +533,17 @@ async def run_report(payload: ReportRunRequest):
                 try:
                     with session_scope() as ai_session:
                         report_settings = get_report_settings(ai_session) or _default_report_settings()
+                        feed_url = str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL)
+                        logger.info("Co-triggering AI RSS report with feed_url=%s", feed_url)
                         ai_report = await ai_pipeline.run(
                             ai_session,
-                            feed_url=str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL),
+                            feed_url=feed_url,
                         )
                         if ai_report:
                             reports_generated.append(ai_report)
+                            logger.info("AI report generated: id=%s status=%s", ai_report.id, ai_report.status)
                 except Exception as ai_exc:
-                    logger.warning("AI report generation failed (non-fatal): %s", ai_exc)
+                    logger.warning("AI report generation failed (non-fatal): %s", ai_exc, exc_info=True)
 
             primary_report = reports_generated[0] if reports_generated else None
             event_queue.put_nowait({

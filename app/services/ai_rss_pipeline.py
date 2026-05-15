@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -69,6 +70,8 @@ HTML_ITEM_PATTERN = re.compile(
 RELATED_LINK_PATTERN = re.compile(r"https?://[^\s)]+")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
+logger = logging.getLogger(__name__)
+
 
 class AiRssDailyPipeline:
     async def run(
@@ -81,15 +84,20 @@ class AiRssDailyPipeline:
     ) -> Report:
         target_date = report_date or now_local().date()
         effective_feed_url = (feed_url or DEFAULT_AI_FEED_URL).strip() or DEFAULT_AI_FEED_URL
+        logger.info("AI RSS pipeline: starting for %s, feed=%s", target_date, effective_feed_url)
 
         retrieval_run = self._get_or_create_run(session, run_id=run_id, target_date=target_date)
+        logger.info("AI RSS pipeline: retrieval_run id=%s", retrieval_run.id)
         entries = await fetch_feed_entries(
             effective_feed_url,
             source_name="Juya AI Daily",
             source_type="ai",
         )
+        logger.info("AI RSS pipeline: got %d feed entries", len(entries))
         issue = self._select_latest_issue(entries)
+        logger.info("AI RSS pipeline: selected issue=%s", issue.get("title") if issue else "None")
         issue_items = self._extract_issue_items(issue) if issue else []
+        logger.info("AI RSS pipeline: extracted %d items", len(issue_items))
 
         existing = session.scalars(
             select(Report).where(
@@ -116,6 +124,7 @@ class AiRssDailyPipeline:
         )
         session.add(report)
         session.flush()
+        logger.info("AI RSS pipeline: report created id=%s status=%s items=%d", report.id, report.status, len(issue_items))
 
         for index, item_data in enumerate(issue_items, start=1):
             source_tier, reliability_label = self._classify_source_quality(item_data["source_url"])
