@@ -35,9 +35,29 @@ def _normalize_db_url(url: str) -> str:
     return url
 
 
+def _resolve_database_url() -> str:
+    explicit = os.getenv("DATABASE_URL")
+    if explicit:
+        return _normalize_db_url(explicit)
+
+    zeabur_uri = os.getenv("POSTGRES_URI") or os.getenv("POSTGRES_CONNECTION_STRING")
+    if zeabur_uri:
+        return _normalize_db_url(zeabur_uri)
+
+    pg_host = os.getenv("POSTGRES_HOST") or os.getenv("POSTGRESQL_HOST")
+    if pg_host:
+        pg_user = os.getenv("POSTGRES_USERNAME", "postgres")
+        pg_pass = os.getenv("POSTGRES_PASSWORD", "")
+        pg_port = os.getenv("POSTGRES_PORT", "5432")
+        pg_db = os.getenv("POSTGRES_DATABASE", "postgres")
+        return f"postgresql+psycopg://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
+
+    return "sqlite:///./news.db"
+
+
 @dataclass(frozen=True)
 class Settings:
-    database_url: str = _normalize_db_url(os.getenv("DATABASE_URL", "sqlite:///./news.db"))
+    database_url: str = _resolve_database_url()
     port: int = int(os.getenv("PORT", "8765"))
     app_timezone: str = os.getenv("APP_TIMEZONE", "Asia/Hong_Kong")
     sqlite_busy_timeout_seconds: int = int(

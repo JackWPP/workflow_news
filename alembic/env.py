@@ -6,7 +6,7 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from app.config import load_dotenv, _normalize_db_url
+from app.config import load_dotenv, _normalize_db_url, _resolve_database_url
 from app.database import Base
 from app import models  # noqa: F401 - ensure all models are loaded
 
@@ -21,8 +21,7 @@ target_metadata = Base.metadata
 
 
 def _get_db_url() -> str:
-    raw = os.getenv("DATABASE_URL", "sqlite:///./news.db")
-    return _normalize_db_url(raw)
+    return _resolve_database_url()
 
 
 def run_migrations_offline() -> None:

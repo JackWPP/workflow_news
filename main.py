@@ -254,10 +254,25 @@ async def scheduled_weixin_ingester_run():
         logger.error("WeChat ingester failed: %s", exc, exc_info=True)
 
 
+def _check_database_connection() -> None:
+    from app.database import _is_sqlite
+    db_type = "SQLite" if _is_sqlite else "PostgreSQL"
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1"))
+            result.fetchone()
+        logger.info("Database connection OK (%s): %s", db_type, settings.database_url[:50] + "...")
+    except Exception as exc:
+        logger.error("Database connection FAILED (%s): %s", db_type, exc)
+        raise
+
+
 def _run_alembic_migrations() -> None:
     from app.database import _is_sqlite
     if _is_sqlite:
+        logger.info("SQLite mode — skipping Alembic migrations (using create_all).")
         return
+    logger.info("PostgreSQL mode — running Alembic migrations...")
     try:
         from alembic.config import Config as AlembicConfig
         from alembic import command
@@ -266,11 +281,13 @@ def _run_alembic_migrations() -> None:
         command.upgrade(alembic_cfg, "head")
         logger.info("Alembic migrations applied successfully.")
     except Exception as exc:
-        logger.warning("Alembic migration skipped (non-fatal): %s", exc)
+        logger.error("Alembic migration FAILED: %s", exc, exc_info=True)
+        raise
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _check_database_connection()
     _run_alembic_migrations()
     init_db()
     report_settings = _default_report_settings()
