@@ -255,7 +255,8 @@ async def scheduled_weixin_ingester_run():
 
 
 def _check_database_connection() -> None:
-    from app.database import _is_sqlite
+    from app.database import _is_sqlite, engine
+    from sqlalchemy import text
     db_type = "SQLite" if _is_sqlite else "PostgreSQL"
     try:
         with engine.connect() as conn:
