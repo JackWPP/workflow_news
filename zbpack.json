@@ -1,5 +1,5 @@
 {
-  "build_command": "cd frontend && npm ci && npm run build",
+  "build_command": "git rev-parse HEAD > git_sha.txt && date -u +%Y-%m-%dT%H:%M:%SZ > build_time.txt && cd frontend && npm ci && npm run build",
   "start_command": "_startup",
   "python_version": "3.11"
 }

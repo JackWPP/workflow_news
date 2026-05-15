@@ -1204,6 +1204,30 @@ async def get_agent_step_detail_api(run_id: int, step_id: int, request: Request)
 # ── Diagnostics API ──────────────────────────────────────────────────────────
 
 
+@app.get("/api/version")
+async def api_version():
+    git_sha = "unknown"
+    build_time = "unknown"
+    dirty = False
+    try:
+        sha_path = Path("git_sha.txt")
+        if sha_path.exists():
+            content = sha_path.read_text(encoding="utf-8").strip()
+            if content.endswith("-dirty"):
+                dirty = True
+                content = content[:-6]
+            git_sha = content[:8]
+    except Exception:
+        pass
+    try:
+        bt_path = Path("build_time.txt")
+        if bt_path.exists():
+            build_time = bt_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return {"git_sha": git_sha, "build_time": build_time, "dirty": dirty}
+
+
 @app.get("/api/diagnostics/health")
 async def diagnostics_health(deep: bool = False):
     from app.services.bocha_search import BochaSearchClient

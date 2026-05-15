@@ -1,7 +1,7 @@
 # AGENTS.md — 高分子材料加工每日资讯平台
 
-> 最后更新：2026-05-12
-> 当前阶段：**架构简化完成**（Agent 自主 + 轻量检查点，稳定产出 6 篇/3 板块/complete）
+> 最后更新：2026-05-15
+> 当前阶段：**Zeabur 生产部署 + 调试飞轮**（global+lab 日报正常，AI 日报待修复）
 
 ---
 
@@ -677,3 +677,75 @@ curl http://localhost:8765/api/agent-runs/42
 2. 补充更多中文 RSS/桥接源（86pla、金发、万华等）
 3. 修复失效的 RSS URL（中国石化、国家统计局、C&EN 等 404）
 4. Phase 0：构建离线评测集
+
+---
+
+## 十一、部署调试飞轮
+
+### 11.1 生产环境
+
+| 项目 | 值 |
+|------|-----|
+| 域名 | `https://buctyl.preview.aliyun-zeabur.cn/` |
+| 平台 | Zeabur (香港区域) |
+| 数据库 | PostgreSQL (Zeabur 内置) |
+| 部署方式 | git push → Zeabur 自动构建部署 |
+| 代码版本端点 | `GET /api/version` |
+
+### 11.2 诊断 API 速查表
+
+| 端点 | 用途 |
+|------|------|
+| `GET /api/version` | 确认当前部署的 git commit SHA |
+| `GET /api/diagnostics/health` | 系统健康检查 |
+| `GET /api/diagnostics/last-run` | 最近一次日报运行摘要 |
+| `GET /api/reports?report_type=ai` | 检查 AI 日报是否生成 |
+| `GET /api/reports?report_type=lab` | 检查实验室日报是否生成 |
+| `GET /api/reports/today` | 获取当日 combined 日报 |
+| `GET /api/diagnostics/run/{id}/timeline` | 单次运行时间线 |
+| `GET /api/diagnostics/llm-metrics` | LLM 调用统计 |
+| `GET /api/agent-runs/{id}` | Agent 完整 trace |
+
+### 11.3 飞轮工作流
+
+> Agent 通过 HTTP API 自主读取生产环境状态，无需用户中转。
+
+```
+Step 1 — 读部署状态
+  GET /api/version        → 确认代码版本已部署
+  GET /api/diagnostics/health → 确认系统健康
+  GET /api/diagnostics/last-run → 获取最近运行摘要
+  GET /api/reports?report_type=ai → 检查 AI 报告是否存在
+  GET /api/reports?report_type=lab → 检查 Lab 报告是否存在
+
+Step 2 — 分析问题
+  对比期望 vs 实际，定位差异
+
+Step 3 — 修改代码
+  精确修复 + 添加诊断日志 (logger.info/exc_info=True)
+  → 用户 git push → Zeabur 重建 → 回到 Step 1
+```
+
+### 11.4 飞轮规则
+
+1. **先读后写**：先请求 `/api/version` 确认当前部署版本，再分析问题
+2. **单问题聚焦**：每次只修复一个明确的问题
+3. **增量修改**：优先通过添加诊断日志来定位，而非一次性大改
+4. **状态追踪**：在下方"当前飞轮轮次"中记录状态
+5. **用户最小化**：用户只需 `git push`，Agent 自主完成其他所有操作
+
+### 11.5 当前飞轮轮次
+
+#### Round 1 — AI 日报缺失
+
+- **目标**：手动触发日报后，AI 日报（Juya AI RSS）同时生成并合并到 combined 日报中
+- **部署版本**：待推送后通过 `/api/version` 确认
+- **状态**：🔴 调试中
+- **观察 (2026-05-15)**：
+  - `/api/diagnostics/health` → `healthy` ✅
+  - `/api/diagnostics/last-run` → `partial`, 5 articles, 3 sections
+  - `/api/reports?report_type=lab` → id=2, `complete_auto_publish` ✅
+  - `/api/reports?report_type=ai` → **空数组** ❌
+- **分析**：`_run_all_reports()` 中 global 完成后调用了 AI pipeline，但数据未写入数据库。已在 `ai_rss_pipeline.py` 中添加诊断日志（`logger.info("AI RSS pipeline: ...")`），待推送后查看。
+- **修复**：待诊断日志确认具体失败点
+- **下一步**：推送代码 → Zeabur 重建 → 手动触发日报 → Agent 通过 API 读取诊断信息
