@@ -135,15 +135,25 @@ def build_combined_report_payload(reports: list[Report]) -> SimpleNamespace | No
     items: list[SimpleNamespace] = []
 
     if global_report:
-        items.extend(_clone_report_item(item) for item in global_report.items)
+        for item in global_report.items:
+            cloned = _clone_report_item(item)
+            cloned.decision_trace["source_report"] = "global"
+            items.append(cloned)
     if ai_report:
-        items.extend(_clone_report_item(item, category_override="AI") for item in ai_report.items)
+        for item in ai_report.items:
+            cloned = _clone_report_item(item, category_override="AI")
+            cloned.decision_trace["source_report"] = "ai"
+            items.append(cloned)
     if lab_report:
-        items.extend(_clone_report_item(item, category_override="实验室") for item in lab_report.items)
+        for item in lab_report.items:
+            cloned = _clone_report_item(item, category_override="实验室")
+            cloned.decision_trace["source_report"] = "lab"
+            items.append(cloned)
 
+    _source_order = {"global": 0, "ai": 1, "lab": 2}
     items.sort(
         key=lambda item: (
-            item.decision_trace.get("category") not in ("AI", "实验室"),
+            _source_order.get(item.decision_trace.get("source_report", ""), 9),
             item.section,
             -float(item.combined_score or 0.0),
             item.rank,
@@ -168,20 +178,20 @@ def build_combined_report_payload(reports: list[Report]) -> SimpleNamespace | No
     hero_item = next((item for item in items if item.has_verified_image), items[0] if items else None)
     image_count = sum(1 for item in items if item.has_verified_image)
 
+    markdown_parts: list[str] = []
+    if global_report and global_report.markdown_content:
+        markdown_parts.append(str(global_report.markdown_content).strip())
+    if ai_report and ai_report.markdown_content:
+        markdown_parts.append(f"# 📡 AI 领域日报\n\n{str(ai_report.markdown_content).strip()}")
+    if lab_report and lab_report.markdown_content:
+        markdown_parts.append(str(lab_report.markdown_content).strip())
+
     return SimpleNamespace(
         id=getattr(primary, "id"),
         report_date=getattr(primary, "report_date"),
         status=getattr(primary, "status"),
         title=getattr(primary, "title"),
-        markdown_content="\n\n".join(
-            str(content).strip()
-            for content in [
-                getattr(global_report, "markdown_content", None),
-                getattr(ai_report, "markdown_content", None),
-                getattr(lab_report, "markdown_content", None),
-            ]
-            if content
-        ),
+        markdown_content="\n\n---\n\n".join(markdown_parts),
         summary=" ".join(summary_parts).strip() or getattr(primary, "summary", None),
         pipeline_version="combined-v1",
         debug_url=getattr(primary, "debug_url", None),

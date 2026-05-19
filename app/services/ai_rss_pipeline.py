@@ -99,30 +99,41 @@ class AiRssDailyPipeline:
         issue_items = self._extract_issue_items(issue) if issue else []
         logger.info("AI RSS pipeline: extracted %d items", len(issue_items))
 
+        issue_title = str(issue.get("title") or f"AI 日报 {target_date.isoformat()}") if issue else f"AI 日报 {target_date.isoformat()}"
+        issue_body = self._normalize_issue_body(str(issue.get("snippet") or "")) if issue else ""
+
         existing = session.scalars(
             select(Report).where(
                 Report.report_date == target_date,
                 Report.report_type == "ai",
             )
         ).all()
-        for report in existing:
-            session.delete(report)
-        session.flush()
-
-        issue_title = str(issue.get("title") or f"AI 日报 {target_date.isoformat()}") if issue else f"AI 日报 {target_date.isoformat()}"
-        issue_body = self._normalize_issue_body(str(issue.get("snippet") or "")) if issue else ""
-        report = Report(
-            report_date=target_date,
-            status="complete" if issue_items else "failed",
-            title=issue_title,
-            markdown_content=self._build_markdown(issue_title, issue_body, issue_items, effective_feed_url),
-            summary=self._build_summary(issue_items, issue_title),
-            pipeline_version="ai-rss-v2",
-            retrieval_run_id=retrieval_run.id,
-            report_type="ai",
-            error_message=None if issue_items else "No parsable AI RSS issue found",
-        )
-        session.add(report)
+        if existing:
+            report = existing[0]
+            for stale in existing[1:]:
+                session.delete(stale)
+            for item in list(report.items):
+                session.delete(item)
+            session.flush()
+            report.status = "complete" if issue_items else "failed"
+            report.title = issue_title
+            report.markdown_content = self._build_markdown(issue_title, issue_body, issue_items, effective_feed_url)
+            report.summary = self._build_summary(issue_items, issue_title)
+            report.retrieval_run_id = retrieval_run.id
+            report.error_message = None if issue_items else "No parsable AI RSS issue found"
+        else:
+            report = Report(
+                report_date=target_date,
+                status="complete" if issue_items else "failed",
+                title=issue_title,
+                markdown_content=self._build_markdown(issue_title, issue_body, issue_items, effective_feed_url),
+                summary=self._build_summary(issue_items, issue_title),
+                pipeline_version="ai-rss-v2",
+                retrieval_run_id=retrieval_run.id,
+                report_type="ai",
+                error_message=None if issue_items else "No parsable AI RSS issue found",
+            )
+            session.add(report)
         session.flush()
         logger.info("AI RSS pipeline: report created id=%s status=%s items=%d", report.id, report.status, len(issue_items))
 
