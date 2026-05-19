@@ -36,6 +36,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_RETRYABLE_ERROR_TYPES = {"network_timeout", "rate_limit", "timeout"}
+
+
+def _is_retryable_tool_failure(tool_result: ToolResult) -> bool:
+    """判断工具失败是否属于可重试的临时故障。"""
+    error_type = (tool_result.data or {}).get("error_type", "")
+    if error_type in _RETRYABLE_ERROR_TYPES:
+        return True
+    summary = tool_result.summary
+    if any(kw in summary for kw in ("ConnectError", "RemoteProtocolError", "网络请求超时", "HTTP错误 429")):
+        return True
+    return False
+
 
 @dataclass
 class AgentResult:
@@ -346,6 +359,17 @@ class AgentCore:
                                 summary="网络请求超时",
                                 data={"error_type": "network_timeout"},
                             )
+                        except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+                            logger.warning(
+                                "[AgentCore] Tool %s network error: %s",
+                                tool_call.tool_name,
+                                type(exc).__name__,
+                            )
+                            tool_result = ToolResult(
+                                success=False,
+                                summary=f"网络连接错误: {type(exc).__name__}",
+                                data={"error_type": "network_timeout"},
+                            )
                         except json.JSONDecodeError as exc:
                             logger.warning(
                                 "[AgentCore] Tool %s JSON parse error: %s",
@@ -420,9 +444,13 @@ class AgentCore:
 
                 if tool_result.success:
                     consecutive_failed_steps = 0
+                elif _is_retryable_tool_failure(tool_result):
+                    # 网络超时、429限流、连接错误等临时故障不累计
+                    # Agent 可以自己换 URL 或重试
+                    pass
                 else:
                     consecutive_failed_steps += 1
-                    if consecutive_failed_steps >= 5:
+                    if consecutive_failed_steps >= 8:
                         logger.warning(
                             "[AgentCore] Agent stalled with %d consecutive failed tool steps",
                             consecutive_failed_steps,

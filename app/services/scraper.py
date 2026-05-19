@@ -105,6 +105,44 @@ class ScraperClient:
     def enabled(self) -> bool:
         return True  # Trafilatura 始终可用
 
+    async def _download_with_retry(
+        self, url: str, headers: dict, max_retries: int = 2
+    ) -> bytes | None:
+        """带退避重试的 HTTP 下载，只对网络级错误重试。"""
+        retry_backoff = [1.0, 2.0]
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=20.0, follow_redirects=True, headers=headers
+                ) as client:
+                    resp = await client.get(url)
+                    if resp.status_code == 200:
+                        return resp.content
+                    if resp.status_code in (429, 503) and attempt < max_retries - 1:
+                        wait = retry_backoff[attempt]
+                        logger.debug(
+                            "scraper: HTTP %d for %s, retrying in %.1fs",
+                            resp.status_code, url[:80], wait,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    return None
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
+                if attempt < max_retries - 1:
+                    wait = retry_backoff[attempt]
+                    logger.debug(
+                        "scraper: %s for %s, retrying in %.1fs",
+                        type(exc).__name__, url[:80], wait,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                logger.debug("scraper: download failed for %s after %d retries: %s", url[:80], max_retries, exc)
+                return None
+            except Exception as exc:
+                logger.debug("scraper: download failed for %s: %s", url[:80], exc)
+                return None
+        return None
+
     async def scrape(
         self, url: str, timeout_seconds: int | None = None
     ) -> dict[str, Any]:
@@ -171,17 +209,11 @@ class ScraperClient:
         """用 Trafilatura 提取正文+内联图片，用 HTML meta 补充 title/og:image/date。"""
         import trafilatura
 
-        # 用 httpx 下载（带浏览器 UA），避免 trafilatura.fetch_url 被反爬
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
-        try:
-            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
-                resp = await client.get(url)
-                if resp.status_code != 200:
-                    return None
-                html_bytes = resp.content
-        except Exception:
+        html_bytes = await self._download_with_retry(url, headers)
+        if html_bytes is None:
             return None
 
         downloaded = html_bytes.decode("utf-8", errors="replace")
