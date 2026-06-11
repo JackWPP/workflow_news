@@ -143,13 +143,9 @@ class JinaReaderClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         last_exc: Exception | None = None
-        deadline = time.time() + timeout
         for _ in range(2):
-            remaining = deadline - time.time()
-            if remaining < 3:  # 不够再试一次
-                break
             try:
-                async with httpx.AsyncClient(timeout=min(timeout, remaining), follow_redirects=True) as client:
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
                     response = await client.get(f"{self.base_url}/{url}", headers=headers)
                     response.raise_for_status()
                     body = response.json()
@@ -212,16 +208,25 @@ class JinaReaderClient:
             "published_at": published_at,
             "status": "success",
             "scrape_layer": "jina",
+            "extraction_quality": "medium",  # jina reader
         }
 
     async def _fallback_scrape(self, url: str, timeout: int | None = None) -> dict[str, Any]:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
-        async with httpx.AsyncClient(timeout=timeout or 20, follow_redirects=True, headers=headers) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            html = response.text
+        # 优先用 curl_cffi（浏览器 TLS 指纹），ImportError 时回退到 httpx
+        try:
+            from curl_cffi.requests import AsyncSession
+            async with AsyncSession(impersonate="chrome", timeout=float(timeout or 20)) as session:
+                response = await session.get(url, follow_redirects=True)
+                response.raise_for_status()
+                html = response.text
+        except ImportError:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            }
+            async with httpx.AsyncClient(timeout=timeout or 20, follow_redirects=True, headers=headers) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                html = response.text
 
         title = extract_domain(url)
         m = _TITLE_RE.search(html)
@@ -330,6 +335,7 @@ class JinaReaderClient:
             "published_at": published_at,
             "status": "fallback",
             "scrape_layer": "direct_http",
+            "extraction_quality": "low",  # regex HTML→MD，质量不如 trafilatura/jina
         }
 
     def _should_skip_direct_http(self, url: str, exc: Exception) -> bool:

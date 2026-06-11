@@ -55,6 +55,7 @@ from app.services.auth import create_login_session, get_current_user, logout_ses
 from app.services.chat import ChatService, append_message, create_conversation
 from app.services.ai_rss_pipeline import AiRssDailyPipeline, DEFAULT_AI_FEED_URL
 from app.services.daily_report_agent import DailyReportAgent
+from app.services.editor_agent import EditorAgent
 from app.services.evaluation import enrich_debug_payload
 # pipeline kept for direct admin access (DailyReportAgent uses it as fallback internally)
 from app.services.pipeline import NativeReportPipeline
@@ -128,7 +129,9 @@ logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
 # Use DailyReportAgent as the primary pipeline (falls back to NativeReportPipeline on error)
-pipeline = DailyReportAgent() if settings.agent_mode else NativeReportPipeline()
+# EditorAgent: 无搜索依赖，从 ArticlePool 种子生成日报（目标 1 的核心）
+# DailyReportAgent: 保留作为 fallback
+pipeline = EditorAgent() if settings.agent_mode else NativeReportPipeline()
 ai_pipeline = AiRssDailyPipeline()
 chat_service = ChatService()
 SESSION_COOKIE = "session_token"
@@ -156,7 +159,7 @@ def _default_report_settings() -> dict[str, object]:
 async def scheduled_report_run():
     logger.info("Starting scheduled native report run.")
     try:
-        if isinstance(pipeline, DailyReportAgent):
+        if isinstance(pipeline, (EditorAgent, DailyReportAgent)):
             await pipeline.run(shadow_mode=None)
         else:
             with session_scope() as session:
@@ -495,7 +498,7 @@ async def run_report(payload: ReportRunRequest):
                         feed_url=str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL),
                     )
             else:
-                if isinstance(pipeline, DailyReportAgent):
+                if isinstance(pipeline, (EditorAgent, DailyReportAgent)):
                     report = await pipeline.run(
                         run_id=run_id,
                         shadow_mode=payload.shadow_mode,

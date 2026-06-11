@@ -490,13 +490,6 @@ class ArticlePool(TimestampMixin, Base):
     section: Mapped[str | None] = mapped_column(String(32))
     category: Mapped[str | None] = mapped_column(String(32))
     eval_metadata: Mapped[dict | None] = mapped_column(JSON)
-    # ── Phase 1: 正文预抓取与消费追踪 ──
-    fetch_status: Mapped[str] = mapped_column(String(20), server_default="pending")
-    # pending | ok | empty | failed | permanent_fail
-    fetch_attempts: Mapped[int] = mapped_column(Integer, server_default=0)
-    last_fetch_at: Mapped[datetime | None] = mapped_column(DateTime)
-    image_url: Mapped[str | None] = mapped_column(String(2048))
-    consumed_report_ids: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Patent(TimestampMixin, Base):
@@ -528,3 +521,17 @@ class WeChatArticle(TimestampMixin, Base):
     image_url: Mapped[str | None] = mapped_column(String(1024))
     content_hash: Mapped[str | None] = mapped_column(String(64))
     article_pool_id: Mapped[int | None] = mapped_column(ForeignKey("article_pool.id"))
+
+
+class DomainScrapeStats(TimestampMixin, Base):
+    """per-domain 抓取策略统计。"""
+    __tablename__ = "domain_scrape_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    layer: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 'trafilatura' | 'jina' | 'direct_http' | 'curl_cffi'
+    success_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -106,49 +106,40 @@ class ScraperClient:
         return True  # Trafilatura 始终可用
 
     async def scrape(
-        self, url: str, timeout_seconds: int | None = None,
-        deadline_seconds: float | None = None,
+        self, url: str, timeout_seconds: int | None = None
     ) -> dict[str, Any]:
-        import time as _time
-
-        total_timeout = deadline_seconds or timeout_seconds or settings.scrape_timeout_seconds
-        start = _time.time()
-
-        def remaining() -> float:
-            return max(1.0, total_timeout - (_time.time() - start))
+        timeout = timeout_seconds or settings.scrape_timeout_seconds
 
         if self._prefer_jina_first(url):
             try:
-                result = await self._jina.scrape(url, timeout_seconds=min(int(remaining()), 15))
+                result = await self._jina.scrape(url, timeout_seconds=timeout)
                 if result.get("status") != "error" and result.get("markdown"):
                     logger.debug("scraper: Jina-first success for %s", url)
                     return result
             except Exception as exc:
                 logger.debug("scraper: Jina-first failed for %s: %s", url, exc)
 
-        # 第一层：Trafilatura（分配 40% 的剩余时间，最少 5s）
-        trafilatura_budget = max(5, int(remaining() * 0.4))
+        # 第一层：Trafilatura（本地，最快）
         try:
-            result = await self._trafilatura_scrape(url, timeout_override=trafilatura_budget)
+            result = await self._trafilatura_scrape(url, timeout)
             if result and result.get("markdown"):
                 logger.debug("scraper: Trafilatura success for %s", url)
                 return result
         except Exception as exc:
             logger.debug("scraper: Trafilatura failed for %s: %s", url, exc)
 
-        # 第二层：Jina Reader（分配剩余时间的 60%）
-        jina_budget = max(5, int(remaining() * 0.6))
+        # 第二层：Jina Reader
         try:
-            result = await self._jina.scrape(url, timeout_seconds=jina_budget)
+            result = await self._jina.scrape(url, timeout_seconds=timeout)
             if result.get("status") != "error" and result.get("markdown"):
                 logger.debug("scraper: Jina success for %s", url)
                 return result
         except Exception as exc:
             logger.debug("scraper: Jina failed for %s: %s", url, exc)
 
-        # 第三层：direct_http fallback（用完剩余时间）
+        # 第三层：direct_http fallback
         try:
-            result = await self._jina._fallback_scrape(url, int(remaining()))
+            result = await self._jina._fallback_scrape(url, timeout)
             logger.debug("scraper: httpx fallback for %s", url)
             return result
         except Exception as exc:
@@ -176,21 +167,31 @@ class ScraperClient:
             for candidate in _JINA_FIRST_DOMAINS
         )
 
-    async def _trafilatura_scrape(self, url: str, timeout_override: int | None = None) -> dict[str, Any] | None:
+    async def _trafilatura_scrape(self, url: str, timeout: int | None = None) -> dict[str, Any] | None:
         """用 Trafilatura 提取正文+内联图片，用 HTML meta 补充 title/og:image/date。"""
         import trafilatura
 
-        timeout = timeout_override or 20
-        # 用 httpx 下载（带浏览器 UA），避免 trafilatura.fetch_url 被反爬
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
+        # 优先用 curl_cffi（浏览器 TLS 指纹），ImportError 时回退到 httpx
         try:
-            async with httpx.AsyncClient(timeout=float(timeout), follow_redirects=True, headers=headers) as client:
-                resp = await client.get(url)
+            from curl_cffi.requests import AsyncSession
+            async with AsyncSession(impersonate="chrome", timeout=float(timeout or 20)) as session:
+                resp = await session.get(url, follow_redirects=True)
                 if resp.status_code != 200:
                     return None
                 html_bytes = resp.content
+        except ImportError:
+            # curl_cffi 不可用，回退到 httpx
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            }
+            try:
+                async with httpx.AsyncClient(timeout=float(timeout or 20), follow_redirects=True, headers=headers) as client:
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        return None
+                    html_bytes = resp.content
+            except Exception:
+                return None
         except Exception:
             return None
 
@@ -250,6 +251,7 @@ class ScraperClient:
             "published_at": published_at,
             "status": "success",
             "scrape_layer": "trafilatura",
+            "extraction_quality": "high",  # trafilatura 正文提取
         }
 
 
