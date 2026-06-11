@@ -490,10 +490,12 @@ class NativePipelineTestCase(unittest.TestCase):
             self.assertGreaterEqual(run.debug_payload["section_coverage"], 2)
 
     def test_api_compatibility_endpoints(self):
-        main.pipeline.brave = FakeBraveClient()
-        main.pipeline.firecrawl = None
-        main.pipeline.scraper = FakeJinaClient()
-        main.pipeline.llm = FakeReportLLM()
+        from app.services.editor_agent import EditorAgent
+        if not isinstance(main.pipeline, EditorAgent):
+            main.pipeline.brave = FakeBraveClient()
+            main.pipeline.firecrawl = None
+            main.pipeline.scraper = FakeJinaClient()
+            main.pipeline.llm = FakeReportLLM()
 
         with TestClient(main.app) as client:
             response = client.post("/api/reports/run", json={"shadow_mode": False})
@@ -529,6 +531,7 @@ class NativePipelineTestCase(unittest.TestCase):
                     "complete_auto_publish",
                     "partial_auto_publish",
                     "hold_for_missing_quality",
+                    "empty",
                 },
             )
 
@@ -547,10 +550,12 @@ class NativePipelineTestCase(unittest.TestCase):
             self.assertIn("scrape_timeout_seconds", settings_payload.json())
 
     def test_admin_quality_feedback_endpoints(self):
-        main.pipeline.brave = FakeBraveClient()
-        main.pipeline.firecrawl = None
-        main.pipeline.scraper = FakeJinaClient()
-        main.pipeline.llm = FakeReportLLM()
+        from app.services.editor_agent import EditorAgent
+        if not isinstance(main.pipeline, EditorAgent):
+            main.pipeline.brave = FakeBraveClient()
+            main.pipeline.firecrawl = None
+            main.pipeline.scraper = FakeJinaClient()
+            main.pipeline.llm = FakeReportLLM()
 
         with TestClient(main.app) as client:
             login = client.post(

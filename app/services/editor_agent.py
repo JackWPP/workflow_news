@@ -83,8 +83,11 @@ class EditorAgent:
 
     async def run(
         self,
-        report_date: date | None = None,
+        run_id: int | None = None,
         shadow_mode: bool | None = None,
+        report_date: date | None = None,
+        mode: str = "publish",
+        event_queue: Any | None = None,
     ) -> Report:
         target_date = report_date or now_local().date()
         shadow = shadow_mode if shadow_mode is not None else settings.shadow_mode
@@ -98,14 +101,16 @@ class EditorAgent:
         logger.info("[EditorAgent] Selected %d seeds (window=%s)", len(seeds), seed_window)
 
         # 2. 创建 DB 记录
+        agent_run_id = None
         with session_scope() as session:
-            run = RetrievalRun(run_date=now_local(), shadow_mode=shadow)
-            session.add(run)
-            session.flush()
-            agent_run = AgentRun(retrieval_run_id=run.id, agent_type="editor_agent")
+            if run_id is None:
+                run = RetrievalRun(run_date=now_local(), shadow_mode=shadow)
+                session.add(run)
+                session.flush()
+                run_id = run.id
+            agent_run = AgentRun(retrieval_run_id=run_id, agent_type="editor_agent")
             session.add(agent_run)
             session.flush()
-            run_id = run.id
             agent_run_id = agent_run.id
             session.commit()
 

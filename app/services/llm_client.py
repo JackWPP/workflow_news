@@ -281,6 +281,7 @@ class LLMClient:
                         self.primary_model,
                         self.fallback_model,
                     )
+                    self._metrics["tool_use_model_switch_attempted"] = True
                     continue
                 if self.strict_primary_model_for_tool_use:
                     break
