@@ -8,9 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-_TEST_DB = Path(tempfile.gettempdir()) / "workflow_news_conftest.db"
-if _TEST_DB.exists():
-    _TEST_DB.unlink()
+_TEST_DB = Path(tempfile.gettempdir()) / f"workflow_news_test_{os.getpid()}.db"
 
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TEST_DB}")
 os.environ.setdefault("SHADOW_MODE", "false")
