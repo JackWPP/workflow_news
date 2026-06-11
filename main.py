@@ -178,6 +178,15 @@ async def scheduled_ingester_run():
     except Exception as exc:
         logger.error("Hourly ingester failed: %s", exc, exc_info=True)
 
+    # 重试之前失败的正文抓取
+    try:
+        from app.services.ingester import retry_failed_fetches
+        retried = await retry_failed_fetches()
+        if retried > 0:
+            logger.info("Failed-fetch retrier: %d articles recovered.", retried)
+    except Exception as exc:
+        logger.warning("Failed-fetch retrier failed: %s", exc)
+
 
 async def scheduled_ai_report_run():
     logger.info("Starting scheduled AI RSS report run.")

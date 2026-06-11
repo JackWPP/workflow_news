@@ -94,11 +94,9 @@ class ContinuousIngester:
     def search_engine(self):
         if self._search_engine is None:
             from app.services.bocha_search import BochaSearchClient
-            from app.services.zhipu_search import ZhipuSearchClient
             from app.services.search_engine import SearchEngine
             self._search_engine = SearchEngine(
                 bocha_client=BochaSearchClient(),
-                zhipu_client=ZhipuSearchClient(),
             )
         return self._search_engine
 
@@ -224,13 +222,72 @@ class ContinuousIngester:
                     summary=snippet,
                     published_at=_normalize_published_at(published_at),
                     ingested_at=now_local(),
+                    fetch_status="pending",
+                    fetch_attempts=0,
                 )
                 session.add(article)
+                session.flush()  # 拿到 article.id 但不 commit
+                article_id = article.id
                 session.commit()
-                return 1
         except Exception as exc:
             logger.debug("ContinuousIngester: skip duplicate %s: %s", normalized, exc)
             return 0
+
+        # 入池成功后，异步抓取正文（不在 session 内）
+        await self._fetch_article_content(article_id, normalized)
+        return 1
+
+    async def _fetch_article_content(self, article_id: int, url: str) -> None:
+        """抓取文章正文并回写到 ArticlePool。失败不影响入池。"""
+        from app.services.scraper import ScraperClient
+        scraper = ScraperClient()
+        try:
+            result = await scraper.scrape(url, timeout_seconds=20)
+            if not result:
+                return
+
+            markdown = result.get("markdown") or ""
+            image_url = result.get("image_url")
+            title = result.get("title") or ""
+
+            # 判断抓取结果
+            if markdown and len(markdown.strip()) > 100:
+                fetch_status = "ok"
+            elif markdown:
+                fetch_status = "empty"  # 有内容但太短
+            else:
+                fetch_status = "failed"
+
+            # 回写到数据库
+            with session_scope() as session:
+                article = session.get(ArticlePool, article_id)
+                if article is None:
+                    return
+                article.raw_content = markdown[:50000] if markdown else None
+                article.fetch_status = fetch_status
+                article.fetch_attempts = 1
+                article.last_fetch_at = now_local()
+                if image_url:
+                    article.image_url = image_url
+                if title and not article.title:
+                    article.title = title[:1024]
+                session.commit()
+
+            logger.info("Ingester: fetched '%s' -> %s (%d chars)",
+                        url[:60], fetch_status, len(markdown))
+        except Exception as exc:
+            logger.warning("Ingester: fetch failed for '%s': %s", url[:60], exc)
+            # 标记失败但不阻塞
+            try:
+                with session_scope() as session:
+                    article = session.get(ArticlePool, article_id)
+                    if article:
+                        article.fetch_status = "failed"
+                        article.fetch_attempts = 1
+                        article.last_fetch_at = now_local()
+                        session.commit()
+            except Exception:
+                pass
 
     async def _try_write_wechat(
         self, *, url: str, title: str, snippet: str = "", published_at: Any = None,
@@ -352,6 +409,83 @@ def _normalize_published_at(value: Any) -> datetime | None:
             except ValueError:
                 continue
     return None
+
+
+async def retry_failed_fetches(limit: int = 20) -> int:
+    """重试 fetch 失败的种子，最多 limit 条。返回成功数。"""
+    from app.services.scraper import ScraperClient
+
+    scraper = ScraperClient()
+    retried = 0
+    succeeded = 0
+
+    # 查询需要重试的文章
+    with session_scope() as session:
+        cutoff = now_local() - timedelta(days=3)
+        pending = list(session.scalars(
+            select(ArticlePool).where(
+                ArticlePool.fetch_status.in_(["failed", "pending"]),
+                ArticlePool.fetch_attempts < 3,
+                ArticlePool.ingested_at >= cutoff,
+            ).order_by(ArticlePool.ingested_at.desc()).limit(limit)
+        ).all())
+
+    if not pending:
+        return 0
+
+    for article in pending:
+        retried += 1
+        try:
+            result = await scraper.scrape(article.url, timeout_seconds=20)
+            markdown = (result.get("markdown") or "").strip() if result else ""
+            image_url = result.get("image_url") if result else None
+
+            if markdown and len(markdown) > 100:
+                new_status = "ok"
+            elif markdown:
+                new_status = "empty"
+            else:
+                new_status = "failed"
+
+            with session_scope() as session:
+                db_article = session.get(ArticlePool, article.id)
+                if db_article is None:
+                    continue
+                db_article.fetch_status = new_status
+                db_article.fetch_attempts = (db_article.fetch_attempts or 0) + 1
+                db_article.last_fetch_at = now_local()
+                if markdown:
+                    db_article.raw_content = markdown[:50000]
+                if image_url and not db_article.image_url:
+                    db_article.image_url = image_url
+
+                # 第 3 次失败标 permanent_fail
+                if db_article.fetch_attempts >= 3 and new_status == "failed":
+                    db_article.fetch_status = "permanent_fail"
+
+                session.commit()
+
+            if new_status == "ok":
+                succeeded += 1
+            logger.info("Retrier: '%s' attempt %d -> %s",
+                       article.url[:60], article.fetch_attempts + 1, new_status)
+        except Exception as exc:
+            logger.warning("Retrier: error for '%s': %s", article.url[:60], exc)
+            # 更新尝试次数
+            try:
+                with session_scope() as session:
+                    db_article = session.get(ArticlePool, article.id)
+                    if db_article:
+                        db_article.fetch_attempts = (db_article.fetch_attempts or 0) + 1
+                        db_article.last_fetch_at = now_local()
+                        if db_article.fetch_attempts >= 3:
+                            db_article.fetch_status = "permanent_fail"
+                        session.commit()
+            except Exception:
+                pass
+
+    logger.info("Retrier: retried %d, succeeded %d", retried, succeeded)
+    return succeeded
 
 
 def _build_search_queries() -> dict[str, list[str]]:
