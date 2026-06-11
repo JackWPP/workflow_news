@@ -522,6 +522,10 @@ class DailyReportAgent:
                     if ar_obj:
                         ar_obj.status = "failed"
                         ar_obj.finished_reason = "error"
+                        # total_steps/total_tokens 在异常路径下不可用（agent 未正常结束）
+                        # 设为 0 避免诊断接口返回 None
+                        ar_obj.total_steps = ar_obj.total_steps or 0
+                        ar_obj.total_tokens = ar_obj.total_tokens or 0
             except Exception:
                 logger.error(
                     "[DailyReportAgent] Also failed to update status", exc_info=True
