@@ -20,6 +20,9 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -324,11 +327,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Workflow News Native Pipeline", lifespan=lifespan)
 
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:8765",
+        "http://localhost:5173",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -394,7 +405,8 @@ def _serialize_me(session, user) -> dict:
 
 
 @app.post("/api/auth/register")
-async def auth_register(payload: AuthRequest, response: Response):
+@limiter.limit("3/minute")
+async def auth_register(payload: AuthRequest, request: Request, response: Response):
     try:
         with session_scope() as session:
             user = register_user(session, payload.email, payload.password)
@@ -407,7 +419,8 @@ async def auth_register(payload: AuthRequest, response: Response):
 
 
 @app.post("/api/auth/login")
-async def auth_login(payload: AuthRequest, response: Response):
+@limiter.limit("5/minute")
+async def auth_login(payload: AuthRequest, request: Request, response: Response):
     try:
         with session_scope() as session:
             user, auth_session = create_login_session(session, payload.email, payload.password)
@@ -443,7 +456,8 @@ _running_agent_run_id: int | None = None
 
 
 @app.post("/api/reports/run")
-async def run_report(payload: ReportRunRequest):
+@limiter.limit("10/hour")
+async def run_report(payload: ReportRunRequest, request: Request):
     """异步启动报告生成，立即返回 run IDs。前端通过 SSE 端点跟踪进度。"""
     global _running_task, _running_agent_run_id
 

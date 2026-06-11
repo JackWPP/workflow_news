@@ -8,6 +8,7 @@ psycopg[binary]
 feedparser
 trafilatura
 curl_cffi
+slowapi>=0.1.9
 
 # Testing
 pytest>=8.0.0
