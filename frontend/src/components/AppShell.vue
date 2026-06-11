@@ -46,10 +46,8 @@ async function handleLogout() {
 
 <template>
   <div class="h-screen w-full flex overflow-hidden bg-[var(--bg-primary)]">
-    <!-- Particles Background -->
     <canvas ref="bgCanvas" class="fixed inset-0 pointer-events-none z-0 mix-blend-screen opacity-40"></canvas>
     
-    <!-- Sidebar Navigation -->
     <aside class="sidebar w-64 flex-shrink-0 flex flex-col z-10 glass-panel border-y-0 border-l-0 rounded-none h-full relative">
       <div class="p-6 flex flex-col items-center gap-2 text-center">
         <img src="/logo.png" alt="logo" class="logo-img" />
@@ -97,7 +95,6 @@ async function handleLogout() {
       </div>
     </aside>
 
-    <!-- Main Content Area -->
     <main class="flex-1 flex flex-col min-w-0 z-10 relative overflow-y-auto scroll-smooth">
       <div class="w-full max-w-7xl mx-auto p-4 md:p-8 min-h-full">
         <slot />
@@ -123,75 +120,5 @@ async function handleLogout() {
   height: 8rem;
   object-fit: contain;
   border-radius: 1.25rem;
-}
-
-/* Add Tailwind-like utility classes used above since we dropped Tailwind but I used some Tailwind classes in the template out of habit */
-.h-screen { height: 100vh; }
-.w-full { width: 100%; }
-.flex { display: flex; }
-.flex-col { flex-direction: column; }
-.items-center { align-items: center; }
-.justify-center { justify-content: center; }
-.justify-between { justify-content: space-between; }
-.gap-1 { gap: 0.25rem; }
-.gap-2 { gap: 0.5rem; }
-.gap-3 { gap: 0.75rem; }
-.gap-8 { gap: 2rem; }
-.px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
-.px-4 { padding-left: 1rem; padding-right: 1rem; }
-.py-2\.5 { padding-top: 0.625rem; padding-bottom: 0.625rem; }
-.py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
-.p-4 { padding: 1rem; }
-.p-6 { padding: 1.5rem; }
-.p-8 { padding: 2rem; }
-.text-xs { font-size: 0.75rem; line-height: 1rem; }
-.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
-.text-lg { font-size: 1.125rem; line-height: 1.75rem; }
-.text-center { text-align: center; }
-.font-medium { font-weight: 500; }
-.font-bold { font-weight: 700; }
-.uppercase { text-transform: uppercase; }
-.tracking-tight { letter-spacing: -0.025em; }
-.tracking-widest { letter-spacing: 0.1em; }
-.rounded-lg { border-radius: 0.5rem; }
-.rounded-xl { border-radius: 0.75rem; }
-.rounded-full { border-radius: 9999px; }
-.rounded-none { border-radius: 0; }
-.w-1\.5 { width: 0.375rem; }
-.h-1\.5 { height: 0.375rem; }
-.w-4 { width: 1rem; }
-.h-4 { height: 1rem; }
-.w-5 { width: 1.25rem; }
-.h-5 { height: 1.25rem; }
-.w-8 { width: 2rem; }
-.h-8 { height: 2rem; }
-.w-64 { width: 16rem; }
-.flex-1 { flex: 1 1 0%; }
-.flex-shrink-0 { flex-shrink: 0; }
-.min-w-0 { min-width: 0; }
-.min-h-full { min-height: 100%; }
-.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.overflow-hidden { overflow: hidden; }
-.overflow-y-auto { overflow-y: auto; }
-.scroll-smooth { scroll-behavior: smooth; }
-.relative { position: relative; }
-.fixed { position: fixed; }
-.absolute { position: absolute; }
-.inset-0 { inset: 0; }
-.z-0 { z-index: 0; }
-.z-10 { z-index: 10; }
-.pointer-events-none { pointer-events: none; }
-.mix-blend-screen { mix-blend-mode: screen; }
-.opacity-40 { opacity: 0.4; }
-.transition-colors { transition-property: color, background-color, border-color, text-decoration-color, fill, stroke; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
-.transition-all { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
-.duration-300 { transition-duration: 300ms; }
-.border-t { border-top-width: 1px; }
-.border-y-0 { border-top-width: 0; border-bottom-width: 0; }
-.border-l-0 { border-left-width: 0; }
-.max-w-7xl { max-width: 80rem; }
-.mx-auto { margin-left: auto; margin-right: auto; }
-@media (min-width: 768px) {
-  .md\:p-8 { padding: 2rem; }
 }
 </style>
