@@ -25,9 +25,15 @@ def _is_blocked(domain: str) -> bool:
 
 class SearchEngine:
 
-    def __init__(self, bocha_client: Any = None, zhipu_client: Any = None) -> None:
+    def __init__(
+        self,
+        bocha_client: Any = None,
+        zhipu_client: Any = None,
+        search_router: Any = None,
+    ) -> None:
         self._bocha = bocha_client
         self._zhipu = zhipu_client  # deprecated, kept for compatibility
+        self._router = search_router
 
     async def search(
         self,
@@ -37,6 +43,13 @@ class SearchEngine:
         timeout: float = 30.0,
         source_order: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        # 优先使用 SearchRouter
+        if self._router:
+            return await self._router.search(
+                query, language=language, max_results=max_results,
+            )
+
+        # 原有逻辑保持不变（fallback）
         if source_order is None:
             source_order = ["bocha"]
 

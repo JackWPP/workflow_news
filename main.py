@@ -221,6 +221,22 @@ async def scheduled_lab_report_run():
         logger.error("AI report co-trigger failed: %s", exc, exc_info=True)
 
 
+async def scheduled_scout_run():
+    logger.info("Starting scheduled scout run.")
+    try:
+        from app.services.scout_agent import ScoutAgent
+        scout = ScoutAgent()
+        stats = await scout.run()
+        logger.info(
+            "Scout run finished: %d steps, %d articles found, %d added to pool.",
+            stats.get("step_count", 0),
+            stats.get("articles_found", 0),
+            stats.get("articles_added", 0),
+        )
+    except Exception as exc:
+        logger.error("Scheduled scout run FAILED: %s", exc, exc_info=True)
+
+
 async def scheduled_weixin_ingester_run():
     logger.info("Starting WeChat ingester run.")
     # Try API-based sync first
@@ -292,6 +308,12 @@ async def lifespan(app: FastAPI):
         scheduled_weixin_ingester_run,
         CronTrigger(hour="*/6"),
         id="weixin_ingester",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        scheduled_scout_run,
+        CronTrigger(hour="*/6"),
+        id="scout_agent",
         replace_existing=True,
     )
     scheduler.start()

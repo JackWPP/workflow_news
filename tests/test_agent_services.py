@@ -364,7 +364,7 @@ def test_extract_candidate_urls_skips_content_platform_candidates():
 @pytest.mark.asyncio
 async def test_scraper_prefers_jina_first_for_js_heavy_domains(monkeypatch):
     class _FakeJina:
-        async def scrape(self, url: str, timeout_seconds: int | None = None):
+        async def scrape(self, url: str, timeout_seconds: int | None = None, deadline_seconds: float | None = None):
             return {
                 "url": url,
                 "resolved_url": url,

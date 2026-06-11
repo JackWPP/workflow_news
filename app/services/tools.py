@@ -457,7 +457,10 @@ class ReadPageTool(Tool):
             from app.config import settings
 
             timeout_seconds = self._timeout_seconds or settings.scrape_timeout_seconds
-            result = await self._scraper.scrape(url, timeout_seconds=timeout_seconds)
+            result = await self._scraper.scrape(
+                url, timeout_seconds=timeout_seconds,
+                deadline_seconds=timeout_seconds,
+            )
         except Exception as exc:
             memory.record_page_attempt(
                 url, "attempted_failed", metadata={"content_available": False}

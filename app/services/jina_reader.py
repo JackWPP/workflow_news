@@ -143,9 +143,13 @@ class JinaReaderClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         last_exc: Exception | None = None
+        deadline = time.time() + timeout
         for _ in range(2):
+            remaining = deadline - time.time()
+            if remaining < 3:  # 不够再试一次
+                break
             try:
-                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                async with httpx.AsyncClient(timeout=min(timeout, remaining), follow_redirects=True) as client:
                     response = await client.get(f"{self.base_url}/{url}", headers=headers)
                     response.raise_for_status()
                     body = response.json()

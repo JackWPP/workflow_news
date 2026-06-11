@@ -162,7 +162,7 @@ class ImageRichBraveClient(FakeBraveClient):
 class FakeJinaClient:
     enabled = True
 
-    async def scrape(self, url: str, timeout_seconds: int | None = None):
+    async def scrape(self, url: str, timeout_seconds: int | None = None, deadline_seconds: float | None = None):
         title_map = {
             "https://example.com/industry-launch": "高分子注塑设备新品发布",
             "https://policy.example.com/recycling-standard": "塑料回收新标准发布",
@@ -204,7 +204,7 @@ class FakeJinaClient:
 
 
 class DirectSourceMapJinaClient(FakeJinaClient):
-    async def scrape(self, url: str, timeout_seconds: int | None = None):
+    async def scrape(self, url: str, timeout_seconds: int | None = None, deadline_seconds: float | None = None):
         if "86pla.com/news/detail/90001.html" in url:
             return {
                 "url": url,
@@ -235,14 +235,14 @@ class DirectSourceMapJinaClient(FakeJinaClient):
 
 
 class TimeoutJinaClient(FakeJinaClient):
-    async def scrape(self, url: str, timeout_seconds: int | None = None):
+    async def scrape(self, url: str, timeout_seconds: int | None = None, deadline_seconds: float | None = None):
         if "industry-launch" in url:
             raise httpx.ReadTimeout("timeout")
         return await super().scrape(url, timeout_seconds=timeout_seconds)
 
 
 class VerificationWallJinaClient(FakeJinaClient):
-    async def scrape(self, url: str, timeout_seconds: int | None = None):
+    async def scrape(self, url: str, timeout_seconds: int | None = None, deadline_seconds: float | None = None):
         if "3dprint.com" in url:
             return {
                 "url": url,

@@ -708,6 +708,16 @@ class WorkingMemory:
         """生成给 LLM 的工作记忆摘要，让 Agent 知道自己的当前状态。"""
         parts = []
 
+        # 种子列表（来自 search_results 中的 article_pool 类型）
+        pool_seeds = [r for r in self.search_results if r.get("source_type") == "article_pool"]
+        if pool_seeds:
+            seed_lines = []
+            for i, s in enumerate(pool_seeds[:15], 1):
+                title = (s.get("title") or "")[:50]
+                domain = s.get("domain") or ""
+                seed_lines.append(f"  [{i}] {title}（{domain}）")
+            parts.append(f"📋 种子清单（{len(pool_seeds)} 条）：\n" + "\n".join(seed_lines))
+
         # 阶段判断
         search_count = len(self.searched_queries)
         article_count = len(self.publishable_articles())

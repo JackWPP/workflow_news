@@ -18,11 +18,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from app.services.tools import ToolCall
 
+from app.config import settings as _settings
+
 
 # ── 默认工具超时（秒） ──────────────────────────────────────
 DEFAULT_TOOL_TIMEOUTS: dict[str, float] = {
     "web_search": 45.0,
-    "read_page": 25.0,
+    "read_page": float(_settings.scrape_timeout_seconds) + 5.0,  # scrape budget + 裕量
     "search_images": 20.0,
     "evaluate_article": 25.0,
     "write_section": 45.0,
