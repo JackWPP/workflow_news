@@ -490,6 +490,13 @@ class ArticlePool(TimestampMixin, Base):
     section: Mapped[str | None] = mapped_column(String(32))
     category: Mapped[str | None] = mapped_column(String(32))
     eval_metadata: Mapped[dict | None] = mapped_column(JSON)
+    # ── Phase 1: 正文预抓取与消费追踪 ──
+    fetch_status: Mapped[str] = mapped_column(String(20), server_default="pending")
+    # pending | ok | empty | failed | permanent_fail
+    fetch_attempts: Mapped[int] = mapped_column(Integer, server_default=0)
+    last_fetch_at: Mapped[datetime | None] = mapped_column(DateTime)
+    image_url: Mapped[str | None] = mapped_column(String(2048))
+    consumed_report_ids: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Patent(TimestampMixin, Base):

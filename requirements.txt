@@ -4,6 +4,7 @@ httpx
 apscheduler
 python-multipart
 sqlalchemy
+alembic
 psycopg[binary]
 feedparser
 trafilatura
