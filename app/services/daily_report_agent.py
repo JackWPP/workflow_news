@@ -580,8 +580,10 @@ class DailyReportAgent:
                 event_queue.put_nowait({"type": "stats", "phase": "seed", "seed_count": len(seeds)})
 
         # Build tools and run Agent
+        from app.services.zhipu_search import ZhipuSearchClient
+        zhipu = ZhipuSearchClient()
         agent_tools = [
-            WebSearchTool(bocha_client=bocha),
+            WebSearchTool(bocha_client=bocha, zhipu_client=zhipu),
             ReadPageTool(scraper_client=scraper, timeout_seconds=runtime["scrape_timeout_seconds"]),
             EvaluateArticleTool(llm_client=llm_client),
             SearchImagesTool(scraper_client=scraper),
@@ -703,9 +705,12 @@ class DailyReportAgent:
             FinishTool(llm_client=llm_client),
         ]
         if search_enabled:
+            from app.services.zhipu_search import ZhipuSearchClient
+            zhipu = ZhipuSearchClient()
             fallback_tools = [
                 WebSearchTool(
                     bocha_client=bocha,
+                    zhipu_client=zhipu,
                 ),
                 FollowReferencesTool(),
                 *fallback_tools,

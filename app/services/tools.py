@@ -215,6 +215,7 @@ class WebSearchTool(Tool):
 
     def __init__(self, bocha_client: Any = None, zhipu_client: Any = None) -> None:
         self._bocha = bocha_client
+        self._zhipu = zhipu_client
 
     @staticmethod
     def _normalize_query(query: str) -> str:
@@ -265,7 +266,6 @@ class WebSearchTool(Tool):
         academic_keywords = [
             "研究", "论文", "实验室", "大学",
             "journal", "university", "research",
-            "polymer", "materials science",
         ]
         policy_keywords = [
             "政策", "法规", "标准", "限塑", "碳关税",
@@ -306,6 +306,18 @@ class WebSearchTool(Tool):
                 memory.record_search_provider_health(
                     "bocha", self._bocha.health_snapshot()
                 )
+
+        # 如果 Bocha 返回空且 zhipu 可用，尝试 zhipu
+        if not results and self._zhipu and getattr(self._zhipu, 'enabled', False):
+            try:
+                from app.config import settings
+
+                zhipu_results = await self._zhipu.search(query, count=settings.bocha_search_count)
+                if zhipu_results:
+                    results = zhipu_results
+                    logger.info("WebSearchTool: zhipu fallback returned %d results for '%s'", len(results), query[:50])
+            except Exception as exc:
+                logger.warning("WebSearchTool: zhipu fallback failed for '%s': %s", query[:50], exc)
 
         if not results:
             memory.record_empty_search()
@@ -1821,11 +1833,12 @@ class FinishTool(Tool):
 def build_all_tools(
     scraper_client: Any = None,
     bocha_client: Any = None,
+    zhipu_client: Any = None,
     llm_client: "LLMClient | None" = None,
     scrape_timeout_seconds: int | None = None,
 ) -> list[Tool]:
     return [
-        WebSearchTool(bocha_client=bocha_client),
+        WebSearchTool(bocha_client=bocha_client, zhipu_client=zhipu_client),
         ReadPageTool(
             scraper_client=scraper_client, timeout_seconds=scrape_timeout_seconds
         ),

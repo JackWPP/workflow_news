@@ -29,6 +29,8 @@ class BochaSearchClient:
         self._failure_count = 0
         self._consecutive_failures = 0
         self._last_error = ""
+        self._consecutive_empty_queries = 0
+        self._last_api_code: int | None = None
 
     @property
     def enabled(self) -> bool:
@@ -84,15 +86,25 @@ class BochaSearchClient:
             logger.warning("BochaSearch request failed for '%s': %s", query, exc)
             return []
 
+        api_code = data.get("code")
+        if api_code and api_code != 200:
+            self._failure_count += 1
+            self._consecutive_failures += 1
+            self._last_error = f"api_code_{api_code}"
+            self._last_api_code = api_code
+            logger.warning("BochaSearch API error code %d for '%s': %s", api_code, query[:80], data.get("msg", ""))
+            return []
+
         # 响应格式：{code: 200, data: {_type, webPages: {value: [...]}}}
         inner = data.get("data") or data
         web_pages = (inner.get("webPages") or {}).get("value") or []
         if not web_pages:
-            self._consecutive_failures = 0
-            logger.info("BochaSearch '%s' → 0 results", query)
+            self._consecutive_empty_queries += 1
+            logger.info("BochaSearch '%s' → 0 results (consecutive_empty=%d)", query, self._consecutive_empty_queries)
             return []
 
         self._consecutive_failures = 0
+        self._consecutive_empty_queries = 0
         self._last_error = ""
         results: list[dict[str, Any]] = []
         for item in web_pages:
@@ -177,6 +189,15 @@ class BochaSearchClient:
             logger.warning("Bocha ai_search request failed for '%s': %s", query, exc)
             return []
 
+        api_code = data.get("code")
+        if api_code and api_code != 200:
+            self._failure_count += 1
+            self._consecutive_failures += 1
+            self._last_error = f"ai_search_api_code_{api_code}"
+            self._last_api_code = api_code
+            logger.warning("BochaSearch ai_search API error code %d for '%s': %s", api_code, query[:80], data.get("msg", ""))
+            return []
+
         import json as _json
 
         inner = data.get("data") or data
@@ -222,11 +243,12 @@ class BochaSearchClient:
             results[0]["followup_questions"] = followup_questions
 
         if not results:
-            self._consecutive_failures = 0
-            logger.info("Bocha ai_search '%s' -> 0 results", query)
+            self._consecutive_empty_queries += 1
+            logger.info("Bocha ai_search '%s' -> 0 results (consecutive_empty=%d)", query, self._consecutive_empty_queries)
             return []
 
         self._consecutive_failures = 0
+        self._consecutive_empty_queries = 0
         self._last_error = ""
 
         logger.info("Bocha ai_search '%s' -> %d results", query, len(results))
@@ -237,6 +259,8 @@ class BochaSearchClient:
             health_state = "disabled"
         elif self._consecutive_failures >= 2:
             health_state = "network_failed"
+        elif self._consecutive_empty_queries >= 5:
+            health_state = "degraded"
         else:
             health_state = "healthy"
         return {
@@ -245,6 +269,8 @@ class BochaSearchClient:
             "request_count": self._request_count,
             "failure_count": self._failure_count,
             "consecutive_failures": self._consecutive_failures,
+            "consecutive_empty_queries": self._consecutive_empty_queries,
+            "last_api_code": self._last_api_code,
             "last_error": self._last_error,
             "state": "degraded" if self._consecutive_failures >= 2 else "healthy",
             "health_state": health_state,

@@ -155,12 +155,17 @@ def _default_report_settings() -> dict[str, object]:
 
 async def scheduled_report_run():
     logger.info("Starting scheduled native report run.")
-    if isinstance(pipeline, DailyReportAgent):
-        await pipeline.run(shadow_mode=None)
-    else:
-        with session_scope() as session:
-            await pipeline.run(session, shadow_mode=None)
-    logger.info("Scheduled native report run finished.")
+    try:
+        if isinstance(pipeline, DailyReportAgent):
+            await pipeline.run(shadow_mode=None)
+        else:
+            with session_scope() as session:
+                await pipeline.run(session, shadow_mode=None)
+        logger.info("Scheduled native report run finished.")
+    except Exception as exc:
+        logger.error("Scheduled native report run FAILED: %s", exc, exc_info=True)
+        # 预留告警钩子（Phase 4 实现）
+        # await _send_alert("report_failed", str(exc))
 
 
 async def scheduled_ingester_run():
@@ -176,12 +181,15 @@ async def scheduled_ingester_run():
 
 async def scheduled_ai_report_run():
     logger.info("Starting scheduled AI RSS report run.")
-    with session_scope() as session:
-        report_settings = _default_report_settings()
-        report_settings.update(get_report_settings(session) or {})
-        feed_url = str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL)
-        await ai_pipeline.run(session, feed_url=feed_url)
-    logger.info("Scheduled AI RSS report run finished.")
+    try:
+        with session_scope() as session:
+            report_settings = _default_report_settings()
+            report_settings.update(get_report_settings(session) or {})
+            feed_url = str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL)
+            await ai_pipeline.run(session, feed_url=feed_url)
+        logger.info("Scheduled AI RSS report run finished.")
+    except Exception as exc:
+        logger.error("Scheduled AI RSS report run FAILED: %s", exc, exc_info=True)
 
 
 async def scheduled_lab_report_run():
@@ -1279,6 +1287,33 @@ async def diagnostics_last_run():
                 "coverage": eval_run.coverage_score,
             }
         return result
+
+
+@app.get("/api/diagnostics/api-health")
+async def diagnostics_api_health():
+    """返回各外部 API provider 的健康状态。"""
+    from app.services.bocha_search import BochaSearchClient
+    from app.services.zhipu_search import ZhipuSearchClient
+
+    bocha = BochaSearchClient()
+    zhipu = ZhipuSearchClient()
+
+    result = {
+        "bocha": bocha.health_snapshot(),
+        "zhipu": zhipu.health_snapshot(),
+        "timestamp": now_local().isoformat(),
+    }
+
+    # 总体健康判断：任一主力 provider 不健康则整体 degraded
+    states = [v.get("health_state", "") for v in result.values() if isinstance(v, dict)]
+    if any(s in ("network_failed", "error", "quota_limited") for s in states):
+        result["overall"] = "degraded"
+    elif all(s == "disabled" for s in states):
+        result["overall"] = "all_disabled"
+    else:
+        result["overall"] = "healthy"
+
+    return result
 
 
 @app.get("/api/diagnostics/llm-metrics")

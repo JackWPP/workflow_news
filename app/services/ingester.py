@@ -94,9 +94,11 @@ class ContinuousIngester:
     def search_engine(self):
         if self._search_engine is None:
             from app.services.bocha_search import BochaSearchClient
+            from app.services.zhipu_search import ZhipuSearchClient
             from app.services.search_engine import SearchEngine
             self._search_engine = SearchEngine(
                 bocha_client=BochaSearchClient(),
+                zhipu_client=ZhipuSearchClient(),
             )
         return self._search_engine
 

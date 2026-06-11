@@ -276,12 +276,14 @@ class ResearchAgent:
     def _build_tools(self) -> list[Tool]:
         from app.services.bocha_search import BochaSearchClient
         from app.services.scraper import ScraperClient
+        from app.services.zhipu_search import ZhipuSearchClient
 
         bocha = BochaSearchClient()
+        zhipu = ZhipuSearchClient()
         scraper = ScraperClient()
         return [
             LocalCorpusSearchTool(session=self._session),
-            WebSearchTool(bocha_client=bocha),
+            WebSearchTool(bocha_client=bocha, zhipu_client=zhipu),
             ReadPageTool(scraper_client=scraper),
             FollowReferencesTool(),
             EvaluateArticleTool(llm_client=self._llm_client),

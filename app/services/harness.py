@@ -115,13 +115,6 @@ DEFAULT_BLOCKED_DOMAINS: list[str] = [
     "storm.mg",
     "cna.com.tw",
     "taiwannews.com.tw",
-    # ── 已知不可访问站点（反爬/404/超时）──
-    "21cp.com",
-    "info.21cp.com",
-    "aibang.com",
-    "www.aibang.com",
-    "polymer.cn",
-    "www.polymer.cn",
 ]
 
 
