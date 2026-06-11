@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8765:8765"
+    environment:
+      - DATABASE_URL=sqlite:///./news.db
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - BOCHA_API_KEY=${BOCHA_API_KEY}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+    volumes:
+      - app_data:/app
+    restart: always
+
+volumes:
+  app_data:
