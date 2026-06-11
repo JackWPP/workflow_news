@@ -89,7 +89,6 @@ defineExpose({ handleStep, handlePhase, handleComplete, handleError })
       </div>
     </div>
 
-    <!-- Error -->
     <div v-if="errorMessage" class="error-bar">
       <AlertTriangle class="w-4 h-4" />
       <span>{{ errorMessage }}</span>
@@ -151,67 +150,6 @@ defineExpose({ handleStep, handlePhase, handleComplete, handleError })
   color: var(--text-secondary);
 }
 
-.steps-log {
-  max-height: 320px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 4px;
-}
-
-.steps-log::-webkit-scrollbar {
-  width: 4px;
-}
-.steps-log::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.15);
-  border-radius: 2px;
-}
-
-.step-item {
-  background: rgba(255,255,255,0.03);
-  border-radius: 8px;
-  padding: 10px 14px;
-  border-left: 3px solid rgba(255,255,255,0.08);
-  font-size: 13px;
-}
-
-.step-item.step-blocked {
-  border-left-color: #f59e0b;
-}
-
-.step-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.step-tool {
-  color: var(--accent-primary);
-  font-weight: 600;
-  font-size: 12px;
-  text-transform: uppercase;
-}
-
-.step-duration {
-  font-size: 11px;
-  opacity: 0.5;
-}
-
-.step-thought {
-  color: var(--text-muted);
-  font-size: 12px;
-  margin: 2px 0;
-  line-height: 1.4;
-}
-
-.step-result {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .error-bar {
   display: flex;
   align-items: center;
@@ -229,12 +167,5 @@ defineExpose({ handleStep, handlePhase, handleComplete, handleError })
   justify-content: center;
   font-size: 12px;
   color: var(--text-muted);
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-.animate-spin {
-  animation: spin 1s linear infinite;
 }
 </style>

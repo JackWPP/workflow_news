@@ -265,7 +265,6 @@ onUnmounted(() => {
 
 <template>
   <div class="max-w-7xl mx-auto space-y-8 pb-12 relative z-10 w-full pl-4 md:pl-0 pr-4">
-    <!-- Header -->
     <div class="flex items-center gap-3 pb-6 border-b border-[var(--line)]">
       <div class="w-12 h-12 rounded-2xl bg-[var(--accent-policy)]/20 flex items-center justify-center border border-[var(--accent-policy)]/30 text-[var(--accent-policy)] shadow-[0_0_20px_rgba(167,139,250,0.2)]">
         <ShieldAlert class="w-6 h-6" />
@@ -276,10 +275,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Top Grid: Sources & Scheduling -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-      
-      <!-- Source Rules -->
       <section class="glass-panel flex flex-col h-[500px]">
         <div class="p-6 border-b border-[var(--line)] flex justify-between items-center shrink-0">
           <div class="flex items-center gap-2">
@@ -293,7 +289,6 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <!-- Scheduler Settings -->
       <section class="glass-panel flex flex-col h-[500px]">
         <div class="p-6 border-b border-[var(--line)] flex justify-between items-center shrink-0">
           <div class="flex items-center gap-2">
@@ -363,7 +358,6 @@ onUnmounted(() => {
       </section>
     </div>
 
-    <!-- WeChat Token & Sync -->
     <section class="glass-panel">
       <div class="p-6 border-b border-[var(--line)] flex items-center gap-2">
         <Database class="w-5 h-5 text-green-400" />
@@ -406,7 +400,6 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <!-- Alert Bar -->
     <div v-if="error" class="bg-[var(--status-error)]/10 border border-[var(--status-error)]/20 text-[var(--status-error)] p-4 rounded-xl flex items-center gap-3">
       <AlertCircle class="w-5 h-5 shrink-0" />
       <span class="text-sm font-medium">{{ error }}</span>
@@ -416,7 +409,6 @@ onUnmounted(() => {
       <span class="text-sm font-medium">{{ saved }}</span>
     </div>
 
-    <!-- Quality Overview Section -->
     <section class="glass-panel">
       <div class="p-6 border-b border-[var(--line)]">
         <div class="flex items-center gap-2">
@@ -426,7 +418,6 @@ onUnmounted(() => {
       </div>
       
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6">
-        <!-- New Feedback form -->
         <div class="glass-card p-5 bg-black/20 border-white/5 flex flex-col gap-3">
           <h3 class="text-sm font-bold text-white flex items-center gap-1.5 mb-2"><ListTree class="w-4 h-4 text-[var(--text-muted)]" /> 新增加工反馈</h3>
           
@@ -437,11 +428,11 @@ onUnmounted(() => {
             </select>
             <input v-model.number="feedbackDraft.target_id" type="number" placeholder="Target ID" min="1" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-[var(--accent-industry)]" />
             <select v-model="feedbackDraft.label" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-[var(--accent-industry)]">
-              <option value="good">🟢 Good (标记为优)</option>
-              <option value="bad_off_topic">🔴 Bad: Off Topic (离题)</option>
-              <option value="bad_source">🔴 Bad: Source (弱来源)</option>
-              <option value="bad_pr_like">🔴 Bad: PR Like (公关文)</option>
-              <option value="keep_borderline">🟡 Keep: Borderline (边缘收录)</option>
+              <option value="good">Good (标记为优)</option>
+              <option value="bad_off_topic">Bad: Off Topic (离题)</option>
+              <option value="bad_source">Bad: Source (弱来源)</option>
+              <option value="bad_pr_like">Bad: PR Like (公关文)</option>
+              <option value="keep_borderline">Keep: Borderline (边缘收录)</option>
             </select>
             <input v-model="feedbackDraft.reason" type="text" placeholder="理由简述 (可选)" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-[var(--accent-industry)]" />
             <textarea v-model="feedbackDraft.note" placeholder="内部备注 (可选)" rows="2" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-[var(--accent-industry)] resize-none" />
@@ -449,14 +440,13 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- Global Metrics -->
         <div class="glass-card p-5 bg-black/20 border-white/5 lg:col-span-2">
           <h3 class="text-sm font-bold text-white flex items-center gap-1.5 mb-4"><Activity class="w-4 h-4 text-[var(--accent-policy)]" /> 质量大盘数据</h3>
           
           <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" v-if="qualityOverview">
              <div class="flex flex-col border-l-2 border-[var(--status-ok)] pl-3">
                <span class="text-[10px] uppercase tracking-widest text-[var(--text-muted)]">Avg Score</span>
-               <span class="text-xl font-bold text-white tabular-nums glow-primary">{{ formatScore(qualityOverview.average_daily_report_score) }}</span>
+               <span class="text-xl font-bold text-white tabular-nums">{{ formatScore(qualityOverview.average_daily_report_score) }}</span>
              </div>
              <div class="flex flex-col border-l-2 border-[var(--accent-industry)] pl-3">
                <span class="text-[10px] uppercase tracking-widest text-[var(--text-muted)]">Policy Fill</span>
@@ -483,9 +473,7 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <!-- Lower Grids: Runs & Candidates -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-      <!-- Left: Recent Runs List -->
       <section class="glass-panel flex flex-col min-h-[500px] h-[600px]">
         <div class="p-6 border-b border-[var(--line)] shrink-0 flex items-center gap-2">
           <Fingerprint class="w-5 h-5 text-[var(--accent-primary)]" />
@@ -520,7 +508,6 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <!-- Right: Sub-detail (Candidates / Context) -->
       <section class="glass-panel flex flex-col min-h-[500px] h-[600px]">
         <div class="p-6 border-b border-[var(--line)] shrink-0 flex items-center gap-2">
           <ListTree class="w-5 h-5 text-[var(--status-info)]" />
@@ -561,187 +548,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* Base mappings */
-.flex { display: flex; }
-.flex-col { flex-direction: column; }
-.flex-wrap { flex-wrap: wrap; }
-.justify-between { justify-content: space-between; }
-.justify-center { justify-content: center; }
-.items-center { align-items: center; }
-.items-start { align-items: flex-start; }
-.gap-1 { gap: 0.25rem; }
-.gap-1\.5 { gap: 0.375rem; }
-.gap-2 { gap: 0.5rem; }
-.gap-3 { gap: 0.75rem; }
-.gap-4 { gap: 1rem; }
-.gap-6 { gap: 1.5rem; }
-.gap-8 { gap: 2rem; }
-.gap-x-3 { column-gap: 0.75rem; }
-.gap-y-1 { row-gap: 0.25rem; }
-.w-full { width: 100%; }
-.h-full { height: 100%; }
-.max-w-7xl { max-width: 80rem; }
-.h-\[500px\] { height: 500px; }
-.h-\[600px\] { height: 600px; }
-.min-h-\[500px\] { min-height: 500px; }
-.w-1 { width: 0.25rem; }
-.w-3 { width: 0.75rem; }
-.h-3 { height: 0.75rem; }
-.w-3\.5 { width: 0.875rem; }
-.h-3\.5 { height: 0.875rem; }
-.w-4 { width: 1rem; }
-.h-4 { height: 1rem; }
-.w-5 { width: 1.25rem; }
-.h-5 { height: 1.25rem; }
-.w-6 { width: 1.5rem; }
-.h-6 { height: 1.5rem; }
-.w-8 { width: 2rem; }
-.h-8 { height: 2rem; }
-.w-12 { width: 3rem; }
-.h-12 { height: 3rem; }
-.mx-auto { margin-left: auto; margin-right: auto; }
-.pl-4 { padding-left: 1rem; }
-.pr-4 { padding-right: 1rem; }
-.pb-6 { padding-bottom: 1.5rem; }
-.pb-12 { padding-bottom: 3rem; }
-.p-2 { padding: 0.5rem; }
-.p-4 { padding: 1rem; }
-.p-5 { padding: 1.25rem; }
-.p-6 { padding: 1.5rem; }
-.px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
-.px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
-.py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
-.py-1\.5 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
-.py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
-.py-2\.5 { padding-top: 0.625rem; padding-bottom: 0.625rem; }
-.py-12 { padding-top: 3rem; padding-bottom: 3rem; }
-.pl-3 { padding-left: 0.75rem; }
-.mt-1 { margin-top: 0.25rem; }
-.mt-2 { margin-top: 0.5rem; }
-.mt-4 { margin-top: 1rem; }
-.mb-1\.5 { margin-bottom: 0.375rem; }
-.mb-2 { margin-bottom: 0.5rem; }
-.mb-3 { margin-bottom: 0.75rem; }
-.mb-4 { margin-bottom: 1rem; }
-.mb-6 { margin-bottom: 1.5rem; }
-.space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.5rem; }
-.space-y-3 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.75rem; }
-.space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem; }
-.space-y-8 > :not([hidden]) ~ :not([hidden]) { margin-top: 2rem; }
-.relative { position: relative; }
-.absolute { position: absolute; }
-.left-0 { left: 0; }
-.top-0 { top: 0; }
-.bottom-0 { bottom: 0; }
-.z-10 { z-index: 10; }
-.flex-1 { flex: 1 1 0%; }
-.shrink-0 { flex-shrink: 0; }
-.overflow-y-auto { overflow-y: auto; }
-.overflow-hidden { overflow: hidden; }
-.overflow-auto { overflow: auto; }
-.resize-none { resize: none; }
-.rounded { border-radius: 0.25rem; }
-.rounded-lg { border-radius: 0.5rem; }
-.rounded-xl { border-radius: 0.75rem; }
-.rounded-2xl { border-radius: 1rem; }
-.border { border-width: 1px; }
-.border-b { border-bottom-width: 1px; }
-.border-l-2 { border-left-width: 2px; }
-.border-white\/5 { border-color: rgba(255, 255, 255, 0.05); }
-.border-white\/10 { border-color: rgba(255, 255, 255, 0.1); }
-.border-\[var\(--line\)\] { border-color: var(--line); }
-.border-\[var\(--accent-primary\)\]\/40 { border-color: rgba(100, 180, 255, 0.4); }
-.border-\[var\(--accent-policy\)\]\/30 { border-color: rgba(167, 139, 250, 0.3); }
-.border-\[var\(--status-ok\)\] { border-color: var(--status-ok); }
-.border-\[var\(--status-ok\)\]\/20 { border-color: rgba(52, 211, 153, 0.2); }
-.border-\[var\(--status-error\)\]\/20 { border-color: rgba(248, 113, 113, 0.2); }
-.border-\[var\(--status-error\)\]\/30 { border-color: rgba(248, 113, 113, 0.3); }
-.border-\[var\(--status-warn\)\]\/20 { border-color: rgba(251, 191, 36, 0.2); }
-.border-\[var\(--accent-industry\)\] { border-color: var(--accent-industry); }
-.border-[var\(--accent-academic\)] { border-color: var(--accent-academic); }
-.bg-black\/20 { background-color: rgba(0, 0, 0, 0.2); }
-.bg-black\/40 { background-color: rgba(0, 0, 0, 0.4); }
-.bg-white\/5 { background-color: rgba(255, 255, 255, 0.05); }
-.bg-\[var\(--accent-policy\)\]\/20 { background-color: rgba(167, 139, 250, 0.2); }
-.bg-\[var\(--accent-industry\)\]\/20 { background-color: rgba(74, 222, 128, 0.2); }
-.bg-\[var\(--status-error\)\]\/5 { background-color: rgba(248, 113, 113, 0.05); }
-.bg-\[var\(--status-error\)\]\/10 { background-color: rgba(248, 113, 113, 0.1); }
-.bg-\[var\(--status-warn\)\]\/10 { background-color: rgba(251, 191, 36, 0.1); }
-.bg-\[var\(--status-ok\)\]\/10 { background-color: rgba(52, 211, 153, 0.1); }
-.bg-\[var\(--accent-primary\)\] { background-color: var(--accent-primary); }
-.bg-transparent { background-color: transparent; }
-.text-xs { font-size: 0.75rem; line-height: 1rem; }
-.text-\[10px\] { font-size: 0.625rem; line-height: 1rem; }
-.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
-.text-lg { font-size: 1.125rem; line-height: 1.75rem; }
-.text-xl { font-size: 1.25rem; line-height: 1.75rem; }
-.text-3xl { font-size: 1.875rem; line-height: 2.25rem; }
-.font-bold { font-weight: 700; }
-.font-medium { font-weight: 500; }
-.font-normal { font-weight: 400; }
-.font-mono { font-family: var(--font-mono); }
-.uppercase { text-transform: uppercase; }
-.lowercase { text-transform: lowercase; }
-.tracking-tight { letter-spacing: -0.025em; }
-.tracking-wider { letter-spacing: 0.05em; }
-.tracking-widest { letter-spacing: 0.1em; }
-.tabular-nums { font-variant-numeric: tabular-nums; }
-.text-white { color: white; }
-.text-black { color: #000; }
-.text-\[var\(--text-muted\)\] { color: var(--text-muted); }
-.text-\[var\(--text-secondary\)\] { color: var(--text-secondary); }
-.text-\[var\(--text-primary\)\] { color: var(--text-primary); }
-.text-\[var\(--status-ok\)\] { color: var(--status-ok); }
-.text-\[var\(--status-error\)\] { color: var(--status-error); }
-.text-\[var\(--status-warn\)\] { color: var(--status-warn); }
-.text-\[var\(--status-info\)\] { color: var(--status-info); }
-.text-\[var\(--accent-primary\)\] { color: var(--accent-primary); }
-.text-\[var\(--accent-industry\)\] { color: var(--accent-industry); }
-.text-\[var\(--accent-policy\)\] { color: var(--accent-policy); }
-.shadow-\[0_0_20px_rgba\(167\,139\,250\,0\.2\)\] { box-shadow: 0 0 20px rgba(167, 139, 250, 0.2); }
-.shadow-\[inset_0_0_20px_rgba\(100\,180\,255\,0\.05\)\] { box-shadow: inset 0 0 20px rgba(100, 180, 255, 0.05); }
-.opacity-20 { opacity: 0.2; }
-.opacity-50 { opacity: 0.5; }
-.opacity-60 { opacity: 0.6; }
-.opacity-80 { opacity: 0.8; }
-.opacity-90 { opacity: 0.9; }
-.line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.leading-snug { line-height: 1.375; }
-.leading-relaxed { line-height: 1.625; }
-.whitespace-nowrap { white-space: nowrap; }
-.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.transition-colors { transition-property: color, background-color, border-color, text-decoration-color, fill, stroke; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
-.transition-all { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
-.hover\:bg-black\/40:hover { background-color: rgba(0, 0, 0, 0.4); }
-.hover\:border-white\/10:hover { border-color: rgba(255, 255, 255, 0.1); }
-.hover\:text-white:hover { color: white; }
-.hover\:bg-\[var\(--accent-industry\)\]\/30:hover { background-color: rgba(74, 222, 128, 0.3); }
-.hover\:bg-\[var\(--status-error\)\]\/20:hover { background-color: rgba(248, 113, 113, 0.2); }
-.hover\:border-\[var\(--accent-primary\)\]\/50:hover { border-color: rgba(100, 180, 255, 0.5); }
-.hover\:opacity-100:hover { opacity: 1; }
-.focus\:outline-none:focus { outline: 2px solid transparent; outline-offset: 2px; }
-.focus\:border-\[var\(--accent-primary\)\]:focus { border-color: var(--accent-primary); }
-.focus\:border-\[var\(--accent-industry\)\]:focus { border-color: var(--accent-industry); }
-.group:hover .group-hover\:text-\[var\(--accent-primary\)\] { color: var(--accent-primary); }
-.select-none { user-select: none; }
-.cursor-pointer { cursor: pointer; }
-.accent-\[var\(--accent-primary\)\] { accent-color: var(--accent-primary); }
-.text-center { text-align: center; }
-
-/* Grid Utils */
-.grid { display: grid; }
-.grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
-.grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-@media (min-width: 768px) {
-  .md\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .md\:pl-0 { padding-left: 0; }
-}
-@media (min-width: 1024px) {
-  .lg\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .lg\:col-span-2 { grid-column: span 2 / span 2; }
-}
-
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 </style>
