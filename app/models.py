@@ -67,7 +67,7 @@ class RetrievalQuery(TimestampMixin, Base):
     __tablename__ = "retrieval_queries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    run_id: Mapped[int] = mapped_column(ForeignKey("retrieval_runs.id"), nullable=False)
+    run_id: Mapped[int] = mapped_column(ForeignKey("retrieval_runs.id"), nullable=False, index=True)
     section: Mapped[str] = mapped_column(String(64), nullable=False)
     language: Mapped[str] = mapped_column(String(16), nullable=False)
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -107,7 +107,7 @@ class Article(TimestampMixin, Base):
     __table_args__ = (UniqueConstraint("run_id", "url", name="uq_articles_run_url"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    run_id: Mapped[int] = mapped_column(ForeignKey("retrieval_runs.id"), nullable=False)
+    run_id: Mapped[int] = mapped_column(ForeignKey("retrieval_runs.id"), nullable=False, index=True)
     url: Mapped[str] = mapped_column(String(1000), nullable=False)
     canonical_url: Mapped[str | None] = mapped_column(String(1000))
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -226,7 +226,7 @@ class ReportItem(TimestampMixin, Base):
     __tablename__ = "report_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    report_id: Mapped[int] = mapped_column(ForeignKey("reports.id"), nullable=False)
+    report_id: Mapped[int] = mapped_column(ForeignKey("reports.id"), nullable=False, index=True)
     article_id: Mapped[int | None] = mapped_column(ForeignKey("articles.id"))
     section: Mapped[str] = mapped_column(String(32), nullable=False)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -292,7 +292,7 @@ class AgentRun(TimestampMixin, Base):
     __tablename__ = "agent_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    retrieval_run_id: Mapped[int | None] = mapped_column(ForeignKey("retrieval_runs.id"), nullable=True)
+    retrieval_run_id: Mapped[int | None] = mapped_column(ForeignKey("retrieval_runs.id"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="running", nullable=False)
     stage_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     agent_type: Mapped[str] = mapped_column(String(32), default="daily_report", nullable=False)
@@ -310,7 +310,7 @@ class AgentStep(TimestampMixin, Base):
     __tablename__ = "agent_steps"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    agent_run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id"), nullable=False)
+    agent_run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id"), nullable=False, index=True)
     stage_name: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="completed", nullable=False)
     model_name: Mapped[str | None] = mapped_column(String(255))
@@ -477,14 +477,14 @@ class ArticlePool(TimestampMixin, Base):
     url: Mapped[str] = mapped_column(String(2048), nullable=False, unique=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(1024), nullable=False)
-    domain: Mapped[str] = mapped_column(String(255), nullable=False)
+    domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     source_type: Mapped[str] = mapped_column(String(32), nullable=False)
     language: Mapped[str] = mapped_column(String(8), nullable=False)
     raw_content: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
     published_at: Mapped[datetime | None] = mapped_column(DateTime)
     ingested_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(UTC), nullable=False
+        DateTime, default=lambda: datetime.now(UTC), nullable=False, index=True
     )
     quality_score: Mapped[float | None] = mapped_column(Float)
     section: Mapped[str | None] = mapped_column(String(32))
