@@ -264,9 +264,6 @@ async def scheduled_weixin_ingester_run():
 
 
 def _run_alembic_migrations() -> None:
-    from app.database import _is_sqlite
-    if _is_sqlite:
-        return
     try:
         from alembic.config import Config as AlembicConfig
         from alembic import command
