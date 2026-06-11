@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.db
+*.db-journal
+node_modules
+frontend/dist
+.pytest_cache
+.worktrees

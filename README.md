@@ -209,8 +209,34 @@ workflow_news/
 
 ## 部署
 
+### Docker 部署（推荐）
+
 ```bash
-# Systemd 服务
+# 1. 配置环境变量
+cp .env.example .env
+# 编辑 .env 填入 API Key
+
+# 2. 使用 docker-compose 启动
+docker-compose up -d
+
+# 3. 验证
+curl http://localhost:8765/api/diagnostics/health
+```
+
+### Docker 单容器
+
+```bash
+docker build -t workflow-news .
+docker run -p 8765:8765 \
+  -e DEEPSEEK_API_KEY=your_key \
+  -e BOCHA_API_KEY=your_key \
+  -v app_data:/app \
+  workflow-news
+```
+
+### Systemd 服务
+
+```bash
 sudo tee /etc/systemd/system/workflow_news.service << 'EOF'
 [Unit]
 Description=Workflow News Platform
