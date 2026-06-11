@@ -91,11 +91,21 @@ export const api = {
       handlers.onComplete?.(JSON.parse(e.data))
       es.close()
     })
-    es.addEventListener('error', (e) => {
-      if (e instanceof MessageEvent) {
-        handlers.onError?.(JSON.parse(e.data))
+    es.addEventListener('error', () => {
+      const errorData = {
+        type: 'connection_error',
+        message: es.readyState === EventSource.CLOSED 
+          ? 'Connection closed' 
+          : es.readyState === EventSource.CONNECTING
+            ? 'Reconnecting...'
+            : 'Unknown error',
+        readyState: es.readyState
       }
-      es.close()
+      handlers.onError?.(errorData)
+      
+      if (es.readyState === EventSource.CLOSED) {
+        es.close()
+      }
     })
     es.addEventListener('done', () => es.close())
     return es

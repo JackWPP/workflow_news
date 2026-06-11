@@ -12,6 +12,10 @@ export class ParticleSystem {
   private animationId: number = 0;
   private width: number = 0;
   private height: number = 0;
+  private boundResize: () => void;
+  private boundAnimate: () => void;
+  private isVisible: boolean = true;
+  private observer: IntersectionObserver | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -19,9 +23,24 @@ export class ParticleSystem {
     if (!ctx) throw new Error('Canvas 2D context not available');
     this.ctx = ctx;
 
+    this.boundResize = this.resize.bind(this);
+    this.boundAnimate = this.animate.bind(this);
+
     this.resize();
-    window.addEventListener('resize', this.resize.bind(this));
+    window.addEventListener('resize', this.boundResize);
     this.initParticles();
+    
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        this.isVisible = entries[0].isIntersecting;
+        if (this.isVisible && !this.animationId) {
+          this.animate();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    this.observer.observe(canvas);
+    
     this.animate();
   }
 
@@ -48,14 +67,17 @@ export class ParticleSystem {
   }
 
   private animate() {
+    if (!this.isVisible) {
+      this.animationId = 0;
+      return;
+    }
+
     this.ctx.clearRect(0, 0, this.width, this.height);
     
-    // Draw particles
     this.particles.forEach(p => {
       p.x += p.vx;
       p.y += p.vy;
 
-      // Wrap around edges
       if (p.x < 0) p.x = this.width;
       if (p.x > this.width) p.x = 0;
       if (p.y < 0) p.y = this.height;
@@ -67,7 +89,6 @@ export class ParticleSystem {
       this.ctx.fill();
     });
 
-    // Draw connections
     for (let i = 0; i < this.particles.length; i++) {
       for (let j = i + 1; j < this.particles.length; j++) {
         const dx = this.particles[i].x - this.particles[j].x;
@@ -85,11 +106,20 @@ export class ParticleSystem {
       }
     }
 
-    this.animationId = requestAnimationFrame(this.animate.bind(this));
+    this.animationId = requestAnimationFrame(this.boundAnimate);
   }
 
   public destroy() {
-    cancelAnimationFrame(this.animationId);
-    window.removeEventListener('resize', this.resize.bind(this));
+    if (this.animationId) {
+      cancelAnimationFrame(this.animationId);
+      this.animationId = 0;
+    }
+    
+    window.removeEventListener('resize', this.boundResize);
+    
+    if (this.observer) {
+      this.observer.disconnect();
+      this.observer = null;
+    }
   }
 }

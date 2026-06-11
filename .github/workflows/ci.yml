@@ -25,6 +25,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:test@localhost:5432/test_db
       BOCHA_API_KEY: ""
       DEEPSEEK_API_KEY: ""
+      ADMIN_PASSWORD: "test-password-123"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,7 +34,10 @@ jobs:
           cache: 'pip'
       - run: pip install -r requirements.txt
       - run: alembic upgrade head
-      - run: python -m pytest tests/ -v --timeout=60 || true
+      - name: Run backend tests
+        run: python -m pytest tests/ -v --timeout=60 --tb=short
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:5432/test_db
 
   test-frontend:
     runs-on: ubuntu-latest
