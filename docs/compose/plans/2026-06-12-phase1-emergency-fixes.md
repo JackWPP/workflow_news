@@ -1,5 +1,10 @@
 # Phase 1 紧急修复 Implementation Plan
 
+> [!NOTE]
+> This document may not reflect the current implementation.
+> See the final report for up-to-date state:
+> [Final Report](../reports/phase1-emergency-fixes.md)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use compose:subagent (recommended) or compose:execute to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复 5 个崩溃级 BUG 和安全漏洞，提升系统稳定性和用户体验
