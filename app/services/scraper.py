@@ -174,18 +174,17 @@ class ScraperClient:
         # 优先用 curl_cffi（浏览器 TLS 指纹），ImportError 时回退到 httpx
         try:
             from curl_cffi.requests import AsyncSession
-            async with AsyncSession(impersonate="chrome", timeout=float(timeout or 20)) as session:
+            async with AsyncSession(impersonate="chrome", timeout=float(timeout or 20), verify=False) as session:
                 resp = await session.get(url, follow_redirects=True)
                 if resp.status_code != 200:
                     return None
                 html_bytes = resp.content
         except ImportError:
-            # curl_cffi 不可用，回退到 httpx
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             }
             try:
-                async with httpx.AsyncClient(timeout=float(timeout or 20), follow_redirects=True, headers=headers) as client:
+                async with httpx.AsyncClient(timeout=float(timeout or 20), follow_redirects=True, headers=headers, verify=False) as client:
                     resp = await client.get(url)
                     if resp.status_code != 200:
                         return None

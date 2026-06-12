@@ -468,7 +468,8 @@ async def result_to_report(
         if report and report.status in ("complete", "complete_auto_publish"):
             try:
                 from app.services.eval_runner import EvalRunner
-                runner = EvalRunner(judge_model="claude-opus-4-7")
+                from app.services.llm_client import LLMClient
+                runner = EvalRunner(judge_model="claude-opus-4-7", llm_client=LLMClient())
                 await runner.evaluate_report(session, report)
             except Exception:
                 logger.warning("Auto-evaluation skipped (non-fatal)", exc_info=True)

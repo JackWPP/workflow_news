@@ -1732,6 +1732,8 @@ class FinishTool(Tool):
         "完成报告生成，输出最终的报告内容。"
         "必须在所有需要的 write_section 完成后调用。"
         "调用此工具后 Agent 将停止探索。"
+        "注意：所有参数必须是合法 JSON。sections_content 的值是各板块的 markdown 文本，"
+        "文本中如果包含引号请用单引号替代，避免 JSON 转义问题。"
     )
     parameters = {
         "type": "object",

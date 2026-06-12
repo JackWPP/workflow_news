@@ -211,6 +211,29 @@ class LLMClient:
             "tool_use_fallback_mode": self.tool_use_fallback_mode,
         }
 
+    @staticmethod
+    def _repair_json_args(raw_args: str, tool_name: str) -> dict[str, Any]:
+        try:
+            import re as _re
+            fixed = raw_args.replace('\u201c', '"').replace('\u201d', '"')
+            fixed = fixed.replace('\u2018', "'").replace('\u2019', "'")
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+        summary_match = _re.search(r'"summary"\s*:\s*"([^"]*)"', raw_args)
+        title_match = _re.search(r'"title"\s*:\s*"([^"]*)"', raw_args)
+        fallback: dict[str, Any] = {}
+        if title_match:
+            fallback["title"] = title_match.group(1)
+        if summary_match:
+            fallback["summary"] = summary_match.group(1)
+        if tool_name == "finish":
+            fallback.setdefault("title", "日报")
+            fallback.setdefault("summary", "")
+            fallback["sections_content"] = {}
+        logger.warning("_repair_json_args: fallback for tool '%s', extracted keys: %s", tool_name, list(fallback.keys()))
+        return fallback
+
     @property
     def enabled(self) -> bool:
         """只要任一 provider 有 key 就可用。"""
@@ -387,7 +410,10 @@ class LLMClient:
                 tool_name = fn.get("name", "")
                 raw_args = fn.get("arguments", "{}")
                 if isinstance(raw_args, str):
-                    arguments = json.loads(raw_args)
+                    try:
+                        arguments = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        arguments = self._repair_json_args(raw_args, tool_name)
                 else:
                     arguments = raw_args
                 tool_calls.append(

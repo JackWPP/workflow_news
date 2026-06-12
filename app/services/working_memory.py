@@ -34,10 +34,10 @@ class ArticleSummary:
     url: str
     domain: str
     source_name: str
-    published_at: str | None
-    summary: str
-    section: str  # academic / industry / policy
-    key_finding: str  # Agent 从这篇文章提炼的核心洞察
+    published_at: str | None = None
+    summary: str = ""
+    section: str = ""  # academic / industry / policy
+    key_finding: str = ""  # Agent 从这篇文章提炼的核心洞察
     has_image: bool = False
     image_url: str | None = None
     worth_publishing: bool = True

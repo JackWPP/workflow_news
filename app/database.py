@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import OperationalError
@@ -72,6 +73,34 @@ def session_scope():
                     attempt + 1, max_retries, wait,
                 )
                 time.sleep(wait)
+                continue
+            raise
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+
+@asynccontextmanager
+async def async_session_scope():
+    """异步版本的 session_scope，不阻塞事件循环"""
+    max_retries = 3 if _is_sqlite else 0
+    for attempt in range(max_retries + 1):
+        session = SessionLocal()
+        try:
+            yield session
+            session.commit()
+            return
+        except OperationalError as exc:
+            session.rollback()
+            if _is_sqlite and "database is locked" in str(exc) and attempt < max_retries:
+                wait = 0.5 * (2 ** attempt)
+                logger.warning(
+                    "database is locked, retry %d/%d in %.1fs",
+                    attempt + 1, max_retries, wait,
+                )
+                await asyncio.sleep(wait)  # 使用 async sleep
                 continue
             raise
         except Exception:

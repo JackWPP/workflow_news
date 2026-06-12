@@ -932,7 +932,8 @@ async def trigger_evaluation(report_id: int, request: Request):
                 select(Article).where(Article.run_id == report.retrieval_run_id)
             ).all()
         )
-        runner = EvalRunner(judge_model="claude-opus-4-7")
+        from app.services.llm_client import LLMClient
+        runner = EvalRunner(judge_model="claude-opus-4-7", llm_client=LLMClient())
         result = await runner.evaluate_report(session, report, articles)
         return result
 

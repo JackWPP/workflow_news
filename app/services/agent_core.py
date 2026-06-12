@@ -685,7 +685,27 @@ class AgentCore:
         """从 LLM 的 finish 工具调用中提取结果。信任 LLM 的判断——它知道自己是否探索充分。"""
         for tc in llm_response.tool_calls:
             if tc.tool_name == "finish":
-                return tc.arguments
+                args = tc.arguments
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        try:
+                            fixed = args.replace('\u201c', '"').replace('\u201d', '"')
+                            args = json.loads(fixed)
+                        except json.JSONDecodeError:
+                            import re
+                            summary_match = re.search(r'"summary"\s*:\s*"([^"]*)"', args)
+                            title_match = re.search(r'"title"\s*:\s*"([^"]*)"', args)
+                            args = {
+                                "title": title_match.group(1) if title_match else "日报",
+                                "summary": summary_match.group(1) if summary_match else "",
+                                "sections_content": {},
+                            }
+                            logger.warning("_extract_finish_result: JSON repair fallback used")
+                if isinstance(args, dict):
+                    return args
+                return None
         return None
 
     def _enrich_articles_with_images(self, memory: WorkingMemory) -> None:

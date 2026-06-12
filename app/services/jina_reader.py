@@ -213,19 +213,39 @@ class JinaReaderClient:
         }
 
     async def _fallback_scrape(self, url: str, timeout: int | None = None) -> dict[str, Any]:
+        error_result = {
+            "url": url,
+            "resolved_url": url,
+            "domain": extract_domain(url),
+            "title": "",
+            "markdown": "",
+            "html": "",
+            "metadata": {},
+            "image_url": None,
+            "published_at": None,
+            "status": "error",
+            "scrape_layer": "direct_http",
+        }
+
         # 优先用 curl_cffi（浏览器 TLS 指纹），ImportError 时回退到 httpx
         try:
             from curl_cffi.requests import AsyncSession
-            async with AsyncSession(impersonate="chrome", timeout=float(timeout or 20)) as session:
+            async with AsyncSession(impersonate="chrome", timeout=float(timeout or 20), verify=False) as session:
                 response = await session.get(url, follow_redirects=True)
+                if response.status_code == 404:
+                    error_result["error"] = "404 Not Found"
+                    return error_result
                 response.raise_for_status()
                 html = response.text
         except ImportError:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             }
-            async with httpx.AsyncClient(timeout=timeout or 20, follow_redirects=True, headers=headers) as client:
+            async with httpx.AsyncClient(timeout=timeout or 20, follow_redirects=True, headers=headers, verify=False) as client:
                 response = await client.get(url)
+                if response.status_code == 404:
+                    error_result["error"] = "404 Not Found"
+                    return error_result
                 response.raise_for_status()
                 html = response.text
 

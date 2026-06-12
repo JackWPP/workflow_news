@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -10,6 +11,8 @@ from app.config import settings
 from app.utils import extract_domain
 
 logger = logging.getLogger(__name__)
+
+_search_semaphore = asyncio.Semaphore(2)
 
 _BASE_URL = "https://api.bochaai.com/v1/web-search"
 _AI_SEARCH_URL = "https://api.bochaai.com/v1/ai-search"
@@ -37,6 +40,21 @@ class BochaSearchClient:
         return bool(self.api_key)
 
     async def search(
+        self,
+        query: str,
+        count: int | None = None,
+        freshness: str = "oneWeek",
+        summary: bool = True,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        async with _search_semaphore:
+            return await self._search_inner(
+                query, count=count, freshness=freshness, summary=summary,
+                include_domains=include_domains, exclude_domains=exclude_domains,
+            )
+
+    async def _search_inner(
         self,
         query: str,
         count: int | None = None,
