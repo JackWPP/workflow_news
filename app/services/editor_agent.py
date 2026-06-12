@@ -233,12 +233,14 @@ class EditorAgent:
         seeds: list[dict],
     ) -> Report:
         from app.services.daily_report_agent import DailyReportAgent
+        from app.services.repository import get_report_settings
         dra = DailyReportAgent()
-        # 复用 DailyReportAgent 的 _result_to_report 逻辑
+        with session_scope() as session:
+            runtime = dra._runtime_settings(get_report_settings(session), shadow)
         return await dra._result_to_report(
             result, target_date, run_id, agent_run_id,
             shadow, "publish",
-            {"shadow_mode": shadow},
+            runtime,
             self._llm_client, self._llm_client,
         )
 
