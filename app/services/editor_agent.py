@@ -120,7 +120,7 @@ class EditorAgent:
         # 4. 运行 Agent
         tools = self._build_tools()
         harness = self._build_harness()
-        agent = AgentCore(tools=tools, llm_client=self._llm_client, harness=harness)
+        agent = AgentCore(tools=tools, llm_client=self._llm_client, harness=harness, event_queue=event_queue)
         result = await agent.run(task=task, agent_run_id=agent_run_id)
 
         # 5. 写入 Report
