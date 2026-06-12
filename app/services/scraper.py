@@ -125,7 +125,7 @@ class ScraperClient:
             if result and result.get("markdown"):
                 logger.debug("scraper: Trafilatura success for %s", url)
                 return result
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             logger.debug("scraper: Trafilatura failed for %s: %s", url, exc)
 
         # 第二层：Jina Reader
@@ -134,7 +134,7 @@ class ScraperClient:
             if result.get("status") != "error" and result.get("markdown"):
                 logger.debug("scraper: Jina success for %s", url)
                 return result
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             logger.debug("scraper: Jina failed for %s: %s", url, exc)
 
         # 第三层：direct_http fallback
@@ -142,7 +142,7 @@ class ScraperClient:
             result = await self._jina._fallback_scrape(url, timeout)
             logger.debug("scraper: httpx fallback for %s", url)
             return result
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             logger.warning("scraper: all layers failed for %s: %s", url, exc)
             return {
                 "url": url,

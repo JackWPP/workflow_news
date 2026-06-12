@@ -275,7 +275,7 @@ class ContinuousIngester:
 
             logger.info("Ingester: fetched '%s' -> %s (%d chars)",
                         url[:60], fetch_status, len(markdown))
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             logger.warning("Ingester: fetch failed for '%s': %s", url[:60], exc)
             # 标记失败但不阻塞
             try:

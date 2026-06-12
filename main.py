@@ -335,8 +335,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "http://localhost:8765",
         "http://localhost:5173",
+        "http://localhost:8765",
+        "http://localhost:8766",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
@@ -528,12 +529,17 @@ async def run_report(payload: ReportRunRequest, request: Request):
                 "report_id": report.id,
                 "status": report.status,
             })
-        except Exception as exc:
+        except BaseException as exc:
             logger.error("Pipeline failed: %s", exc, exc_info=True)
-            event_queue.put_nowait({"type": "error", "message": str(exc)[:500]})
+            try:
+                event_queue.put_nowait({"type": "error", "message": str(exc)[:500]})
+            except Exception:
+                pass
         finally:
-            # 发送结束标记
-            event_queue.put_nowait(None)
+            try:
+                event_queue.put_nowait(None)
+            except Exception:
+                pass
             _running_task = None
             _running_agent_run_id = None
             # 清理队列引用（延迟清理以允许 SSE 消费完）

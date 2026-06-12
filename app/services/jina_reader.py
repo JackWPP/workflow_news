@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -99,7 +100,7 @@ class JinaReaderClient:
         timeout = timeout_seconds or settings.scrape_timeout_seconds
         try:
             return await self._jina_scrape(url, timeout)
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             if self._should_skip_direct_http(url, exc):
                 return {
                     "url": url,
@@ -118,7 +119,7 @@ class JinaReaderClient:
         # Fallback to direct HTTP
         try:
             return await self._fallback_scrape(url, timeout)
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             return {
                 "url": url,
                 "resolved_url": url,

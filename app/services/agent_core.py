@@ -357,7 +357,7 @@ class AgentCore:
                                 summary="返回格式解析错误",
                                 data={"error_type": "parse_error"},
                             )
-                        except Exception as exc:
+                        except (Exception, asyncio.CancelledError) as exc:
                             logger.error(
                                 "[AgentCore] Tool %s unexpected error: %s",
                                 tool_call.tool_name,
