@@ -487,6 +487,7 @@ class AgentCore:
                 msg = f"检查点：你已经做了 {step_index} 步但还没有阅读任何文章。现在必须用 read_page 或 read_pool_article 阅读最相关的 2-3 篇。"
                 messages.append({"role": "user", "content": msg})
                 logger.info("[AgentCore] Checkpoint 0 triggered at step %d", step_index)
+                self._send_phase_event(1, "正在阅读文章", step_index)
 
             # Checkpoint 1 (step >= 8): 强制评估
             if step_index == 8 and not has_evaluated:
@@ -497,6 +498,7 @@ class AgentCore:
                     msg = "检查点：步数已到 8。请先读几篇文章然后用 evaluate_article 评估。"
                 messages.append({"role": "user", "content": msg})
                 logger.info("[AgentCore] Checkpoint 1 triggered at step %d", step_index)
+                self._send_phase_event(2, "正在评估文章价值", step_index)
 
             # Checkpoint 2 (step >= 15): 强制开始写作
             if step_index == 15 and not has_written:
@@ -797,6 +799,19 @@ class AgentCore:
             total_tokens=total_tokens,
             diagnostics=diagnostics or {},
         )
+
+    def _send_phase_event(self, phase: int, name: str, step_index: int) -> None:
+        """推送阶段切换事件到 SSE 队列。"""
+        if self._event_queue:
+            try:
+                self._event_queue.put_nowait({
+                    "type": "phase",
+                    "phase": phase,
+                    "name": name,
+                    "step_index": step_index,
+                })
+            except Exception:
+                pass
 
     def _persist_step(
         self,
