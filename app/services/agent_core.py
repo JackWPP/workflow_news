@@ -305,6 +305,10 @@ class AgentCore:
                     else:
                         try:
                             timeout = self.harness.tool_timeout(tool_call.tool_name)
+                            logger.info(
+                                "[AgentCore] Step %d: executing %s (timeout=%.0fs)",
+                                step_index, tool_call.tool_name, timeout,
+                            )
                             tool_result = await asyncio.wait_for(
                                 tool.execute(memory=memory, **tool_call.arguments),
                                 timeout=timeout,
@@ -460,7 +464,7 @@ class AgentCore:
                         except Exception:
                             pass
 
-                logger.debug(
+                logger.info(
                     "[AgentCore] Step %d [%s]: %s",
                     step_index,
                     tool_call.tool_name,
@@ -469,44 +473,39 @@ class AgentCore:
 
             messages.extend(tool_result_messages)
 
-            # ── 3 个强制检查点：确保 Agent 不会迷失在搜索里 ──
+            # ── 强制检查点：确保 Agent 不会迷失 ──
 
             # 检查之前调过的工具
             has_evaluated = any(s.tool_name == "evaluate_article" for s in memory.step_history)
             has_written = any(s.tool_name == "write_section" for s in memory.step_history)
-            has_read = any(s.tool_name == "read_page" for s in memory.step_history)
+            has_read = any(s.tool_name in ("read_page", "read_pool_article") for s in memory.step_history)
             articles = memory.publishable_articles()
 
-            # Checkpoint 0 (step >= 5): 不能只搜不读
-            if step_index == 5 and not has_read:
+            # Checkpoint 0 (step >= 3): 不能只搜不读
+            if step_index == 3 and not has_read:
                 searched = len(memory.searched_queries)
-                msg = f"⚠️ 检查点：你已经搜索了 {searched} 轮但还没有阅读任何文章。现在必须用 read_page 阅读最相关的 2-3 篇，然后用 evaluate_article 评估。"
+                msg = f"检查点：你已经做了 {step_index} 步但还没有阅读任何文章。现在必须用 read_page 或 read_pool_article 阅读最相关的 2-3 篇。"
                 messages.append({"role": "user", "content": msg})
+                logger.info("[AgentCore] Checkpoint 0 triggered at step %d", step_index)
 
-            # Checkpoint 1 (step >= 12): 强制评估
-            if step_index == 12 and not has_evaluated:
+            # Checkpoint 1 (step >= 8): 强制评估
+            if step_index == 8 and not has_evaluated:
                 read_count = len(memory.read_urls)
                 if read_count > 0:
-                    msg = f"⚠️ 检查点：你已经阅读了 {read_count} 篇文章，但还没有评估任何一篇。现在必须用 evaluate_article 评估它们，不要继续搜索。"
+                    msg = f"检查点：你已经阅读了 {read_count} 篇文章，但还没有评估。现在必须用 evaluate_article 评估它们。"
                 else:
-                    msg = "⚠️ 检查点：步数已到 12。如果你还没有读到有价值的文章，请先读几篇然后用 evaluate_article 评估。不要只搜索不读。"
+                    msg = "检查点：步数已到 8。请先读几篇文章然后用 evaluate_article 评估。"
                 messages.append({"role": "user", "content": msg})
+                logger.info("[AgentCore] Checkpoint 1 triggered at step %d", step_index)
 
-            # Checkpoint 1.5 (step >= 15): 板块多样性
-            if step_index == 15 and len(articles) >= 3:
-                sections = {a.section for a in articles}
-                if len(sections) == 1:
-                    sec = list(sections)[0]
-                    msg = f"⚠️ 检查点：所有 {len(articles)} 篇文章都在同一个板块。请搜索其他方向（政策法规/学术前沿），确保覆盖至少 2 个板块。然后继续评估和写作。"
-                    messages.append({"role": "user", "content": msg})
-
-            # Checkpoint 2 (step >= 22): 强制开始写作
-            if step_index == 22 and not has_written:
+            # Checkpoint 2 (step >= 15): 强制开始写作
+            if step_index == 15 and not has_written:
                 if len(articles) >= 2:
-                    msg = f"⚠️ 检查点：步数已到 22。你已经有 {len(articles)} 篇可发布文章。现在必须停止搜索，用 write_section 撰写各板块内容，然后 finish。"
+                    msg = f"检查点：步数已到 15。你已经有 {len(articles)} 篇可发布文章。现在必须停止阅读，用 write_section 撰写各板块内容，然后 finish。"
                 else:
-                    msg = f"⚠️ 检查点：步数已到 22。立即用 evaluate_article 评估所有已读文章，然后用 write_section + finish 完成日报。"
+                    msg = f"检查点：步数已到 15。立即用 evaluate_article 评估所有已读文章，然后用 write_section + finish 完成日报。"
                 messages.append({"role": "user", "content": msg})
+                logger.info("[AgentCore] Checkpoint 2 triggered at step %d, %d articles", step_index, len(articles))
 
             # Checkpoint 3 (step >= 30): 如果已写作但未 finish，强制催促
             if step_index == 30 and has_written:
