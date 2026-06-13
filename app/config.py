@@ -91,6 +91,7 @@ class Settings:
 
     shadow_mode: bool = _as_bool(os.getenv("SHADOW_MODE"), default=True)
     agent_mode: bool = _as_bool(os.getenv("AGENT_MODE"), default=True)
+    multi_agent_mode: bool = _as_bool(os.getenv("MULTI_AGENT_MODE"), default=False)
     agent_fallback_to_pipeline: bool = _as_bool(
         os.getenv("AGENT_FALLBACK_TO_PIPELINE"), default=True
     )

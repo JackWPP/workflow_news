@@ -59,6 +59,7 @@ from app.services.chat import ChatService, append_message, create_conversation
 from app.services.ai_rss_pipeline import AiRssDailyPipeline, DEFAULT_AI_FEED_URL
 from app.services.daily_report_agent import DailyReportAgent
 from app.services.editor_agent import EditorAgent
+from app.services.daily_orchestrator import DailyOrchestrator
 from app.services.evaluation import enrich_debug_payload
 # pipeline kept for direct admin access (DailyReportAgent uses it as fallback internally)
 from app.services.pipeline import NativeReportPipeline
@@ -180,6 +181,10 @@ def _setup_logging() -> None:
         "app.services.agent_core",
         "app.services.editor_agent",
         "app.services.daily_report_agent",
+        "app.services.daily_orchestrator",
+        "app.services.explorer_agent",
+        "app.services.section_editor_agent",
+        "app.services.summary_agent",
         "app.services.tools",
         "app.services.editor_tools",
     ):
@@ -192,10 +197,17 @@ _setup_logging()
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
-# Use DailyReportAgent as the primary pipeline (falls back to NativeReportPipeline on error)
-# EditorAgent: 无搜索依赖，从 ArticlePool 种子生成日报（目标 1 的核心）
+# Use DailyOrchestrator (multi-agent) or EditorAgent (single-agent) as primary pipeline
+# DailyOrchestrator: ExplorerAgent + SectionEditorAgent + SummaryAgent 并行执行
+# EditorAgent: 无搜索依赖，从 ArticlePool 种子生成日报
 # DailyReportAgent: 保留作为 fallback
-pipeline = EditorAgent() if settings.agent_mode else NativeReportPipeline()
+if settings.multi_agent_mode:
+    pipeline = DailyOrchestrator()
+elif settings.agent_mode:
+    pipeline = EditorAgent()
+else:
+    pipeline = NativeReportPipeline()
+fallback_pipeline = EditorAgent()
 ai_pipeline = AiRssDailyPipeline()
 chat_service = ChatService()
 SESSION_COOKIE = "session_token"
@@ -223,7 +235,10 @@ def _default_report_settings() -> dict[str, object]:
 async def scheduled_report_run():
     logger.info("Starting scheduled native report run.")
     try:
-        if isinstance(pipeline, (EditorAgent, DailyReportAgent)):
+        if isinstance(pipeline, DailyOrchestrator):
+            result = await pipeline.run()
+            logger.info("Scheduled multi-agent report run finished: %s", result.get("meta", {}))
+        elif isinstance(pipeline, (EditorAgent, DailyReportAgent)):
             await pipeline.run(shadow_mode=None)
         else:
             with session_scope() as session:
@@ -231,6 +246,13 @@ async def scheduled_report_run():
         logger.info("Scheduled native report run finished.")
     except Exception as exc:
         logger.error("Scheduled native report run FAILED: %s", exc, exc_info=True)
+        if isinstance(pipeline, DailyOrchestrator):
+            logger.info("Retrying with EditorAgent fallback...")
+            try:
+                await fallback_pipeline.run(shadow_mode=None)
+                logger.info("Fallback EditorAgent run finished.")
+            except Exception as fallback_exc:
+                logger.error("Fallback EditorAgent also FAILED: %s", fallback_exc, exc_info=True)
         # 预留告警钩子（Phase 4 实现）
         # await _send_alert("report_failed", str(exc))
 
@@ -584,7 +606,20 @@ async def run_report(payload: ReportRunRequest, request: Request):
                         feed_url=str(report_settings.get("ai_rss_feed_url") or DEFAULT_AI_FEED_URL),
                     )
             else:
-                if isinstance(pipeline, (EditorAgent, DailyReportAgent)):
+                if isinstance(pipeline, DailyOrchestrator):
+                    result = await pipeline.run(
+                        run_id=run_id,
+                        event_queue=event_queue,
+                    )
+                    # DailyOrchestrator returns dict, not Report
+                    event_queue.put_nowait({
+                        "type": "complete",
+                        "report_id": None,
+                        "status": "complete",
+                        "meta": result.get("meta", {}),
+                    })
+                    return  # skip the generic event_queue.put_nowait below
+                elif isinstance(pipeline, (EditorAgent, DailyReportAgent)):
                     report = await pipeline.run(
                         run_id=run_id,
                         shadow_mode=payload.shadow_mode,
