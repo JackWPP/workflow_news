@@ -642,7 +642,14 @@ async def run_report(payload: ReportRunRequest, request: Request):
                                 summary=card.get("summary", ""),
                                 research_signal=card.get("why_selected", ""),
                                 image_url=card.get("image_url"),
-                                language="zh",
+                                language=card.get("language", "zh"),
+                                decision_trace={
+                                    "category": card.get("category", "高材制造"),
+                                    "source_tier": card.get("source_tier", ""),
+                                    "source_kind": card.get("source_kind", ""),
+                                    "selection_reason": card.get("why_selected", ""),
+                                    "key_finding": card.get("key_finding", ""),
+                                },
                             )
                             session.add(item)
                         session.commit()

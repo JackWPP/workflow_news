@@ -184,4 +184,5 @@ class ExplorerAgent:
             "why_selected": why_selected,
             "image_url": article.get("image_url"),
             "published_at": article.get("published_at"),
+            "category": article.get("category", ""),
         }
