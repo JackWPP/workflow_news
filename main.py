@@ -121,9 +121,15 @@ def _setup_logging() -> None:
         handler = logging.StreamHandler()
         handler.setFormatter(JSONFormatter())
         logging.root.handlers = [handler]
-        logging.root.setLevel(level)
     else:
-        logging.basicConfig(level=level, format="%(asctime)s - %(levelname)s - %(message)s")
+        # basicConfig is no-op if handlers already exist (e.g. from uvicorn)
+        # So we explicitly set level on root and all existing handlers
+        if not logging.root.handlers:
+            logging.basicConfig(level=level, format="%(asctime)s - %(levelname)s - %(message)s")
+        else:
+            for h in logging.root.handlers:
+                h.setLevel(level)
+    logging.root.setLevel(level)
     logging.root.addFilter(_RunIDFilter())
 
 
@@ -280,6 +286,9 @@ def _run_alembic_migrations() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _running_task, _running_agent_run_id
+    _running_task = None
+    _running_agent_run_id = None
     _run_alembic_migrations()
     init_db()
     report_settings = _default_report_settings()
