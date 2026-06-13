@@ -6,7 +6,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from sqlalchemy import select, text
 import mimetypes
 from pathlib import Path
@@ -548,6 +548,19 @@ _running_task: _asyncio.Task | None = None
 _running_agent_run_id: int | None = None
 
 
+def _parse_dt(val):
+    if not val:
+        return None
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, str):
+        try:
+            return datetime.fromisoformat(val)
+        except Exception:
+            return None
+    return None
+
+
 @app.post("/api/reports/run")
 @limiter.limit("10/hour")
 async def run_report(payload: ReportRunRequest, request: Request):
@@ -638,7 +651,7 @@ async def run_report(payload: ReportRunRequest, request: Request):
                                 title=card.get("title", ""),
                                 source_name=card.get("source_name", ""),
                                 source_url=card.get("url", ""),
-                                published_at=card.get("published_at") or None,
+                                published_at=_parse_dt(card.get("published_at")),
                                 summary=card.get("summary", ""),
                                 research_signal=card.get("why_selected", ""),
                                 image_url=card.get("image_url"),
