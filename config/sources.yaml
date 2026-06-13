@@ -1,0 +1,763 @@
+# 信源注册表 — 统一管理 RSS/API/Listing/Search 信源
+# 修改此文件不需要重启应用（下次日报生成时自动加载）
+#
+# 字段说明：
+#   id: 唯一标识（用于日志和诊断）
+#   name: 显示名称
+#   domain: 域名（用于去重和黑名单）
+#   kind: 信源类型 rss/api/listing/search
+#   tier: 信源等级 S/A/B/C/D/Watch-only
+#   sections: 可入选的日报板块 [industry, policy, academic]
+#   categories: 可入选的方向 [高材制造, 清洁能源, AI]
+#   language: 主要语言 zh/en
+#   country: 国家/地区代码
+#   priority: 优先级（越高越优先）
+#   enabled: 是否启用
+#   allow_images: 是否允许提取图片
+#   lead_allowed: 是否允许作为日报主条目
+#   quota_per_day: 每日最大入选数
+#   rss_url: RSS/Atom feed URL（kind=rss 时必填）
+#   crawl_mode: 爬取模式 rss/listing/search
+#   use_direct_source: 是否使用直接源（非聚合）
+#   include_any: 正向关键词（至少命中一个才收录）
+#   exclude_any: 负向关键词（命中任意则排除）
+#   soft_signals: 软信号（用于评分，不强制）
+
+# ============================================================================
+# S/A 级：政府、标准、期刊、大学/实验室、企业 newsroom
+# ============================================================================
+
+# ── 政府/标准 ──
+- id: gov_policy_cn
+  name: 中国政府网政策
+  domain: gov.cn
+  kind: search
+  tier: A
+  sections: [policy]
+  categories: [高材制造, 清洁能源]
+  language: zh
+  country: CN
+  priority: 95
+  enabled: true
+  allow_images: false
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [政策, 塑料, 材料, 制造]
+  exclude_any: [体育, 房产, 股票, 中签, 招聘]
+  soft_signals: [政策, 标准, 制造, 循环经济]
+
+- id: standards_samr
+  name: 国家标准全文公开系统
+  domain: std.samr.gov.cn
+  kind: search
+  tier: A
+  sections: [policy]
+  categories: [高材制造, 清洁能源]
+  language: zh
+  country: CN
+  priority: 87
+  enabled: true
+  allow_images: false
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [塑料, 材料, 包装, 回收]
+  exclude_any: [食品, 体育, 地产]
+  soft_signals: [标准, 检测, 合规, 再生]
+
+- id: samr_standards
+  name: 国家市场监督管理总局标准
+  domain: samr.gov.cn
+  kind: search
+  tier: A
+  sections: [policy]
+  categories: [高材制造, 清洁能源]
+  language: zh
+  country: CN
+  priority: 88
+  enabled: true
+  allow_images: false
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [标准, 材料, 塑料]
+  exclude_any: [体育, 房产, 股票, 招聘]
+  soft_signals: [标准, 质量, 合规]
+
+- id: ndrc_policy
+  name: 国家发展改革委
+  domain: ndrc.gov.cn
+  kind: search
+  tier: A
+  sections: [policy]
+  categories: [高材制造, 清洁能源]
+  language: zh
+  country: CN
+  priority: 84
+  enabled: true
+  allow_images: false
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [循环, 回收, 制造, 材料]
+  exclude_any: [体育, 房产, 股票, 招聘]
+  soft_signals: [循环经济, 绿色制造, 双碳]
+
+- id: mee_environment
+  name: 生态环境部
+  domain: mee.gov.cn
+  kind: search
+  tier: A
+  sections: [policy]
+  categories: [清洁能源]
+  language: zh
+  country: CN
+  priority: 82
+  enabled: true
+  allow_images: false
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [塑料, 污染, 回收, 材料]
+  exclude_any: [体育, 房产, 股票, 招聘]
+  soft_signals: [塑料污染治理, 环保, 回收]
+
+# ── 学术期刊（RSS） ──
+# 注意：每个 domain 只能有一个条目（数据库 UNIQUE 约束）
+# 对于有多个 feed 的域名，选择最相关的主 feed
+- id: nature_materials
+  name: Nature Materials
+  domain: nature.com
+  kind: rss
+  tier: A
+  sections: [academic]
+  categories: [高材制造, 清洁能源]
+  language: en
+  country: GB
+  priority: 90
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  rss_url: http://feeds.nature.com/nmat/rss/current
+  crawl_mode: rss
+  use_direct_source: true
+
+- id: acs_polymer_journals
+  name: ACS Polymer Journals
+  domain: pubs.acs.org
+  kind: rss
+  tier: A
+  sections: [academic]
+  categories: [高材制造, 清洁能源]
+  language: en
+  country: US
+  priority: 86
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  rss_url: https://pubs.acs.org/action/showFeed?jc=aapmcd&type=etoc&feed=rss
+  crawl_mode: rss
+  use_direct_source: true
+
+- id: sciencedirect_polymer
+  name: ScienceDirect Polymer
+  domain: sciencedirect.com
+  kind: rss
+  tier: A
+  sections: [academic]
+  categories: [高材制造, 清洁能源]
+  language: en
+  country: NL
+  priority: 85
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  rss_url: https://rss.sciencedirect.com/publication/science/00323861
+  crawl_mode: rss
+  use_direct_source: true
+
+# ── 大学/实验室（RSS） ──
+- id: mit_materials
+  name: MIT Materials Science
+  domain: news.mit.edu
+  kind: rss
+  tier: A
+  sections: [academic, industry]
+  categories: [高材制造]
+  language: en
+  country: US
+  priority: 80
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  rss_url: https://news.mit.edu/rss/topic/materials-science
+  crawl_mode: rss
+  use_direct_source: true
+
+- id: stanford_mse
+  name: Stanford MSE News
+  domain: mse.stanford.edu
+  kind: rss
+  tier: A
+  sections: [academic]
+  categories: [高材制造]
+  language: en
+  country: US
+  priority: 78
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  rss_url: https://mse.stanford.edu/news/all/rss
+  crawl_mode: rss
+  use_direct_source: true
+
+- id: berkeley_lab
+  name: Berkeley Lab News
+  domain: newscenter.lbl.gov
+  kind: rss
+  tier: A
+  sections: [academic]
+  categories: [高材制造, 清洁能源]
+  language: en
+  country: US
+  priority: 77
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  rss_url: https://newscenter.lbl.gov/feed/
+  crawl_mode: rss
+  use_direct_source: true
+  include_any: [polymer, materials, battery, membrane, recycling, composites, energy]
+
+- id: buct_journal
+  name: 北京化工大学学报
+  domain: journal.buct.edu.cn
+  kind: rss
+  tier: A
+  sections: [academic]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 75
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  rss_url: https://journal.buct.edu.cn/CN/rss_zxly_1674-5906.xml
+  crawl_mode: rss
+  use_direct_source: true
+
+# ── 顶级期刊（RSS） ──
+- id: science_etoc
+  name: Science
+  domain: science.org
+  kind: rss
+  tier: A
+  sections: [academic]
+  categories: [高材制造, 清洁能源]
+  language: en
+  country: US
+  priority: 85
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 1
+  rss_url: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science
+  crawl_mode: rss
+  use_direct_source: true
+  include_any: [polymer, macromolecule, materials, membrane, battery, recycling, composites]
+
+- id: pnas_etoc
+  name: PNAS
+  domain: pnas.org
+  kind: rss
+  tier: A
+  sections: [academic]
+  categories: [高材制造, 清洁能源]
+  language: en
+  country: US
+  priority: 80
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 1
+  rss_url: https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=pnas
+  crawl_mode: rss
+  use_direct_source: true
+  include_any: [polymer, macromolecule, materials, membrane, battery, recycling, composites]
+
+# ============================================================================
+# B 级：行业媒体、协会、展会官方媒体
+# ============================================================================
+
+- id: plasticsnet_cn
+  name: 中塑在线
+  domain: plasticsnet.com.cn
+  kind: search
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 86
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [塑料, 高分子, 注塑, 挤出]
+  exclude_any: [股市, 房产, 体育]
+  soft_signals: [设备, 产能, 材料价格]
+
+- id: adsalecprj
+  name: 雅式橡塑网
+  domain: adsalecprj.com
+  kind: search
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: HK
+  priority: 85
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [橡塑, 塑料, 注塑, 挤出, 包装]
+  exclude_any: [股市, 体育]
+  soft_signals: [设备, 展会, 企业动态]
+
+- id: xdplas
+  name: 现代塑料
+  domain: xdplas.com
+  kind: search
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 80
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [塑料, 注塑, 挤出, 模具]
+  exclude_any: [股市, 体育]
+  soft_signals: [装备, 工艺, 制品]
+
+- id: 86pla
+  name: 中国塑料机械网
+  domain: 86pla.com
+  kind: listing
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 78
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  rss_url: https://www.86pla.com/news/
+  crawl_mode: listing
+  use_direct_source: false
+  include_any: [塑机, 注塑机, 挤出机, 设备]
+  exclude_any: [股市, 体育]
+  soft_signals: [产线, 自动化, 装备]
+
+- id: hc360_plas
+  name: 塑料机械网行业资讯
+  domain: plas.hc360.com
+  kind: search
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 72
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [塑料, 设备, 注塑, 挤出]
+  exclude_any: [股市, 体育]
+  soft_signals: [供应链, 企业动态, 装备]
+
+- id: cppia
+  name: 中国塑协
+  domain: cppia.com.cn
+  kind: search
+  tier: B
+  sections: [industry, policy]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 77
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [塑料, 改性, 再生, 降解]
+  exclude_any: [体育, 房产, 股票]
+  soft_signals: [协会, 行业, 标准, 科技大会]
+
+- id: cpmia
+  name: 中国塑机协会
+  domain: cpmia.org.cn
+  kind: search
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 75
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [塑机, 注塑机, 挤出机, 设备]
+  exclude_any: [体育, 房产, 股票]
+  soft_signals: [协会, 装备, 行业, 企业排序]
+
+- id: replasinfo
+  name: 塑料再生与循环资讯
+  domain: replasinfo.com
+  kind: search
+  tier: B
+  sections: [industry, policy]
+  categories: [清洁能源]
+  language: zh
+  country: CN
+  priority: 74
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [回收, 再生, 塑料, 循环]
+  exclude_any: [体育, 房产, 股票]
+  soft_signals: [rPET, 再生料, 闭环, 循环经济]
+
+- id: resourcemedia
+  name: Resource Media Recycling
+  domain: resourcemedia.eco
+  kind: search
+  tier: B
+  sections: [policy, industry]
+  categories: [清洁能源]
+  language: en
+  country: US
+  priority: 72
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 2
+  crawl_mode: search
+  use_direct_source: false
+  include_any: [plastic, recycling, reprocessing, packaging]
+  exclude_any: [sports, housing, stock]
+  soft_signals: [policy, regulation, waste, circular]
+
+- id: plastemart
+  name: Plastemart
+  domain: plastemart.com
+  kind: rss
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: en
+  country: IN
+  priority: 70
+  enabled: true
+  allow_images: true
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: https://www.plastemart.com/rss-feeds-plastics-industry
+  crawl_mode: rss
+  use_direct_source: false
+
+- id: recyclinginside
+  name: RecyclingInside
+  domain: recyclinginside.com
+  kind: rss
+  tier: B
+  sections: [industry]
+  categories: [清洁能源]
+  language: en
+  country: US
+  priority: 70
+  enabled: true
+  allow_images: true
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: https://recyclinginside.com/rss-feeds/
+  crawl_mode: rss
+  use_direct_source: false
+
+- id: chemengonline
+  name: Chemical Engineering
+  domain: chemengonline.com
+  kind: rss
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: en
+  country: US
+  priority: 70
+  enabled: true
+  allow_images: true
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: https://www.chemengonline.com/rss
+  crawl_mode: rss
+  use_direct_source: false
+  include_any: [polymer, plastics, extrusion, injection, chemical, processing]
+
+- id: sciencedaily_materials
+  name: ScienceDaily Materials
+  domain: sciencedaily.com
+  kind: rss
+  tier: B
+  sections: [academic]
+  categories: [高材制造, 清洁能源]
+  language: en
+  country: US
+  priority: 68
+  enabled: true
+  allow_images: true
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: https://www.sciencedaily.com/rss/matter_energy/materials_science.xml
+  crawl_mode: rss
+  use_direct_source: false
+  include_any: [polymer, plastics, composite, recycling, battery, membrane, materials]
+
+- id: phys_materials
+  name: Phys.org Materials
+  domain: phys.org
+  kind: rss
+  tier: B
+  sections: [academic]
+  categories: [高材制造, 清洁能源]
+  language: en
+  country: US
+  priority: 68
+  enabled: true
+  allow_images: true
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: https://phys.org/rss-feed/technology/materials/
+  crawl_mode: rss
+  use_direct_source: false
+  include_any: [polymer, plastics, composite, recycling, battery, membrane, materials]
+
+# ── 行业媒体（中文 listing） ──
+- id: kingfa
+  name: 金发科技
+  domain: kingfa.com.cn
+  kind: listing
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 76
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 1
+  rss_url: https://www.kingfa.com.cn/portal/list/index/id/5.html
+  crawl_mode: listing
+  use_direct_source: true
+
+- id: haitian_newsroom
+  name: 海天新闻
+  domain: haitian.com
+  kind: listing
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 76
+  enabled: true
+  allow_images: true
+  lead_allowed: true
+  quota_per_day: 1
+  rss_url: https://newsroom.haitian.com/cn/news-cn/
+  crawl_mode: listing
+  use_direct_source: true
+
+# ── 展会/行业平台 ──
+- id: k_online
+  name: K-Online
+  domain: k-online.de
+  kind: rss
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: en
+  country: DE
+  priority: 72
+  enabled: true
+  allow_images: true
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: https://k-online.de/pm_rss_en
+  crawl_mode: rss
+  use_direct_source: false
+
+# ── 中文行业媒体（WeChat 桥接） ──
+- id: wechat_aibang
+  name: 艾邦高分子
+  domain: aibang.com
+  kind: rss
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 70
+  enabled: true
+  allow_images: true
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: https://feeddd.org/feeds/wechat/aibang
+  crawl_mode: rss
+  use_direct_source: false
+
+- id: wechat_scrap_plastic
+  name: 废塑料新观察
+  domain: scrap-plastic.com
+  kind: rss
+  tier: B
+  sections: [industry, policy]
+  categories: [清洁能源]
+  language: zh
+  country: CN
+  priority: 70
+  enabled: true
+  allow_images: true
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: https://feeddd.org/feeds/wechat/scrap-plastic
+  crawl_mode: rss
+  use_direct_source: false
+
+- id: wechat_plastic_industry
+  name: 塑料行业观察
+  domain: plastic-industry.com
+  kind: rss
+  tier: B
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 70
+  enabled: true
+  allow_images: true
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: https://feeddd.org/feeds/wechat/plastic-industry
+  crawl_mode: rss
+  use_direct_source: false
+
+# ============================================================================
+# C 级：市场报告、财经转载、博客（仅做背景，不主导条目）
+# ============================================================================
+
+- id: gaofenzi_org
+  name: 高分子网
+  domain: gaofenzi.org
+  kind: listing
+  tier: C
+  sections: [industry]
+  categories: [高材制造]
+  language: zh
+  country: CN
+  priority: 60
+  enabled: true
+  allow_images: false
+  lead_allowed: false
+  quota_per_day: 1
+  crawl_mode: listing
+  use_direct_source: false
+  include_any: [高分子, 塑料, 材料]
+  exclude_any: [体育, 房产, 股票]
+
+- id: cnpc_news
+  name: 中国石油新闻中心
+  domain: news.cnpc.com.cn
+  kind: rss
+  tier: C
+  sections: [industry]
+  categories: [清洁能源]
+  language: zh
+  country: CN
+  priority: 65
+  enabled: true
+  allow_images: false
+  lead_allowed: false
+  quota_per_day: 1
+  rss_url: http://news.cnpc.com.cn/cnpcnews/jn/rss.xml
+  crawl_mode: rss
+  use_direct_source: false
+  include_any: [化工, 材料, 塑料, 回收, 能源]
+
+# ============================================================================
+# API 通道（arXiv、Crossref、OpenAlex）
+# ============================================================================
+
+- id: arxiv_materials_ai
+  name: arXiv Materials AI
+  domain: arxiv.org
+  kind: api
+  tier: A
+  sections: [academic]
+  categories: [AI]
+  language: en
+  country: US
+  priority: 85
+  enabled: true
+  allow_images: false
+  lead_allowed: true
+  quota_per_day: 5
+  api_type: arxiv
+  api_query: 'ti:polymer AND cat:cond-mat.mtrl-sci'
+  crawl_mode: api
+  use_direct_source: true
+
+# ============================================================================
+# D 级：阻断源（不入池或不进入 Agent）
+# ============================================================================
+# 这些域名在 blocked_domains 中配置，不在这里列出
+
+# ============================================================================
+# Watch-only：监控源（不进入日报正文）
+# ============================================================================
+# 价格行情、招聘、展商目录等由 harness 的域名黑名单控制

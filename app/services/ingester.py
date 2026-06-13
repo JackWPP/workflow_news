@@ -4,8 +4,10 @@ import asyncio
 import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
+import yaml
 from sqlalchemy import select
 
 from app.database import session_scope
@@ -14,6 +16,8 @@ from app.services.repository import list_sources
 from app.services.rss import fetch_feed_entries
 from app.services.source_quality import classify_source
 from app.utils import canonicalize_url, extract_domain, now_local
+
+_SEARCH_TEMPLATES_PATH = Path(__file__).parent.parent.parent / "config" / "search_templates.yaml"
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,15 @@ _BLOCKED_POOL_DOMAINS: set[str] = {
     "bk.taobao.com", "industrystock.cn", "cmpe360.com",
     "m.chinairn.com", "cn.agropages.com", "m.zhixuedoc.com",
     "eduour.com", "scholar.xjtu.edu.cn",
+    "mysteel.com", "m.mysteel.com",
+    "foodmate.net", "m.foodmate.net",
+    "100ppi.com", "bohe.cn",
+    "qcc.com", "tianyancha.com", "aiqicha.baidu.com",
+    "zhipin.com", "liepin.com", "51job.com", "zhaopin.com",
+    "linkedin.com",
+    "facebook.com", "twitter.com", "instagram.com",
+    "youtube.com", "tiktok.com",
+    "weibo.com", "douyin.com", "xiaohongshu.com",
 }
 
 
@@ -95,8 +108,11 @@ class ContinuousIngester:
         if self._search_engine is None:
             from app.services.bocha_search import BochaSearchClient
             from app.services.search_engine import SearchEngine
+            from app.services.search_router import SearchRouter
+            bocha_client = BochaSearchClient()
             self._search_engine = SearchEngine(
-                bocha_client=BochaSearchClient(),
+                bocha_client=bocha_client,
+                search_router=SearchRouter(bocha_client=bocha_client),
             )
         return self._search_engine
 
@@ -104,6 +120,7 @@ class ContinuousIngester:
         total_ingested = 0
         total_ingested += await self._ingest_rss()
         total_ingested += await self._ingest_template_searches()
+        total_ingested += await self._ingest_arxiv_api()
         logger.info("ContinuousIngester: ingested %d new articles", total_ingested)
         return total_ingested
 
@@ -167,12 +184,40 @@ class ContinuousIngester:
 
         ingested = 0
         search_engine = self.search_engine
-        queries = _build_search_queries()
+        query_specs = _build_search_query_specs()
+        queries: dict[str, list[str]] = {}
+        spec_by_query: dict[str, dict[str, str]] = {}
+        for spec in query_specs:
+            lang = spec["language"]
+            query = spec["query"]
+            queries.setdefault(lang, []).append(query)
+            spec_by_query[query] = spec
+
         for lang, lang_queries in queries.items():
             results = await search_engine.batch_search(
                 lang_queries, language=lang, max_results=8, concurrency=3,
             )
             for r in results:
+                metadata = dict(r.get("metadata") or {})
+                search_query = str(
+                    r.get("search_query")
+                    or metadata.get("search_query")
+                    or ""
+                )
+                spec = spec_by_query.get(search_query, {})
+                if spec:
+                    metadata.update(
+                        {
+                            "search_query": spec["query"],
+                            "query_family": spec["query_family"],
+                            "intended_section": spec["section"],
+                            "intended_category": spec["category"],
+                            "language": spec["language"],
+                        }
+                    )
+                    r["metadata"] = metadata
+                    r["section"] = spec["section"]
+                    r["category"] = spec["category"]
                 if not _row_is_relevant(r):
                     continue
                 url = str(r.get("url") or "")
@@ -192,12 +237,82 @@ class ContinuousIngester:
                         language=lang,
                         snippet=str(r.get("snippet") or ""),
                         published_at=r.get("published_at"),
+                        metadata=metadata,
+                        section=str(r.get("section") or ""),
+                        category=str(r.get("category") or ""),
                     )
+        return ingested
+
+    async def _ingest_arxiv_api(self) -> int:
+        try:
+            from app.services.source_registry import get_arxiv_queries
+            arxiv_sources = get_arxiv_queries()
+        except ImportError:
+            logger.warning("source_registry not available, skipping arXiv API ingestion")
+            return 0
+
+        if not arxiv_sources:
+            return 0
+
+        try:
+            from app.services.arxiv_client import ArxivApiClient
+        except ImportError:
+            logger.warning("ArxivApiClient not available, skipping arXiv API ingestion")
+            return 0
+
+        client = ArxivApiClient(max_results=10)
+        ingested = 0
+
+        for source in arxiv_sources:
+            query = source.get("api_query", "")
+            if not query:
+                continue
+
+            try:
+                results = await client.search(query, max_results=10)
+                logger.info("arXiv API '%s': %d results", query[:50], len(results))
+            except Exception as exc:
+                logger.warning("arXiv API failed for '%s': %s", query[:50], exc)
+                continue
+
+            for r in results:
+                metadata = dict(r.get("metadata") or {})
+                metadata.update({
+                    "search_query": query,
+                    "query_family": "arxiv_api",
+                    "intended_section": "academic",
+                    "intended_category": source.get("categories", ["AI"])[0] if source.get("categories") else "AI",
+                    "language": "en",
+                    "source_id": source.get("id", ""),
+                    "source_tier": source.get("tier", "A"),
+                })
+                r["metadata"] = metadata
+
+                url = str(r.get("url") or "")
+                if not url:
+                    continue
+
+                ingested += await self._try_write_pool(
+                    url=url,
+                    title=str(r.get("title") or ""),
+                    domain="arxiv.org",
+                    source_type="arxiv_api",
+                    language="en",
+                    snippet=str(r.get("snippet") or ""),
+                    published_at=r.get("published_at"),
+                    metadata=metadata,
+                    section="academic",
+                    category=source.get("categories", ["AI"])[0] if source.get("categories") else "AI",
+                )
+
         return ingested
 
     async def _try_write_pool(
         self, *, url: str, title: str, domain: str, source_type: str,
         language: str, snippet: str = "", published_at: Any = None,
+        metadata: dict[str, Any] | None = None,
+        section: str | None = None,
+        category: str | None = None,
     ) -> int:
         if domain in _BLOCKED_POOL_DOMAINS:
             return 0
@@ -212,6 +327,7 @@ class ContinuousIngester:
                 ).first()
                 if existing is not None:
                     return 0
+                quality = classify_source(url=url, title=title, content=snippet)
                 article = ArticlePool(
                     url=normalized,
                     content_hash=content_hash,
@@ -222,8 +338,14 @@ class ContinuousIngester:
                     summary=snippet,
                     published_at=_normalize_published_at(published_at),
                     ingested_at=now_local(),
+                    section=section or None,
+                    category=category or None,
+                    eval_metadata={"discovery": metadata or {}},
                     fetch_status="pending",
                     fetch_attempts=0,
+                    source_tier=quality.get("source_tier"),
+                    source_kind=quality.get("source_kind"),
+                    page_kind=quality.get("page_kind"),
                 )
                 session.add(article)
                 session.flush()  # 拿到 article.id 但不 commit
@@ -488,38 +610,93 @@ async def retry_failed_fetches(limit: int = 20) -> int:
     return succeeded
 
 
-def _build_search_queries() -> dict[str, list[str]]:
+def _spec(
+    query: str,
+    *,
+    language: str,
+    section: str,
+    category: str,
+    query_family: str,
+) -> dict[str, str]:
     return {
-        "zh": [
-            "注塑机 新品发布", "挤出设备 技术升级", "高分子材料 产能扩建",
-            "塑料原料 价格行情", "复合材料 汽车轻量化", "改性塑料 应用",
-            "限塑令 最新政策", "碳关税 塑料行业", "环保法规 高分子材料",
-            "高分子改性 研究进展", "聚合物 新材料 论文",
-            "北京化工大学 英蓝实验室 高分子 研究",
-            "英蓝云展 高分子材料 加工技术",
-            "锂电池 隔膜 材料", "光伏 胶膜 封装材料", "氢能 质子交换膜",
-            "PLA 聚乳酸 降解", "PBAT 生物降解塑料", "淀粉基 材料",
-            "3D打印 高分子材料", "光固化 树脂", "SLS 尼龙粉",
-            "导电高分子", "形状记忆聚合物", "自修复材料",
-            "塑料 回收 循环经济", "限塑令 替代材料", "高分子材料 产能 扩建",
-        ],
-        "en": [
-            "injection molding machine new product",
-            "polymer processing equipment innovation",
-            "plastics recycling technology breakthrough",
-            "EU plastic regulation policy",
-            "carbon border tax polymer industry",
-            "polymer composite materials science research",
-            "Beijing University Chemical Technology polymer processing",
-            "Yinglan laboratory polymer research",
-            "polymer nanocomposite breakthrough",
-            "biodegradable polymer technology",
-            "additive manufacturing polymer",
-            "plastics recycling circular economy",
-            "polymer market forecast 2026",
-            "sustainable packaging innovation",
-            "EU REACH regulation polymer",
-            "microplastics regulation 2026",
-            "carbon footprint polymer lifecycle",
-        ],
+        "query": query,
+        "language": language,
+        "section": section,
+        "category": category,
+        "query_family": query_family,
     }
+
+
+def _load_search_templates_from_yaml() -> list[dict[str, str]] | None:
+    if not _SEARCH_TEMPLATES_PATH.exists():
+        return None
+    try:
+        with open(_SEARCH_TEMPLATES_PATH, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, list):
+            return None
+        specs = []
+        for item in data:
+            if not isinstance(item, dict) or "query" not in item:
+                continue
+            specs.append(_spec(
+                item["query"],
+                language=item.get("language", "zh"),
+                section=item.get("section", "industry"),
+                category=item.get("category", "高材制造"),
+                query_family=item.get("query_family", "general"),
+            ))
+        return specs if specs else None
+    except Exception as exc:
+        logger.warning("Failed to load search_templates.yaml: %s", exc)
+        return None
+
+
+def _build_search_query_specs() -> list[dict[str, str]]:
+    yaml_specs = _load_search_templates_from_yaml()
+    if yaml_specs:
+        logger.info("Loaded %d search templates from search_templates.yaml", len(yaml_specs))
+        return yaml_specs
+    logger.info("Using hardcoded search templates")
+    return [
+        _spec("注塑机 新品发布", language="zh", section="industry", category="高材制造", query_family="equipment_news"),
+        _spec("挤出设备 技术升级", language="zh", section="industry", category="高材制造", query_family="equipment_news"),
+        _spec("高分子材料 产能扩建", language="zh", section="industry", category="高材制造", query_family="capacity_news"),
+        _spec("塑料原料 价格行情", language="zh", section="industry", category="高材制造", query_family="market_watch"),
+        _spec("复合材料 汽车轻量化", language="zh", section="industry", category="高材制造", query_family="application_news"),
+        _spec("改性塑料 应用", language="zh", section="industry", category="高材制造", query_family="application_news"),
+        _spec("锂电池 隔膜 材料", language="zh", section="industry", category="清洁能源", query_family="energy_materials"),
+        _spec("光伏 胶膜 封装材料", language="zh", section="industry", category="清洁能源", query_family="energy_materials"),
+        _spec("氢能 质子交换膜", language="zh", section="industry", category="清洁能源", query_family="energy_materials"),
+        _spec("PLA 聚乳酸 降解", language="zh", section="industry", category="清洁能源", query_family="biopolymer"),
+        _spec("PBAT 生物降解塑料", language="zh", section="industry", category="清洁能源", query_family="biopolymer"),
+        _spec("3D打印 高分子材料", language="zh", section="industry", category="高材制造", query_family="advanced_processing"),
+        _spec("导电高分子", language="zh", section="academic", category="清洁能源", query_family="research_signal"),
+        _spec("限塑令 最新政策", language="zh", section="policy", category="清洁能源", query_family="policy"),
+        _spec("碳关税 塑料行业", language="zh", section="policy", category="清洁能源", query_family="policy"),
+        _spec("环保法规 高分子材料", language="zh", section="policy", category="清洁能源", query_family="policy"),
+        _spec("塑料 回收 循环经济", language="zh", section="policy", category="清洁能源", query_family="policy"),
+        _spec("高分子改性 研究进展", language="zh", section="academic", category="高材制造", query_family="research_signal"),
+        _spec("聚合物 新材料 论文", language="zh", section="academic", category="高材制造", query_family="research_signal"),
+        _spec("北京化工大学 英蓝实验室 高分子 研究", language="zh", section="academic", category="高材制造", query_family="lab_watch"),
+        _spec("英蓝云展 高分子材料 加工技术", language="zh", section="industry", category="高材制造", query_family="lab_watch"),
+        _spec("injection molding machine new product", language="en", section="industry", category="高材制造", query_family="equipment_news"),
+        _spec("polymer processing equipment innovation", language="en", section="industry", category="高材制造", query_family="equipment_news"),
+        _spec("polymer processing digital twin machine learning", language="en", section="industry", category="AI", query_family="ai_manufacturing"),
+        _spec("injection molding process optimization machine learning", language="en", section="industry", category="AI", query_family="ai_manufacturing"),
+        _spec("materials informatics polymer", language="en", section="academic", category="AI", query_family="ai_materials"),
+        _spec("polymer machine learning property prediction", language="en", section="academic", category="AI", query_family="ai_materials"),
+        _spec("plastics recycling technology breakthrough", language="en", section="industry", category="清洁能源", query_family="recycling"),
+        _spec("EU plastic regulation policy", language="en", section="policy", category="清洁能源", query_family="policy"),
+        _spec("microplastics regulation polymer", language="en", section="policy", category="清洁能源", query_family="policy"),
+        _spec("polymer composite materials science research", language="en", section="academic", category="高材制造", query_family="research_signal"),
+        _spec("biodegradable polymer technology", language="en", section="academic", category="清洁能源", query_family="biopolymer"),
+        _spec("additive manufacturing polymer", language="en", section="industry", category="高材制造", query_family="advanced_processing"),
+    ]
+
+
+def _build_search_queries() -> dict[str, list[str]]:
+    queries: dict[str, list[str]] = {}
+    for spec in _build_search_query_specs():
+        queries.setdefault(spec["language"], []).append(spec["query"])
+    return queries

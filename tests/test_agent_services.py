@@ -1491,6 +1491,72 @@ async def test_web_search_splits_article_and_image_result_pools():
     assert memory.image_search_results[0]["result_type"] == "images"
 
 
+@pytest.mark.asyncio
+async def test_web_search_uses_router_and_preserves_source_quality_metadata():
+    class _StubRouter:
+        async def search(self, query: str, **kwargs: Any):
+            return [
+                {
+                    "url": "https://www.nature.com/articles/example",
+                    "title": "Polymer processing research update",
+                    "snippet": "A research article about polymer materials processing.",
+                    "published_at": now_local(),
+                    "domain": "www.nature.com",
+                    "result_type": "news",
+                    "provider": "bocha",
+                }
+            ]
+
+        def health_snapshot(self) -> dict[str, Any]:
+            return {"bocha": {"provider": "bocha", "health_state": "healthy"}}
+
+    memory = WorkingMemory()
+    tool = WebSearchTool(search_router=_StubRouter())
+
+    result = await tool.execute(
+        memory=memory, query="polymer processing research", language="en"
+    )
+
+    assert result.success
+    assert len(memory.search_results) == 1
+    row = memory.search_results[0]
+    assert row["search_query"] == "polymer processing research"
+    assert row["source_tier"] in {"A", "B"}
+    assert row["metadata"]["source_quality"]["source_kind"] in {
+        "academic_journal",
+        "top_industry_media",
+    }
+    assert memory.search_provider_health["bocha"]["health_state"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_web_search_does_not_repeat_bocha_when_router_returns_empty():
+    class _EmptyRouter:
+        async def search(self, query: str, **kwargs: Any):
+            return []
+
+        def health_snapshot(self) -> dict[str, Any]:
+            return {"bocha": {"provider": "bocha", "health_state": "healthy"}}
+
+    class _UnexpectedBocha:
+        enabled = True
+
+        async def search(self, *args: Any, **kwargs: Any):
+            raise AssertionError("direct Bocha should not run after router empty result")
+
+        def health_snapshot(self) -> dict[str, Any]:
+            return {"provider": "bocha", "health_state": "healthy"}
+
+    memory = WorkingMemory()
+    tool = WebSearchTool(search_router=_EmptyRouter(), bocha_client=_UnexpectedBocha())
+
+    result = await tool.execute(memory=memory, query="polymer no result", language="en")
+
+    assert result.success
+    assert result.data["results"] == []
+    assert len(memory.search_results) == 0
+
+
 def test_web_search_normalizes_year_tokens_from_query():
     normalized = WebSearchTool._normalize_query("高分子材料加工 2026年4月 新闻")
 

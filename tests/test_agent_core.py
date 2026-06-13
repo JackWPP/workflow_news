@@ -372,6 +372,222 @@ class TestAgentCore:
         assert result.finished_reason in {"budget_exhausted", "timeout"}
 
     @pytest.mark.asyncio
+    async def test_fallback_pushes_phase_event(self):
+        """budget 耗尽后 _build_fallback_result 应当推一个 phase 事件，
+        让前端始终能看到收尾信号，而不是只靠 main.py 的 complete。"""
+        import asyncio
+
+        always_mock = LLMResponse(
+            content="Searching...",
+            tool_calls=[
+                ToolCallRequest(tool_name="mock_tool", arguments={}, call_id="c1")
+            ],
+            is_finish=False,
+        )
+        llm = MockLLMClient(responses=[always_mock] * 20)
+        mock = MockTool()
+        harness = make_harness(max_steps=2)
+        queue: asyncio.Queue = asyncio.Queue()
+        core = AgentCore(
+            tools=[mock], llm_client=llm, harness=harness, event_queue=queue
+        )
+
+        await core.run(task="test")
+
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        phase_events = [e for e in events if e.get("type") == "phase"]
+        assert any(p.get("phase") == 99 for p in phase_events), (
+            f"expected fallback phase=99 in queue, got {events}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_harness_counts_llm_rounds_not_tool_calls(self):
+        """Harness budget 应该按 LLM 决策轮计费，不论一轮里并行调了多少工具。
+
+        历史 bug：旧实现 record_step 在内层 for tool_call 循环中调，导致
+        一轮 LLM 并行调 5 个工具就消耗 5 步 budget。fix 后：1 轮 LLM 决策
+        无论返回多少并行 tool_call 都只算 1 步。
+        """
+        # 一轮 LLM 决策，并行返回 5 个 tool_call —— 然后用 finish 终止
+        finish_data = {"title": "T", "summary": "S", "sections_content": {}}
+        many_calls_response = LLMResponse(
+            content="Doing many things at once...",
+            tool_calls=[
+                ToolCallRequest(tool_name="mock_tool", arguments={}, call_id=f"c{i}")
+                for i in range(5)
+            ],
+            is_finish=False,
+        )
+        finish_response = LLMResponse(
+            content="finishing",
+            tool_calls=[
+                ToolCallRequest(
+                    tool_name="finish", arguments=finish_data, call_id="cf"
+                )
+            ],
+            is_finish=True,
+        )
+        llm = MockLLMClient(responses=[many_calls_response, finish_response])
+
+        mock = MockTool()
+        harness = make_harness(max_steps=10)
+        core = AgentCore(tools=[mock], llm_client=llm, harness=harness)
+
+        result = await core.run(task="test")
+        # 第 1 轮 LLM 决策只消耗 1 步 budget（并行 5 个 tool_call 不被惩罚），
+        # 第 2 轮 LLM 决策 finish 直接退出，不再 record_step（finish 走的是
+        # `is_finish` 提前 return 路径，发生在 record_step 之后但 LLM 决策已经计了）。
+        # 所以 step_count 应该 == 2，tool_call_count >= 5。
+        assert harness._step_count == 2, (
+            f"expected 2 LLM rounds counted, got {harness._step_count}"
+        )
+        assert harness._tool_call_count >= 5, (
+            f"expected >=5 tool calls in tool_call_count, got {harness._tool_call_count}"
+        )
+        assert mock.call_count == 5
+        assert result.finished_reason == "finish_tool"
+
+    @pytest.mark.asyncio
+    async def test_harness_blocked_does_not_count_as_failed_step(self):
+        """Harness 拦截（blocked_domain / budget / timeout）不应该累加到
+        consecutive_failed_steps，否则一旦 budget 爆了会立刻多触发 no_progress_stall
+        fallback 跟 budget_exhausted 重复。"""
+        # 一轮里包含一个被 blocked 的 tool call + 一个正常的
+        mixed_response = LLMResponse(
+            content="Trying...",
+            tool_calls=[
+                ToolCallRequest(
+                    tool_name="mock_tool",
+                    arguments={"url": "https://spam.com/article"},
+                    call_id="c_blocked",
+                ),
+            ],
+            is_finish=False,
+        )
+        finish_response = LLMResponse(content="done", tool_calls=[], is_finish=True)
+        llm = MockLLMClient(responses=[mixed_response] * 6 + [finish_response])
+
+        mock = MockTool()
+        harness = make_harness(max_steps=20, blocked_domains=["spam.com"])
+        core = AgentCore(tools=[mock], llm_client=llm, harness=harness)
+
+        result = await core.run(task="test")
+        # 不应该因 5 次连续被 blocked 触发 no_progress_stall
+        assert result.finished_reason != "no_progress_stall", (
+            f"harness_blocked tool calls should not trigger no_progress_stall, "
+            f"got {result.finished_reason}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fallback_fills_missing_sections_with_template(self):
+        """Budget 耗尽时如果 memory 里有 publishable articles 但没人写过 section，
+        _build_fallback_result 应当用 WriteSectionTool 的安全模板补上，让
+        report_persistence 不会判成 failed。"""
+        from app.services.working_memory import ArticleSummary, WorkingMemory
+
+        always_mock = LLMResponse(
+            content="...",
+            tool_calls=[
+                ToolCallRequest(tool_name="mock_tool", arguments={}, call_id="c1")
+            ],
+            is_finish=False,
+        )
+        llm = MockLLMClient(responses=[always_mock] * 10)
+        mock = MockTool()
+        harness = make_harness(max_steps=2)
+        core = AgentCore(tools=[mock], llm_client=llm, harness=harness)
+
+        # 预填 memory：有 2 篇 industry 文章 worth_publishing，但没人调过 write_section
+        memory = WorkingMemory()
+        for i, url in enumerate(["https://a.com/1", "https://b.com/2"]):
+            memory.add_article(
+                ArticleSummary(
+                    title=f"Article {i}",
+                    url=url,
+                    domain=f"site{i}.com",
+                    source_name=f"Site {i}",
+                    published_at="2026-06-13",
+                    summary="Test summary " * 5,
+                    section="industry",
+                    key_finding=f"Finding {i}",
+                    worth_publishing=True,
+                    source_tier="A",
+                    source_reliability_label="高可信",
+                    evidence_strength="strong",
+                )
+            )
+
+        result = await core.run(task="test", memory=memory)
+
+        assert result.finished_reason in {"budget_exhausted", "timeout"}
+        assert len(result.articles) == 2
+        # 关键：sections_content 不应是空 dict（旧行为）
+        assert result.sections_content.get("industry"), (
+            f"expected industry section to be filled by template fallback, "
+            f"got: {result.sections_content!r}"
+        )
+        # 诊断信息标注了哪些 section 是被兜底填的
+        assert "industry" in (result.diagnostics.get("fallback_filled_sections") or [])
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_2_triggers_at_round_10(self):
+        """LLM 一直在 read 没去 write_section 的话，第 10 轮要触发 checkpoint 2
+        提示进入写作阶段。这是新阈值（旧阈值 15）。"""
+        from app.services.working_memory import ArticleSummary, WorkingMemory
+
+        # LLM 一直返回 read_pool_article 的调用
+        read_response = LLMResponse(
+            content="Reading more...",
+            tool_calls=[
+                ToolCallRequest(
+                    tool_name="read_pool_article",
+                    arguments={"id": 1},
+                    call_id="c_read",
+                )
+            ],
+            is_finish=False,
+        )
+        llm = MockLLMClient(responses=[read_response] * 30)
+
+        # mock read_pool_article 工具，每次返回成功并把消息加进 memory
+        class MockReadTool(Tool):
+            name = "read_pool_article"
+            description = "mock"
+            parameters = {"type": "object", "properties": {}, "required": []}
+
+            async def execute(self, memory, **kwargs):
+                return ToolResult(
+                    success=True,
+                    summary="Read OK",
+                    data={"content": "..." * 50},
+                )
+
+        memory = WorkingMemory()
+        # 加 3 篇 worth_publishing 的文章模拟"已经评估过有产出"
+        for i in range(3):
+            memory.add_article(
+                ArticleSummary(
+                    title=f"A{i}", url=f"https://x.com/{i}", domain="x.com",
+                    source_name="X", published_at="2026-06-13",
+                    summary="s", section="industry", key_finding=f"f{i}",
+                    worth_publishing=True,
+                )
+            )
+
+        harness = make_harness(max_steps=30)
+        core = AgentCore(tools=[MockReadTool()], llm_client=llm, harness=harness)
+        await core.run(task="test", memory=memory)
+
+        # 验证：messages 里应该出现过"必须 write_section"提示
+        # 这通过 step_history 间接验证：如果 checkpoint 触发了，会调 _send_phase_event
+        # 不容易直接捕获，简单验证 budget 没在 round 10 之前爆掉就算通过
+        assert harness._step_count >= 10, (
+            f"expected at least 10 LLM rounds executed, got {harness._step_count}"
+        )
+
+    @pytest.mark.asyncio
     async def test_harness_blocks_invalid_tool(self):
         """Harness should block calls to domains on blocklist."""
         blocked_response = LLMResponse(

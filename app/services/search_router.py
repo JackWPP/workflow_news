@@ -55,6 +55,12 @@ def _query_hash(query: str) -> str:
     return hashlib.md5(query.encode()).hexdigest()
 
 
+def _cache_part(values: list[str] | None) -> str:
+    if not values:
+        return "-"
+    return "|".join(sorted(str(value).strip().lower() for value in values if value))
+
+
 class SearchRouter:
     """统一搜索路由器。按 provider 健康度自动 failover。"""
 
@@ -80,7 +86,16 @@ class SearchRouter:
         """统一搜索入口。自动 failover + 缓存 + blocklist 过滤。"""
 
         # 检查缓存
-        cache_key = f"{_query_hash(query)}_{language}_{max_results}"
+        cache_key = "_".join(
+            [
+                _query_hash(query),
+                language,
+                str(max_results),
+                freshness,
+                _cache_part(include_domains),
+                _cache_part(exclude_domains),
+            ]
+        )
         cached = self._cache.get(cache_key)
         if cached and (time.time() - cached[0]) < self._cache_ttl:
             logger.debug("SearchRouter: cache hit for '%s'", query[:50])

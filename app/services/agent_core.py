@@ -137,6 +137,12 @@ class AgentCore:
             llm_response = await self._get_llm_decision(messages, memory)
             total_tokens += llm_response.tokens_used
 
+            # Harness 按 LLM 决策轮计费——一轮 LLM 决策无论返回多少个并行
+            # tool call 都只算 1 步。tool_calls_in_step 用于观测但不影响预算。
+            self.harness.record_step(
+                tool_calls_in_step=len(llm_response.tool_calls)
+            )
+
             # 记录 LLM 的思考
             if llm_response.thought:
                 memory.record_thought(llm_response.thought)
@@ -262,7 +268,8 @@ class AgentCore:
 
             first_tool_in_step = True
             for tool_call_req in llm_response.tool_calls:
-                self.harness.record_step()
+                # 注意：record_step 已经在外层循环顶部调过了。每轮 LLM 决策
+                # 只算 1 步 budget，不论本轮并行调了多少个工具。
                 tool_call = ToolCall(
                     tool_name=tool_call_req.tool_name,
                     arguments=tool_call_req.arguments,
@@ -424,6 +431,12 @@ class AgentCore:
 
                 if tool_result.success:
                     consecutive_failed_steps = 0
+                elif tool_result.data and tool_result.data.get("harness_blocked"):
+                    # Harness 拦截（domain/budget/timeout 等）不算"工具失败"。
+                    # 否则一旦 budget 爆了，连续几个被拦的 tool call 会同时撞
+                    # consecutive_failed_steps>=5，触发 no_progress_stall fallback，
+                    # 跟 budget_exhausted 自身的 fallback 重复，日志噪音重。
+                    pass
                 else:
                     consecutive_failed_steps += 1
                     if consecutive_failed_steps >= 5:
@@ -474,6 +487,9 @@ class AgentCore:
             messages.extend(tool_result_messages)
 
             # ── 强制检查点：确保 Agent 不会迷失 ──
+            # 注：step_index 与 harness._step_count 都按 LLM 决策轮计；
+            # 阈值按"读 → 评估 → 对比 → 写 → finish"的最短关键路径设置，
+            # 给 LLM 留足缓冲（max_steps=40 大致是 18 个 checkpoint 上限的两倍）。
 
             # 检查之前调过的工具
             has_evaluated = any(s.tool_name == "evaluate_article" for s in memory.step_history)
@@ -481,46 +497,70 @@ class AgentCore:
             has_read = any(s.tool_name in ("read_page", "read_pool_article") for s in memory.step_history)
             articles = memory.publishable_articles()
 
-            # Checkpoint 0 (step >= 3): 不能只搜不读
+            # Checkpoint 0 (round 3): 还没读任何文章——立刻读
             if step_index == 3 and not has_read:
-                searched = len(memory.searched_queries)
-                msg = f"检查点：你已经做了 {step_index} 步但还没有阅读任何文章。现在必须用 read_page 或 read_pool_article 阅读最相关的 2-3 篇。"
+                msg = (
+                    f"检查点：你已经做了 {step_index} 轮但还没有阅读任何文章。"
+                    "现在必须用 read_pool_article 或 read_page 阅读最相关的 2-3 篇。"
+                )
                 messages.append({"role": "user", "content": msg})
                 logger.info("[AgentCore] Checkpoint 0 triggered at step %d", step_index)
                 self._send_phase_event(1, "正在阅读文章", step_index)
 
-            # Checkpoint 1 (step >= 8): 强制评估
-            if step_index == 8 and not has_evaluated:
+            # Checkpoint 1 (round 6): 还没评估——立刻评估
+            if step_index == 6 and not has_evaluated:
                 read_count = len(memory.read_urls)
                 if read_count > 0:
-                    msg = f"检查点：你已经阅读了 {read_count} 篇文章，但还没有评估。现在必须用 evaluate_article 评估它们。"
+                    msg = (
+                        f"检查点：你已经阅读了 {read_count} 篇文章，但还没有评估。"
+                        "现在必须用 evaluate_article 评估它们。"
+                    )
                 else:
-                    msg = "检查点：步数已到 8。请先读几篇文章然后用 evaluate_article 评估。"
+                    msg = "检查点：第 6 轮。请先读几篇文章然后用 evaluate_article 评估。"
                 messages.append({"role": "user", "content": msg})
                 logger.info("[AgentCore] Checkpoint 1 triggered at step %d", step_index)
                 self._send_phase_event(2, "正在评估文章价值", step_index)
 
-            # Checkpoint 2 (step >= 15): 强制开始写作
-            if step_index == 15 and not has_written:
+            # Checkpoint 2 (round 10): 还没写板块——立刻进入写作阶段
+            if step_index == 10 and not has_written:
                 if len(articles) >= 2:
-                    msg = f"检查点：步数已到 15。你已经有 {len(articles)} 篇可发布文章。现在必须停止阅读，用 write_section 撰写各板块内容，然后 finish。"
+                    msg = (
+                        f"检查点：第 10 轮。你已经有 {len(articles)} 篇可发布文章。"
+                        "现在必须**停止 read/evaluate**，用 write_section 撰写各板块内容，然后 finish。"
+                    )
                 else:
-                    msg = f"检查点：步数已到 15。立即用 evaluate_article 评估所有已读文章，然后用 write_section + finish 完成日报。"
+                    msg = (
+                        "检查点：第 10 轮。立即用 evaluate_article 评估所有已读文章，"
+                        "然后用 write_section + finish 完成日报，不要继续 read 新种子。"
+                    )
                 messages.append({"role": "user", "content": msg})
-                logger.info("[AgentCore] Checkpoint 2 triggered at step %d, %d articles", step_index, len(articles))
+                logger.info(
+                    "[AgentCore] Checkpoint 2 triggered at step %d, %d articles",
+                    step_index, len(articles),
+                )
+                self._send_phase_event(3, "正在撰写日报板块", step_index)
 
-            # Checkpoint 3 (step >= 30): 如果已写作但未 finish，强制催促
-            if step_index == 30 and has_written:
+            # Checkpoint 3 (round 14): 已写但未 finish，强催 finish
+            if step_index == 14 and has_written:
                 has_finished = any(s.tool_name == "finish" for s in memory.step_history)
                 if not has_finished:
-                    msg = "检查点：你已经写了板块内容。现在必须立即调用 finish 完成日报，不要继续搜索或阅读。"
+                    msg = (
+                        "检查点：你已经写了板块内容。"
+                        "现在必须立即调用 finish 完成日报，不要继续搜索、阅读或重复写作。"
+                    )
                     messages.append({"role": "user", "content": msg})
+                    logger.info(
+                        "[AgentCore] Checkpoint 3 triggered at step %d", step_index
+                    )
 
-            # Checkpoint 3.5 (step >= 38): 还没 finish 就直接中断
-            if step_index >= 38:
+            # Checkpoint 3.5 (round >= 18): 强制 auto_finish 兜底
+            if step_index >= 18:
                 has_finished = any(s.tool_name == "finish" for s in memory.step_history)
                 if not has_finished and (has_written or len(articles) >= 4):
-                    logger.info("[AgentCore] Step %d: forcing auto-finish", step_index)
+                    logger.info(
+                        "[AgentCore] Step %d: forcing auto-finish (has_written=%s, articles=%d)",
+                        step_index, has_written, len(articles),
+                    )
                     return self._build_fallback_result(
                         memory, "auto_finish", step_index, total_tokens,
                         diagnostics={"llm_no_tool_stall_count": llm_no_tool_stall_count},
@@ -752,6 +792,11 @@ class AgentCore:
             if key not in merged_sections:
                 merged_sections[key] = merged_raw[key]
 
+        # 推一个 phase 收尾事件，让前端知道 Agent 已经停止探索、进入持久化阶段
+        self._send_phase_event(
+            98, f"Agent 完成（{finished_reason}），生成最终报告中", step_count
+        )
+
         return AgentResult(
             success=True,
             title=finish_data.get("title", "高分子加工全视界日报"),
@@ -786,19 +831,80 @@ class AgentCore:
         else:
             title = "日报生成未完成"
 
+        # fallback 退出也推一个 phase 事件，避免前端只看到一堆 step 后突然
+        # 静默——这一幕之前被用户解读为"看不到运行状态"。
+        self._send_phase_event(
+            99,
+            f"Agent 收尾（{finished_reason}）：已收集 {len(articles)} 篇文章",
+            step_count,
+        )
+
+        # 兜底生成 sections：如果有 publishable 文章但 memory 里没人写过 section
+        # （典型：budget_exhausted 时 LLM 还没来得及调 write_section），就用
+        # WriteSectionTool 的安全模板路径补上，至少让 Report 有内容、不会被
+        # report_persistence 判成 "failed"。
+        sections_content = dict(memory.get_all_sections_content())
+        missing_sections = self._fill_missing_sections_with_template(
+            memory, articles, sections_content
+        )
+        if missing_sections:
+            logger.info(
+                "[AgentCore] Fallback: filled %d missing sections with template (%s)",
+                len(missing_sections),
+                ",".join(missing_sections),
+            )
+
         return AgentResult(
             success=success,
             title=title,
             summary=f"Agent 因 {finished_reason} 停止，已收集 {len(articles)} 篇文章",
             articles=[a.to_dict() for a in articles],
-            sections_content=memory.get_all_sections_content(),  # 尽量保留已写内容
+            sections_content=sections_content,
             memory_snapshot=memory.snapshot(),
             harness_status=self.harness.to_status_dict(),
             finished_reason=finished_reason,
             step_count=step_count,
             total_tokens=total_tokens,
-            diagnostics=diagnostics or {},
+            diagnostics={
+                **(diagnostics or {}),
+                "fallback_filled_sections": missing_sections,
+            },
         )
+
+    @staticmethod
+    def _fill_missing_sections_with_template(
+        memory: WorkingMemory,
+        articles: list[Any],
+        sections_content: dict[str, str],
+    ) -> list[str]:
+        """对于有 publishable 文章但当前 sections_content 里缺失内容的板块，
+        用 WriteSectionTool 的安全模板生成最小可用内容。返回被填充的板块名。
+
+        这是 budget_exhausted 时的兜底——保证 Report 不会因为"有 articles 但
+        没 sections"而被 report_persistence 判成 failed。
+        """
+        from app.services.tools import WriteSectionTool
+
+        # 按板块分组 articles
+        by_section: dict[str, list[Any]] = {}
+        for art in articles:
+            sec = art.section or "industry"
+            by_section.setdefault(sec, []).append(art)
+
+        filled: list[str] = []
+        for section, items in by_section.items():
+            if sections_content.get(section, "").strip():
+                continue  # 已经有内容
+            topics = WriteSectionTool._build_topics_from_articles(memory, section)
+            if not topics:
+                continue
+            heading = WriteSectionTool._SECTION_HEADINGS.get(section, f"## {section}")
+            content = WriteSectionTool._render_safe_section_template(heading, topics)
+            if content.strip():
+                sections_content[section] = content
+                memory.record_section_generation(section, "fallback_template")
+                filled.append(section)
+        return filled
 
     def _send_phase_event(self, phase: int, name: str, step_index: int) -> None:
         """推送阶段切换事件到 SSE 队列。"""

@@ -171,6 +171,10 @@ def _is_non_article_url(url: str) -> bool:
 
 
 def candidate_section_hints(row: dict[str, Any]) -> set[str]:
+    metadata = row.get("metadata") or {}
+    intended_section = row.get("section") or metadata.get("intended_section")
+    if intended_section in _SECTION_HINT_KEYWORDS:
+        return {str(intended_section)}
     text = f"{row.get('title', '')} {row.get('snippet', '')}".lower()
     hints: set[str] = set()
     for section, keywords in _SECTION_HINT_KEYWORDS.items():
@@ -218,6 +222,12 @@ def candidate_score(
         score += 1.8
     if metadata.get("is_direct_source"):
         score += 1.2
+    if metadata.get("intended_section"):
+        score += 0.8
+    if metadata.get("intended_category"):
+        score += 0.4
+    if str(metadata.get("query_family") or "").startswith("ai_"):
+        score += 0.8
     score += min(float(metadata.get("source_priority") or 0) / 50.0, 2.0)
     positive_hits = sum(
         1 for keyword in _POSITIVE_KEYWORDS if keyword.lower() in text
@@ -353,7 +363,15 @@ def extract_candidates(
         query = memory.url_search_query.get(url, "")
         if query:
             query_usage[query] += 1
-        context = f"{title}\n{row.get('snippet', '')}".strip()
+        discovery = []
+        if metadata.get("search_query"):
+            discovery.append(f"query={metadata.get('search_query')}")
+        if metadata.get("intended_section"):
+            discovery.append(f"section={metadata.get('intended_section')}")
+        if metadata.get("intended_category"):
+            discovery.append(f"category={metadata.get('intended_category')}")
+        prefix = f"[discovery {'; '.join(discovery)}]\n" if discovery else ""
+        context = f"{prefix}{title}\n{row.get('snippet', '')}".strip()
         scored.append((score, url, context))
 
     scored.sort(key=lambda item: item[0], reverse=True)

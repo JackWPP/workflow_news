@@ -61,6 +61,15 @@ def publish_grade_from_status(status: str) -> str:
     }.get(status, status)
 
 
+def _markdown_is_substantial(markdown_content: str) -> bool:
+    stripped = (markdown_content or "").strip()
+    if not stripped:
+        return False
+    if stripped == "报告生成失败/内容不足。":
+        return False
+    return len(stripped) >= 160 and ("[" in stripped or "http" in stripped)
+
+
 def _infer_language(domain: str) -> str:
     domain_lower = domain.lower()
     if domain_lower.endswith(".cn") or ".com.cn" in domain_lower:
@@ -179,6 +188,17 @@ async def result_to_report(
     if result.daily_briefing:
         briefing_block = f"## 每日洞察\n\n{result.daily_briefing}"
         markdown_content = markdown_content + "\n\n---\n\n" + briefing_block
+
+    if status in {"complete_auto_publish", "partial_auto_publish"}:
+        if not _markdown_is_substantial(markdown_content):
+            status = "hold_for_missing_quality"
+            publish_gate_reason = "markdown_content_not_substantial"
+        elif result.articles and all(
+            article.get("source_tier") == "C" for article in result.articles
+        ):
+            status = "hold_for_missing_quality"
+            publish_gate_reason = "all_selected_sources_are_c_tier"
+        publish_grade = publish_grade_from_status(status)
 
     final_summary = result.summary
     if result.daily_briefing:

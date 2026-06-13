@@ -99,6 +99,10 @@ async function loadReport() {
 }
 
 watch(reportType, () => {
+  // 报告生成进行中时，切换 reportType 会触发并发的 loadReport()，
+  // 跟 SSE 流抢 report.value，体验上看起来是"刚开始就被覆盖"。
+  // 这种切换由模板上的 :disabled 拦住；这里再做一次保险。
+  if (generating.value) return
   void loadReport()
 })
 
@@ -106,11 +110,14 @@ async function regenerate() {
   generating.value = true
   error.value = ''
   report.value = null
+  progressPanel.value?.reset()
   try {
     const { run_id } = await api.runReport(reportType.value)
     activeES = api.streamProgress(run_id, {
       onStep: (data) => progressPanel.value?.handleStep(data),
       onPhase: (data) => progressPanel.value?.handlePhase(data),
+      onStats: (data) => progressPanel.value?.handleStats(data),
+      onWarning: (data) => progressPanel.value?.handleWarning(data),
       onComplete: async (data) => {
         activeES = null
         generating.value = false
@@ -151,7 +158,7 @@ onUnmounted(() => {
 
 <template>
   <div class="flex flex-col gap-6 relative max-w-7xl mx-auto pb-12">
-    <HeroSection :report="report" :heroItem="heroItem" :loading="loading" @regenerate="regenerate" />
+    <HeroSection :report="report" :heroItem="heroItem" :loading="loading || generating" @regenerate="regenerate" />
 
     <p v-if="error" class="status-error status-pill w-max mx-auto px-4 py-2">{{ error }}</p>
 
@@ -161,17 +168,20 @@ onUnmounted(() => {
       <div class="flex items-center gap-2 bg-black/40 p-1 rounded-xl border border-white/10 w-max">
         <button
           @click="reportType = 'global'"
-          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          :disabled="generating"
+          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           :class="reportType === 'global' ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
         >全球日报</button>
         <button
           @click="reportType = 'ai'"
-          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          :disabled="generating"
+          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           :class="reportType === 'ai' ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
         >AI 日报</button>
         <button
           @click="reportType = 'lab'"
-          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          :disabled="generating"
+          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           :class="reportType === 'lab' ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
         >实验室日报</button>
       </div>

@@ -71,6 +71,8 @@ class DailyComposer:
                     "url": a.url, "title": a.title, "domain": a.domain,
                     "snippet": a.summary or "", "published_at": a.published_at,
                     "language": a.language, "source_type": a.source_type,
+                    "section": a.section, "category": a.category,
+                    "metadata": a.eval_metadata or {},
                 })
 
         # Sort: RSS first, then template search

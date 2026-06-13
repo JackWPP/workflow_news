@@ -497,6 +497,9 @@ class ArticlePool(TimestampMixin, Base):
     last_fetch_at: Mapped[datetime | None] = mapped_column(DateTime)
     image_url: Mapped[str | None] = mapped_column(String(2048))
     consumed_report_ids: Mapped[list] = mapped_column(JSON, default=list)
+    source_tier: Mapped[str | None] = mapped_column(String(16), default=None)
+    source_kind: Mapped[str | None] = mapped_column(String(64), default=None)
+    page_kind: Mapped[str | None] = mapped_column(String(32), default=None)
 
 
 class Patent(TimestampMixin, Base):

@@ -188,11 +188,24 @@ class Harness:
     def __post_init__(self) -> None:
         self._violations: list[HarnessViolation] = []
         self._step_count: int = 0
+        self._tool_call_count: int = 0
         self._start_time: float = time.time()
 
     # ── 计数器 API ────────────────────────────────────────
-    def record_step(self) -> None:
+    def record_step(self, tool_calls_in_step: int = 1) -> None:
+        """记一轮 LLM 决策（外层循环每次 +1）。
+
+        语义：
+          - `_step_count` 表示 LLM 决策轮数（与 max_steps / Checkpoint 对齐）
+          - `_tool_call_count` 表示工具调用总数（仅供观测/诊断）
+
+        历史上这里曾按 tool call 数计费，导致 LLM 一轮并行调 N 个工具就消耗
+        N 步 budget——20 个种子 + 一轮调 4-6 个 read_pool_article 的并行模式下，
+        budget 在 12 轮 LLM 决策后就爆，连 finish 都来不及调用。新语义按 LLM
+        轮计，跟 OpenAI / Anthropic 官方 agent loop 一致。
+        """
         self._step_count += 1
+        self._tool_call_count += max(0, int(tool_calls_in_step))
 
     @property
     def elapsed_seconds(self) -> float:
@@ -204,23 +217,35 @@ class Harness:
 
     @property
     def effective_budget_remaining(self) -> int:
-        """综合考虑步骤预算和剩余时间的有效预算。"""
-        step_budget = max(0, self.max_steps - self._step_count)
+        """剩余的步骤预算。
+
+        历史上这里曾用 `min(step_budget, max_duration / 10)` 把时间也折算进硬预算，
+        结果当某一步真实耗时超过 10s（read_page、evaluate_article 等 LLM/网络步实际
+        20-30s 很常见）时，时间预算先于步骤预算归零，主循环过早退出 → 大量
+        `budget_exhausted` 假阳性。
+
+        现策略：
+          - 步骤预算是唯一硬上限，由本属性返回；超时由 `timed_out` 单独判断。
+          - 时间约束转为软提示（`should_wind_down`），告诉 LLM 该收尾了，
+            但不强制中断循环。
+        """
+        return max(0, self.max_steps - self._step_count)
+
+    @property
+    def time_budget_remaining(self) -> float:
+        """剩余时间预算（秒），仅用于展示与软提示。"""
         if self.max_duration_seconds <= 0:
-            return step_budget
-        remaining_seconds = self.max_duration_seconds - self.elapsed_seconds
-        # 平均每步约 10 秒
-        time_based_budget = max(0, int(remaining_seconds / 10))
-        return min(step_budget, time_based_budget)
+            return float("inf")
+        return max(0.0, self.max_duration_seconds - self.elapsed_seconds)
 
     @property
     def should_wind_down(self) -> bool:
         """资源即将耗尽，应该进入收尾阶段。"""
-        if self.effective_budget_remaining < 10:
+        if self.effective_budget_remaining < 5:
             return True
         if self.max_duration_seconds > 0:
             remaining = self.max_duration_seconds - self.elapsed_seconds
-            if remaining < 120:
+            if remaining < 90:
                 return True
         return False
 
@@ -287,7 +312,8 @@ class Harness:
     def to_status_dict(self) -> dict[str, Any]:
         """返回当前 harness 状态，用于写入 AgentRun.debug_payload。"""
         return {
-            "step_count": self._step_count,
+            "step_count": self._step_count,           # LLM 决策轮数（新语义）
+            "tool_call_count": self._tool_call_count, # 工具调用总数（保留观测）
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "budget_remaining": self.budget_remaining,
             "violations": [v.to_dict() for v in self._violations],

@@ -41,6 +41,35 @@ class TestClassifySourceLowTier:
         result = classify_source(url="https://example.com/", title="Home", content="")
         assert result["source_tier"] == "D"
 
+    def test_industry_report_seo_domain(self):
+        result = classify_source(
+            url="https://www.cir.cn/2/21/JuRuSuanBeiFaZhanQuShiFenXi.html",
+            title="2026年聚乳酸杯发展趋势分析",
+            content="聚乳酸杯 行业市场分析 发展趋势研究报告",
+        )
+        assert result["source_kind"] == "marketing"
+        assert result["source_tier"] == "D"
+
+    def test_low_value_aggregator_domains(self):
+        for domain in ("51sole.com", "m.foodmate.net", "users.foodmate.net", "big5.askci.com"):
+            result = classify_source(
+                url=f"https://{domain}/news/1",
+                title="塑料材料资讯",
+                content="高分子 塑料",
+            )
+            assert result["source_kind"] in {"aggregator", "marketing"}
+            assert result["source_tier"] == "D"
+
+    def test_newly_added_low_value_domains(self):
+        for domain in ("mysteel.com", "100ppi.com", "bohe.cn", "qcc.com", "tianyancha.com", "aiqicha.baidu.com"):
+            result = classify_source(
+                url=f"https://{domain}/news/1",
+                title="塑料材料资讯",
+                content="高分子 塑料",
+            )
+            assert result["source_kind"] == "aggregator"
+            assert result["source_tier"] == "D"
+
 
 class TestDomainTierRank:
     def test_tier_rank_ordering(self):
@@ -67,6 +96,13 @@ class TestDetectPageKind:
 
     def test_article_default(self):
         assert detect_page_kind("https://example.com/2026/01/polymer-update") == "article"
+
+    def test_research_title_does_not_trigger_search_page_kind(self):
+        assert detect_page_kind(
+            "https://www.nature.com/articles/s41586-026-00000-0",
+            title="Polymer processing research update",
+            content="A research article about polymer materials processing.",
+        ) in {"news", "article"}
 
 
 class TestDetectSourceKind:

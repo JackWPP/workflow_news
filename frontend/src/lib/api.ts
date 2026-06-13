@@ -81,33 +81,54 @@ export const api = {
   streamProgress(runId: number, handlers: {
     onStep?: (data: any) => void
     onPhase?: (data: any) => void
+    onStats?: (data: any) => void
+    onWarning?: (data: any) => void
     onComplete?: (data: any) => void
     onError?: (data: any) => void
   }) {
+    let retries = 0
+    const maxRetries = 3
+    let receivedData = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
+
     const es = new EventSource(`${API_BASE}/api/reports/run/${runId}/stream`)
-    es.addEventListener('step', (e) => handlers.onStep?.(JSON.parse(e.data)))
-    es.addEventListener('phase', (e) => handlers.onPhase?.(JSON.parse(e.data)))
+
+    timeout = setTimeout(() => {
+      if (!receivedData) {
+        es.close()
+        handlers.onError?.({ type: 'timeout', message: '连接超时，请重试' })
+      }
+    }, 30000)
+
+    const markReceived = () => {
+      receivedData = true
+      if (timeout) {
+        clearTimeout(timeout)
+        timeout = undefined
+      }
+    }
+
+    es.addEventListener('step', (e) => { markReceived(); handlers.onStep?.(JSON.parse(e.data)) })
+    es.addEventListener('phase', (e) => { markReceived(); handlers.onPhase?.(JSON.parse(e.data)) })
+    es.addEventListener('stats', (e) => { markReceived(); handlers.onStats?.(JSON.parse(e.data)) })
+    es.addEventListener('warning', (e) => { markReceived(); handlers.onWarning?.(JSON.parse(e.data)) })
     es.addEventListener('complete', (e) => {
+      if (timeout) clearTimeout(timeout)
       handlers.onComplete?.(JSON.parse(e.data))
       es.close()
     })
     es.addEventListener('error', () => {
-      const errorData = {
-        type: 'connection_error',
-        message: es.readyState === EventSource.CLOSED 
-          ? 'Connection closed' 
-          : es.readyState === EventSource.CONNECTING
-            ? 'Reconnecting...'
-            : 'Unknown error',
-        readyState: es.readyState
-      }
-      handlers.onError?.(errorData)
-      
-      if (es.readyState === EventSource.CLOSED) {
+      retries++
+      if (retries >= maxRetries || es.readyState === EventSource.CLOSED) {
+        if (timeout) clearTimeout(timeout)
         es.close()
+        handlers.onError?.({
+          type: 'connection_error',
+          message: retries >= maxRetries ? '连接失败，请重试' : 'Connection closed',
+        })
       }
     })
-    es.addEventListener('done', () => es.close())
+    es.addEventListener('done', () => { if (timeout) clearTimeout(timeout); es.close() })
     return es
   },
   listConversations() {

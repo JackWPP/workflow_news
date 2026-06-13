@@ -1,10 +1,56 @@
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+from typing import Any
+
+import yaml
 from sqlalchemy import select
 
 from app.config import settings
 from app.models import AppSetting, Source, User
 from app.security import hash_password
+
+logger = logging.getLogger(__name__)
+
+_SOURCES_YAML_PATH = Path(__file__).parent.parent / "config" / "sources.yaml"
+
+
+def _load_sources_from_yaml() -> list[dict[str, Any]] | None:
+    if not _SOURCES_YAML_PATH.exists():
+        return None
+    try:
+        with open(_SOURCES_YAML_PATH, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, list):
+            return None
+        return data
+    except Exception as exc:
+        logger.warning("Failed to load sources.yaml: %s", exc)
+        return None
+
+
+def _yaml_source_to_db_payload(src: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": src.get("name", ""),
+        "domain": src.get("domain", ""),
+        "type": src.get("sections", ["industry"])[0] if src.get("sections") else "industry",
+        "priority": src.get("priority", 50),
+        "tags": src.get("tags", []),
+        "include_rules": src.get("include_any", []),
+        "exclude_rules": src.get("exclude_any", []),
+        "must_include_any": src.get("include_any", []),
+        "must_exclude_any": src.get("exclude_any", []),
+        "soft_signals": src.get("soft_signals", []),
+        "source_tier": src.get("tier", "C").lower(),
+        "rss_or_listing_url": src.get("rss_url"),
+        "crawl_mode": src.get("crawl_mode", "search"),
+        "use_direct_source": src.get("use_direct_source", False),
+        "allow_images": src.get("allow_images", True),
+        "language": src.get("language", "zh"),
+        "country": src.get("country", "CN"),
+        "enabled": src.get("enabled", True),
+    }
 
 DEFAULT_SOURCES = [
     {
@@ -999,9 +1045,17 @@ DEFAULT_SETTINGS = {
 }
 
 def seed_defaults(session) -> None:
+    yaml_sources = _load_sources_from_yaml()
+    if yaml_sources:
+        source_payloads = [_yaml_source_to_db_payload(s) for s in yaml_sources if s.get("enabled", True)]
+        logger.info("Loaded %d sources from sources.yaml", len(source_payloads))
+    else:
+        source_payloads = DEFAULT_SOURCES
+        logger.info("Using %d hardcoded DEFAULT_SOURCES", len(source_payloads))
+
     existing_sources = {source.domain: source for source in session.scalars(select(Source)).all()}
     direct_source_disabled_domains = {"86pla.com", "newsroom.haitian.com"}
-    for payload in DEFAULT_SOURCES:
+    for payload in source_payloads:
         existing = existing_sources.get(payload["domain"])
         if existing is None:
             session.add(Source(**payload))

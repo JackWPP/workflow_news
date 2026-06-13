@@ -132,9 +132,16 @@ class SearchEngine:
 
         async def _search_one(query: str) -> list[dict[str, Any]]:
             async with semaphore:
-                return await self.search(
+                rows = await self.search(
                     query, language=language, max_results=max_results
                 )
+                for row in rows:
+                    metadata = dict(row.get("metadata") or {})
+                    metadata.setdefault("search_query", query)
+                    metadata.setdefault("language", language)
+                    row["metadata"] = metadata
+                    row.setdefault("search_query", query)
+                return rows
 
         tasks = [_search_one(q) for q in queries]
         all_batches = await asyncio.gather(*tasks)

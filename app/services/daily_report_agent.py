@@ -276,6 +276,14 @@ class DailyReportAgent:
 
         if seeds:
             for s in seeds:
+                metadata = dict(s.get("metadata") or {})
+                discovery = dict(metadata.get("discovery") or {})
+                if discovery:
+                    metadata.update(discovery)
+                if s.get("section"):
+                    metadata.setdefault("intended_section", s.get("section"))
+                if s.get("category"):
+                    metadata.setdefault("intended_category", s.get("category"))
                 memory.search_results.append({
                     "url": s.get("url", ""),
                     "title": s.get("title", ""),
@@ -285,7 +293,13 @@ class DailyReportAgent:
                     "search_type": "article_pool",
                     "source_name": s.get("domain", ""),
                     "source_type": "article_pool",
-                    "metadata": {"language": s.get("language", "zh")},
+                    "section": s.get("section"),
+                    "category": s.get("category"),
+                    "metadata": {
+                        **metadata,
+                        "language": s.get("language", "zh"),
+                        "source_type": s.get("source_type"),
+                    },
                 })
             if event_queue:
                 event_queue.put_nowait({"type": "stats", "phase": "seed", "seed_count": len(seeds)})

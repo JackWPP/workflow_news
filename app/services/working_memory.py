@@ -446,6 +446,20 @@ class WorkingMemory:
                     return raw
         return ""
 
+    def get_search_metadata_for_url(self, url: str) -> dict[str, Any]:
+        normalized_url = canonicalize_url(url)
+        for row in self.search_results:
+            if row.get("url") == normalized_url:
+                metadata = dict(row.get("metadata") or {})
+                metadata.setdefault("search_query", row.get("search_query", ""))
+                metadata.setdefault("source_tier", row.get("source_tier", ""))
+                metadata.setdefault("source_kind", row.get("source_kind", ""))
+                metadata.setdefault("page_kind", row.get("page_kind", ""))
+                metadata.setdefault("provider", row.get("provider", ""))
+                return metadata
+        query = self.url_search_query.get(normalized_url, "")
+        return {"search_query": query} if query else {}
+
     # ── 阅读记录 ──────────────────────────────────────────
 
     def has_read(self, url: str) -> bool:

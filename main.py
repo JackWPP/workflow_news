@@ -100,6 +100,34 @@ class _RunIDFilter(logging.Filter):
 
 def _setup_logging() -> None:
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
+
+    # ── 文件日志（始终开启）────────────────────────────────────
+    # uvicorn 的 dictConfig 会替换 root.handlers，但只针对 console。
+    # 我们把自己的 RotatingFileHandler 直接附加在 root 上；如果发现已经
+    # 存在同名 handler 就跳过（适配 reload 场景，避免重复写日志）。
+    from logging.handlers import RotatingFileHandler
+
+    server_log_path = Path("server.log")
+    file_formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+    file_handler_present = any(
+        isinstance(h, RotatingFileHandler)
+        and getattr(h, "baseFilename", "").endswith("server.log")
+        for h in logging.root.handlers
+    )
+    if not file_handler_present:
+        file_handler = RotatingFileHandler(
+            server_log_path,
+            maxBytes=10 * 1024 * 1024,  # 10 MB
+            backupCount=3,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(level)
+        file_handler.setFormatter(file_formatter)
+        file_handler.addFilter(_RunIDFilter())
+        logging.root.addHandler(file_handler)
+
     if settings.log_format == "json":
         class JSONFormatter(logging.Formatter):
             def format(self, record: logging.LogRecord) -> str:
@@ -118,19 +146,46 @@ def _setup_logging() -> None:
                 if record.exc_info and record.exc_info[0]:
                     entry["exc"] = self.formatException(record.exc_info)
                 return json.dumps(entry, ensure_ascii=False)
-        handler = logging.StreamHandler()
-        handler.setFormatter(JSONFormatter())
-        logging.root.handlers = [handler]
+        # JSON 模式：替换 root 上所有非文件 handler 的 formatter，
+        # 仍保留我们的 FileHandler（plain 文本，便于 grep）。
+        for h in logging.root.handlers:
+            if isinstance(h, RotatingFileHandler):
+                continue
+            h.setFormatter(JSONFormatter())
+        if not any(
+            (not isinstance(h, RotatingFileHandler))
+            for h in logging.root.handlers
+        ):
+            stream_handler = logging.StreamHandler()
+            stream_handler.setFormatter(JSONFormatter())
+            logging.root.addHandler(stream_handler)
     else:
-        # basicConfig is no-op if handlers already exist (e.g. from uvicorn)
-        # So we explicitly set level on root and all existing handlers
+        # plain 模式：basicConfig 在 handlers 已存在（uvicorn 已接管）时是 no-op，
+        # 所以我们显式给 root 上每个 handler 设 level，确保 INFO 不被压制。
         if not logging.root.handlers:
             logging.basicConfig(level=level, format="%(asctime)s - %(levelname)s - %(message)s")
-        else:
-            for h in logging.root.handlers:
-                h.setLevel(level)
+        for h in logging.root.handlers:
+            h.setLevel(level)
+
     logging.root.setLevel(level)
-    logging.root.addFilter(_RunIDFilter())
+    # _RunIDFilter 加一次即可（已加到 file_handler 上）；root 上也加一份兜底。
+    if not any(isinstance(f, _RunIDFilter) for f in logging.root.filters):
+        logging.root.addFilter(_RunIDFilter())
+
+    # 关键应用 logger 显式 setLevel + propagate，避免被 uvicorn dictConfig
+    # 设回 WARNING 以致 [AgentCore] / [EditorAgent] 这类 INFO 不可见。
+    for name in (
+        "app",
+        "app.services",
+        "app.services.agent_core",
+        "app.services.editor_agent",
+        "app.services.daily_report_agent",
+        "app.services.tools",
+        "app.services.editor_tools",
+    ):
+        lg = logging.getLogger(name)
+        lg.setLevel(level)
+        lg.propagate = True
 
 
 _setup_logging()
@@ -289,6 +344,12 @@ async def lifespan(app: FastAPI):
     global _running_task, _running_agent_run_id
     _running_task = None
     _running_agent_run_id = None
+    # uvicorn 在启动 worker 时会用自己的 dictConfig 重置 root.handlers，
+    # 这会丢掉我们 import 时挂上去的 FileHandler / level。在 lifespan 起始
+    # 再调用一次 _setup_logging，确保运行期日志真的能落到 server.log 与
+    # 终端。注意 _setup_logging 是幂等的（FileHandler 重复检测）。
+    _setup_logging()
+    logger.info("Lifespan startup: log level=%s, log format=%s.", settings.log_level, settings.log_format)
     _run_alembic_migrations()
     init_db()
     report_settings = _default_report_settings()
@@ -494,6 +555,10 @@ async def run_report(payload: ReportRunRequest, request: Request):
     async def _run_pipeline():
         global _running_task, _running_agent_run_id
         try:
+            logger.info(
+                "[ReportRun] run_id=%d type=%s starting (shadow=%s mode=%s).",
+                run_id, payload.report_type, payload.shadow_mode, payload.mode,
+            )
             if payload.report_type == "lab":
                 from app.services.lab_report_composer import LabReportComposer
                 composer = LabReportComposer()
@@ -589,7 +654,16 @@ async def stream_report_progress(run_id: int):
         except _asyncio.CancelledError:
             pass
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            # 禁止 nginx 等反代缓冲；保持事件即时下发。
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/api/reports/run/status")

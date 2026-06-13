@@ -8,6 +8,7 @@ import pytest
 from app.services.ingester import (
     ContinuousIngester,
     _BLOCKED_POOL_DOMAINS,
+    _build_search_query_specs,
     _build_search_queries,
     _compute_content_hash,
     _is_weixin_url,
@@ -112,6 +113,38 @@ class TestBuildSearchQueries:
         assert len(queries["zh"]) > 0
         assert len(queries["en"]) > 0
 
+    def test_search_specs_include_intent_metadata_and_ai_lane(self):
+        specs = _build_search_query_specs()
+        assert all("section" in spec for spec in specs)
+        assert all("category" in spec for spec in specs)
+        assert all("query_family" in spec for spec in specs)
+        assert any(spec["category"] == "AI" for spec in specs)
+
+
+class TestBlockedDomains:
+    def test_mysteel_blocked(self):
+        row = {"title": "polymer test", "snippet": "plastics", "url": "https://mysteel.com/news/1"}
+        assert _row_is_relevant(row) is False
+
+    def test_foodmate_blocked(self):
+        row = {"title": "polymer test", "snippet": "plastics", "url": "https://foodmate.net/news/1"}
+        assert _row_is_relevant(row) is False
+
+    def test_social_media_blocked(self):
+        for domain in ("linkedin.com", "facebook.com", "twitter.com", "weibo.com", "douyin.com"):
+            row = {"title": "polymer test", "snippet": "plastics", "url": f"https://{domain}/post/1"}
+            assert _row_is_relevant(row) is False, f"{domain} should be blocked"
+
+    def test_job_sites_blocked(self):
+        for domain in ("zhipin.com", "liepin.com", "51job.com", "zhaopin.com"):
+            row = {"title": "polymer test", "snippet": "plastics", "url": f"https://{domain}/job/1"}
+            assert _row_is_relevant(row) is False, f"{domain} should be blocked"
+
+    def test_business_info_blocked(self):
+        for domain in ("qcc.com", "tianyancha.com", "aiqicha.baidu.com"):
+            row = {"title": "polymer test", "snippet": "plastics", "url": f"https://{domain}/firm/1"}
+            assert _row_is_relevant(row) is False, f"{domain} should be blocked"
+
 
 class TestContinuousIngester:
     @pytest.mark.asyncio
@@ -196,3 +229,35 @@ class TestContinuousIngester:
         ):
             result = await ingester._ingest_template_searches()
             assert result >= 1
+
+    @pytest.mark.asyncio
+    async def test_try_write_pool_fills_source_tier(self):
+        ingester = ContinuousIngester()
+        mock_quality = {
+            "source_tier": "A",
+            "source_kind": "academic_journal",
+            "page_kind": "article",
+        }
+        with (
+            patch("app.services.ingester.canonicalize_url", return_value="https://example.com/a"),
+            patch("app.services.ingester.classify_source", return_value=mock_quality),
+            patch("app.services.ingester.session_scope") as mock_scope,
+            patch.object(ingester, "_fetch_article_content", new_callable=AsyncMock),
+        ):
+            mock_session = MagicMock()
+            mock_session.scalars.return_value.first.return_value = None
+            mock_scope.return_value.__enter__ = MagicMock(return_value=mock_session)
+            mock_scope.return_value.__exit__ = MagicMock(return_value=False)
+            result = await ingester._try_write_pool(
+                url="https://example.com/a",
+                title="Polymer study",
+                domain="example.com",
+                source_type="rss",
+                language="en",
+                snippet="A new study on polymers.",
+            )
+            assert result == 1
+            added_article = mock_session.add.call_args[0][0]
+            assert added_article.source_tier == "A"
+            assert added_article.source_kind == "academic_journal"
+            assert added_article.page_kind == "article"

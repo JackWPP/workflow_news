@@ -26,6 +26,22 @@ ACADEMIC_DOMAINS = {
     "sciencedirect.com",
     "springer.com",
     "wiley.com",
+    "acs.org",
+    "pubs.acs.org",
+    "arxiv.org",
+    "pubs.rsc.org",
+    "science.org",
+    "pnas.org",
+    "ieee.org",
+    "aip.org",
+    "aps.org",
+    "elsevier.com",
+    "tandfonline.com",
+    "sagepub.com",
+    "oup.com",
+    "cambridge.org",
+    "researchgate.net",
+    "scholar.google.com",
 }
 MAINSTREAM_MEDIA = {
     "finance.sina.com.cn",
@@ -52,6 +68,9 @@ CONTENT_PLATFORM_DOMAINS = {
     "toutiao.com",
     "qq.com",
     "so.html5.qq.com",
+    "sohu.com",
+    "163.com",
+    "c.m.163.com",
 }
 LOW_VALUE_DOMAINS = {
     "taobao.com": "ecommerce",
@@ -67,6 +86,23 @@ LOW_VALUE_DOMAINS = {
     "10jqka.com.cn": "marketing",
     "china-packcon.com": "marketing",
     "china-ipif.com": "marketing",
+    "cir.cn": "marketing",
+    "m.chinabgao.com": "marketing",
+    "chinabgao.com": "marketing",
+    "askci.com": "marketing",
+    "baogao.com": "marketing",
+    "chinairn.com": "marketing",
+    "m.chinairn.com": "marketing",
+    "51sole.com": "aggregator",
+    "foodmate.net": "aggregator",
+    "m.foodmate.net": "aggregator",
+    "mysteel.com": "aggregator",
+    "m.mysteel.com": "aggregator",
+    "100ppi.com": "aggregator",
+    "bohe.cn": "aggregator",
+    "qcc.com": "aggregator",
+    "tianyancha.com": "aggregator",
+    "aiqicha.baidu.com": "aggregator",
 }
 
 NEWS_PATH_PARTS = (
@@ -89,6 +125,7 @@ PRODUCT_PATH_PARTS = (
 ABOUT_PATH_PARTS = ("about", "company", "profile", "introduction")
 DOWNLOAD_HINTS = ("download", "attachment", "export", ".pdf")
 SEARCH_HINTS = ("search", "query", "keyword", "tag")
+SEARCH_TITLE_HINT_RE = re.compile(r"\b(search|query|keyword|tag)\b", re.IGNORECASE)
 SITEMAP_HINTS = ("sitemap", "site-map", "/sitemap")
 PRICE_HINTS = (
     "price",
@@ -194,6 +231,17 @@ def classify_source(
     }
 
 
+def _domain_in(domain: str, domains: set[str] | dict[str, Any]) -> str | None:
+    if domain in domains:
+        return domain
+    parts = domain.split(".")
+    for index in range(1, len(parts)):
+        parent = ".".join(parts[index:])
+        if parent in domains:
+            return parent
+    return None
+
+
 def detect_page_kind(url: str, title: str = "", content: str = "") -> str:
     normalized_url = normalize_external_url(url)
     parsed = urlparse(normalized_url)
@@ -216,7 +264,7 @@ def detect_page_kind(url: str, title: str = "", content: str = "") -> str:
         return "download"
     if any(pattern in content_signals for pattern in ANTI_BOT_PATTERNS):
         return "anti_bot"
-    if any(hint in url_signals for hint in SEARCH_HINTS):
+    if any(hint in f"{path} {query}" for hint in SEARCH_HINTS) or SEARCH_TITLE_HINT_RE.search(title_lower):
         return "search"
     if any(hint in path for hint in PRODUCT_PATH_PARTS):
         return "product"
@@ -247,11 +295,11 @@ def detect_source_kind(
         return "government"
     if domain.endswith(".edu.cn") or domain.endswith(".edu"):
         return "academic"
-    if domain in TOP_INDUSTRY_MEDIA:
+    if _domain_in(domain, TOP_INDUSTRY_MEDIA):
         return "top_industry_media"
-    if domain in ACADEMIC_DOMAINS:
+    if _domain_in(domain, ACADEMIC_DOMAINS):
         return "academic_journal"
-    if domain in MAINSTREAM_MEDIA:
+    if _domain_in(domain, MAINSTREAM_MEDIA):
         return "mainstream_media"
     if (
         page_kind in {"news", "article"}
@@ -261,15 +309,16 @@ def detect_source_kind(
         and domain not in LOW_VALUE_DOMAINS
     ):
         return "mainstream_media"
-    if domain in VERTICAL_MEDIA:
+    if _domain_in(domain, VERTICAL_MEDIA):
         return "vertical_media"
-    if domain in TECH_BLOG_DOMAINS or domain.endswith("csdn.net"):
+    if _domain_in(domain, TECH_BLOG_DOMAINS) or domain.endswith("csdn.net"):
         return "technical_blog"
-    if domain in CONTENT_PLATFORM_DOMAINS:
+    if _domain_in(domain, CONTENT_PLATFORM_DOMAINS):
         return "content_platform"
-    if domain in LOW_VALUE_DOMAINS:
-        return LOW_VALUE_DOMAINS[domain]
-    if domain in OFFICIAL_NEWSROOM_DOMAINS:
+    low_value_parent = _domain_in(domain, LOW_VALUE_DOMAINS)
+    if low_value_parent:
+        return LOW_VALUE_DOMAINS[low_value_parent]
+    if _domain_in(domain, OFFICIAL_NEWSROOM_DOMAINS):
         return "official_company_newsroom"
     if page_kind == "news" and any(hint in url_lower for hint in NEWSROOM_HINTS):
         return "official_company_newsroom"

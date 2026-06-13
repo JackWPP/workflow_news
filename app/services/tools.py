@@ -158,6 +158,16 @@ _FOLLOW_REF_REJECT_PAGE_KINDS = {
     "anti_bot",
     "binary",
 }
+_SEARCH_REJECT_PAGE_KINDS = {
+    "download",
+    "search",
+    "product",
+    "about",
+    "homepage",
+    "navigation",
+    "anti_bot",
+    "binary",
+}
 
 
 def _is_blocked_domain(domain: str) -> bool:
@@ -213,9 +223,15 @@ class WebSearchTool(Tool):
         "required": ["query"],
     }
 
-    def __init__(self, bocha_client: Any = None, zhipu_client: Any = None) -> None:
+    def __init__(
+        self,
+        bocha_client: Any = None,
+        zhipu_client: Any = None,
+        search_router: Any = None,
+    ) -> None:
         self._bocha = bocha_client
         self._zhipu = zhipu_client
+        self._router = search_router
 
     @staticmethod
     def _normalize_query(query: str) -> str:
@@ -230,6 +246,62 @@ class WebSearchTool(Tool):
         snapshot = (memory.search_provider_health or {}).get(provider, {})
         state = str(snapshot.get("health_state") or snapshot.get("state") or "")
         return state in blocked_states
+
+    @staticmethod
+    def _record_router_health(memory: "WorkingMemory", snapshot: dict[str, Any]) -> None:
+        for provider, provider_snapshot in snapshot.items():
+            if isinstance(provider_snapshot, dict):
+                memory.record_search_provider_health(provider, provider_snapshot)
+
+    @staticmethod
+    def _annotate_and_filter_results(
+        query: str,
+        language: str,
+        results: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], int]:
+        filtered: list[dict[str, Any]] = []
+        rejected_count = 0
+        for row in results:
+            result_type = row.get("result_type") or row.get("search_type") or "web"
+            if result_type == "images":
+                annotated = dict(row)
+                metadata = dict(annotated.get("metadata") or {})
+                metadata.setdefault("search_query", query)
+                metadata.setdefault("language", language)
+                annotated["metadata"] = metadata
+                annotated.setdefault("search_query", query)
+                filtered.append(annotated)
+                continue
+
+            url = str(row.get("url") or "")
+            if not url:
+                rejected_count += 1
+                continue
+            title = str(row.get("title") or "")
+            snippet = str(row.get("snippet") or "")
+            quality = classify_source(url=url, title=title, content=snippet)
+            if (
+                quality["source_tier"] == "D"
+                or quality["page_kind"] in _SEARCH_REJECT_PAGE_KINDS
+            ):
+                rejected_count += 1
+                continue
+
+            annotated = dict(row)
+            metadata = dict(annotated.get("metadata") or {})
+            metadata.setdefault("search_query", query)
+            metadata.setdefault("language", language)
+            metadata.setdefault("source_quality", quality)
+            annotated["metadata"] = metadata
+            annotated.setdefault("search_query", query)
+            annotated.setdefault("source_tier", quality["source_tier"])
+            annotated.setdefault(
+                "source_reliability_label", quality["source_reliability_label"]
+            )
+            annotated.setdefault("source_kind", quality["source_kind"])
+            annotated.setdefault("page_kind", quality["page_kind"])
+            filtered.append(annotated)
+        return filtered, rejected_count
 
     async def execute(self, memory: "WorkingMemory", **kwargs: Any) -> ToolResult:
         query: str = kwargs.get("query", "").strip()
@@ -287,8 +359,46 @@ class WebSearchTool(Tool):
             # Industry queries (no keywords matched): no include_domains — keep breadth
 
         results: list[dict[str, Any]] = []
+        used_router = False
+        router_failed = False
 
-        if self._bocha and self._bocha.enabled:
+        if self._router:
+            used_router = True
+            try:
+                from app.config import settings
+
+                results = await self._router.search(
+                    normalized_query,
+                    language=language,
+                    max_results=settings.bocha_search_count,
+                    freshness=freshness,
+                    include_domains=include_domains,
+                )
+                logger.info(
+                    "web_search [router] '%s' → %d results",
+                    normalized_query,
+                    len(results),
+                )
+            except Exception as exc:
+                router_failed = True
+                logger.warning("SearchRouter failed for '%s': %s", normalized_query, exc)
+            finally:
+                try:
+                    self._record_router_health(memory, self._router.health_snapshot())
+                except Exception:
+                    logger.debug("SearchRouter health snapshot failed", exc_info=True)
+
+        if (
+            not results
+            and (not used_router or router_failed)
+            and self._bocha
+            and self._bocha.enabled
+            and not self._should_skip_provider(
+                memory,
+                "bocha",
+                {"quota_limited", "circuit_open", "unavailable", "error"},
+            )
+        ):
             try:
                 results = await self._bocha.search(
                     normalized_query,
@@ -308,7 +418,17 @@ class WebSearchTool(Tool):
                 )
 
         # 如果 Bocha 返回空且 zhipu 可用，尝试 zhipu
-        if not results and self._zhipu and getattr(self._zhipu, 'enabled', False):
+        if (
+            not results
+            and (not used_router or router_failed)
+            and self._zhipu
+            and getattr(self._zhipu, "enabled", False)
+            and not self._should_skip_provider(
+                memory,
+                "zhipu",
+                {"quota_limited", "circuit_open", "unavailable", "error"},
+            )
+        ):
             try:
                 from app.config import settings
 
@@ -342,12 +462,21 @@ class WebSearchTool(Tool):
             )
         results = filtered
 
+        results, quality_rejected_count = self._annotate_and_filter_results(
+            normalized_query, language, results
+        )
+        if quality_rejected_count:
+            logger.info(
+                "web_search quality-filtered %d low-value results",
+                quality_rejected_count,
+            )
+
         if not results:
             memory.record_empty_search()
             return ToolResult(
                 success=True,
-                summary=f"'{normalized_query}' 搜索到了结果但都被过滤了（不可信来源），请换一个搜索词",
-                data={"results": []},
+                summary=f"'{normalized_query}' 搜索到了结果但都被过滤了（不可信或非文章页），请换一个搜索词",
+                data={"results": [], "quality_rejected_count": quality_rejected_count},
             )
 
         article_results = [
@@ -373,7 +502,7 @@ class WebSearchTool(Tool):
             snippet = (r.get("snippet") or "")[:200]
             formatted.append(
                 f"- [{r.get('title', 'Untitled')}]({url})\n"
-                f"  来源: {domain}{region} | {pub_str} | 类型: {(r.get('result_type') or r.get('search_type') or 'web')}\n"
+                f"  来源: {domain}{region} | {pub_str} | 类型: {(r.get('result_type') or r.get('search_type') or 'web')} | 可信度: {r.get('source_tier', 'C')}/{r.get('source_kind', 'general_site')}\n"
                 f"  摘要: {snippet}"
             )
 
@@ -394,6 +523,8 @@ class WebSearchTool(Tool):
                 "results": article_results[:10],
                 "image_results": image_results[:5],
                 "total": len(article_results),
+                "quality_rejected_count": quality_rejected_count,
+                "provider_health": memory.search_provider_health,
             },
         )
 
@@ -630,6 +761,8 @@ class ReadPageTool(Tool):
         if links:
             summary += f"页内链接 {len(links)} 条（可用 follow_references 追踪）"
 
+        search_metadata = memory.get_search_metadata_for_url(url)
+
         return ToolResult(
             success=True,
             summary=summary,
@@ -646,6 +779,9 @@ class ReadPageTool(Tool):
                 "scrape_status": scrape_status or "success",
                 "page_kind": page_kind,
                 "links": links[:10],
+                "search_metadata": search_metadata,
+                "source_tier": quality.get("source_tier", ""),
+                "source_kind": quality.get("source_kind", ""),
             },
         )
 
@@ -842,6 +978,12 @@ class EvaluateArticleTool(Tool):
                 "description": "抓取后最终落地 URL（可选）",
             },
             "page_kind": {"type": "string", "description": "页面类型（可选）"},
+            "source_tier": {"type": "string", "description": "来源等级 S/A/B/C/D（可选）"},
+            "source_kind": {"type": "string", "description": "来源类型（可选）"},
+            "search_metadata": {
+                "type": "object",
+                "description": "搜索发现时的元数据（可选，自动从记忆中查找）",
+            },
         },
         "required": ["title", "content", "url"],
     }
@@ -858,6 +1000,10 @@ class EvaluateArticleTool(Tool):
         resolved_url: str = normalize_external_url(kwargs.get("resolved_url", ""))
         page_kind: str = kwargs.get("page_kind", "")
         pre_evaluated: dict | None = kwargs.get("pre_evaluated")
+        search_metadata: dict | None = kwargs.get("search_metadata")
+
+        if not search_metadata:
+            search_metadata = memory.get_search_metadata_for_url(url)
 
         if not title or not content:
             return ToolResult(
@@ -962,12 +1108,22 @@ class EvaluateArticleTool(Tool):
                 "      * 不要泛泛的词汇如'技术'、'创新'、'发展'\n"
                 "      * 优先使用行业通用术语\n"
             )
+            search_context = ""
+            if search_metadata:
+                query = search_metadata.get("search_query", "")
+                if query:
+                    search_context += f"发现查询：{query}\n"
+                query_family = search_metadata.get("query_family", "")
+                if query_family:
+                    search_context += f"查询类别：{query_family}\n"
+
             user_content = (
                 f"标题：{title}\n"
                 f"来源：{domain}\n"
                 f"来源等级：{quality['source_tier']} / {quality['source_kind']}\n"
                 f"页面类型：{quality['page_kind']}\n"
                 f"发布时间：{published_at or '未知（允许继续评估，但需降低时效置信）'}\n"
+                f"{search_context}"
                 f"内容摘要：\n{content[:1200]}"
             )
 
@@ -1060,6 +1216,7 @@ class EvaluateArticleTool(Tool):
                 "topic_confidence": topic_confidence,
                 "recency_status": recency_status,
                 "published_at_source": published_at_source,
+                "search_metadata": search_metadata,
             },
         )
 
@@ -1838,11 +1995,22 @@ def build_all_tools(
     scraper_client: Any = None,
     bocha_client: Any = None,
     zhipu_client: Any = None,
+    search_router: Any = None,
     llm_client: "LLMClient | None" = None,
     scrape_timeout_seconds: int | None = None,
 ) -> list[Tool]:
+    if search_router is None and (bocha_client is not None or zhipu_client is not None):
+        from app.services.search_router import SearchRouter
+
+        search_router = SearchRouter(
+            bocha_client=bocha_client, zhipu_client=zhipu_client
+        )
     return [
-        WebSearchTool(bocha_client=bocha_client, zhipu_client=zhipu_client),
+        WebSearchTool(
+            bocha_client=bocha_client,
+            zhipu_client=zhipu_client,
+            search_router=search_router,
+        ),
         ReadPageTool(
             scraper_client=scraper_client, timeout_seconds=scrape_timeout_seconds
         ),
