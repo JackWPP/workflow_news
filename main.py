@@ -638,7 +638,7 @@ async def run_report(payload: ReportRunRequest, request: Request):
                                 title=card.get("title", ""),
                                 source_name=card.get("source_name", ""),
                                 source_url=card.get("url", ""),
-                                published_at=card.get("published_at"),
+                                published_at=card.get("published_at") or None,
                                 summary=card.get("summary", ""),
                                 research_signal=card.get("why_selected", ""),
                                 image_url=card.get("image_url"),
