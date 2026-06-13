@@ -646,6 +646,10 @@ async def run_report(payload: ReportRunRequest, request: Request):
                             )
                             session.add(item)
                         session.commit()
+                    # Update RetrievalRun status
+                    with session_scope() as update_session:
+                        update_session.query(RetrievalRun).filter(RetrievalRun.id == run_id).update({"status": "complete"})
+                        update_session.commit()
                     event_queue.put_nowait({
                         "type": "complete",
                         "report_id": report_id,
