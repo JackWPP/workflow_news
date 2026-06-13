@@ -56,9 +56,17 @@ EXPLORER_SYSTEM_PROMPT = """\
 
 【关键约束】
 - 只收录过去 72 小时内发布的内容
-- 跳过 D 级来源和非文章页（homepage/product/search/navigation）
+- 跳过明显的垃圾源（电商、营销、SEO 农场）
+- 政府网站（.gov.cn）、大学网站（.edu.cn）、学术期刊（Nature/ACS/ScienceDirect）是高可信源，优先收录
+- 企业 newsroom、行业协会、行业媒体也是优质来源
+- 不要因为页面是"新闻列表"或"政策公告"就拒绝——只要有实质内容就应收录
 - 每篇文章必须有明确的 key_finding（核心发现）
 - 每篇文章必须有 why_selected（入选原因）
+
+【板块特定指导】
+- industry: 关注设备、原料、产能、应用等产业动态
+- policy: 关注政策法规、标准、环保、回收等政策动向
+- academic: 关注论文、研究、技术突破等学术进展
 """
 
 
