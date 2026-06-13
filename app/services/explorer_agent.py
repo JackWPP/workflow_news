@@ -49,10 +49,11 @@ EXPLORER_SYSTEM_PROMPT = """\
 5. 完成后调用 finish 输出候选文章列表
 
 【搜索策略】
-- 针对 {category} 方向，搜索 3-5 轮
+- 针对 {category} 方向，搜索 2-3 轮（不要超过 3 轮）
 - 中英文结合，覆盖设备/原料/政策/学术/应用
 - 不要反复搜同一主题的近义词
 - 发现有价值的结果后立即阅读和评估
+- 搜索预算有限，请高效使用
 
 【关键约束】
 - 只收录过去 72 小时内发布的内容
@@ -94,16 +95,18 @@ class ExplorerAgent:
 
     def _build_harness(self) -> Harness:
         return Harness(
-            max_steps=25,
-            max_duration_seconds=300.0,
+            max_steps=12,
+            max_duration_seconds=240.0,
             system_prompt=_build_explorer_prompt(self.section, self.category),
         )
 
     def _build_tools(self) -> list:
         bocha = BochaSearchClient()
         scraper = ScraperClient()
+        from app.services.search_router import SearchRouter
+        router = SearchRouter(bocha_client=bocha)
         return [
-            WebSearchTool(bocha_client=bocha),
+            WebSearchTool(bocha_client=bocha, search_router=router),
             ReadPageTool(scraper_client=scraper),
             EvaluateArticleTool(llm_client=self._llm),
             FinishTool(llm_client=self._llm),

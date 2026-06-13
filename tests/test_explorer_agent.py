@@ -228,5 +228,5 @@ class TestExplorerAgentHarness:
     def test_harness_limits(self):
         agent = ExplorerAgent(section="industry", category="高材制造")
         harness = agent._build_harness()
-        assert harness.max_steps == 25
-        assert harness.max_duration_seconds == 300.0
+        assert harness.max_steps == 12
+        assert harness.max_duration_seconds == 240.0
