@@ -47,6 +47,7 @@ class DailyOrchestrator:
 
         elapsed = round(perf_counter() - started, 2)
         all_cards = [card for cards in edit_results for card in cards]
+        result["cards"] = all_cards
         result["meta"] = {
             "total_cards": len(all_cards),
             "elapsed_seconds": elapsed,

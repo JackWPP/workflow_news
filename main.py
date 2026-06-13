@@ -573,6 +573,7 @@ async def run_report(payload: ReportRunRequest, request: Request):
 
     # 创建事件队列
     event_queue: _asyncio.Queue = _asyncio.Queue()
+    target_date = date.today()
 
     async def _run_pipeline():
         global _running_task, _running_agent_run_id
@@ -611,11 +612,44 @@ async def run_report(payload: ReportRunRequest, request: Request):
                         run_id=run_id,
                         event_queue=event_queue,
                     )
-                    # DailyOrchestrator returns dict, not Report
+                    # DailyOrchestrator returns dict, persist to database
+                    from app.models import Report as ReportModel, ReportItem
+                    from app.utils import now_local as _now_local
+                    with session_scope() as session:
+                        cards = result.get("cards", [])
+                        sections = set(c.get("section", "industry") for c in cards)
+                        report = ReportModel(
+                            report_date=target_date,
+                            status="complete_auto_publish" if len(cards) >= 4 else "partial_auto_publish",
+                            title=f"{target_date.isoformat()} 高分子加工全视界日报",
+                            markdown_content=result.get("html", ""),
+                            summary=result.get("summary", ""),
+                            pipeline_version="multi-agent-v1",
+                            retrieval_run_id=run_id,
+                        )
+                        session.add(report)
+                        session.flush()
+                        report_id = report.id
+                        for i, card in enumerate(cards):
+                            item = ReportItem(
+                                report_id=report_id,
+                                section=card.get("section", "industry"),
+                                rank=i + 1,
+                                title=card.get("title", ""),
+                                source_name=card.get("source_name", ""),
+                                source_url=card.get("url", ""),
+                                published_at=card.get("published_at"),
+                                summary=card.get("summary", ""),
+                                research_signal=card.get("why_selected", ""),
+                                image_url=card.get("image_url"),
+                                language="zh",
+                            )
+                            session.add(item)
+                        session.commit()
                     event_queue.put_nowait({
                         "type": "complete",
-                        "report_id": None,
-                        "status": "complete",
+                        "report_id": report_id,
+                        "status": "complete_auto_publish",
                         "meta": result.get("meta", {}),
                     })
                     return  # skip the generic event_queue.put_nowait below
