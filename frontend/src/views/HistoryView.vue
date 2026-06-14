@@ -35,7 +35,7 @@ onMounted(() => {
     <aside class="w-80 flex-shrink-0 flex flex-col gap-4 border-r border-white/5 pr-4 relative z-10">
       <div class="flex items-center justify-between pb-4 border-b border-[var(--line)] shrink-0">
         <div>
-          <h2 class="text-xl font-bold text-white flex items-center gap-2">
+          <h2 class="text-xl font-bold text-[var(--text-primary)] flex items-center gap-2">
             <Calendar class="w-5 h-5 text-[var(--accent-industry)]" />
             历史日报
           </h2>
@@ -56,14 +56,14 @@ onMounted(() => {
           :key="report.id"
           class="w-full text-left p-4 rounded-xl border transition-all duration-300 group flex flex-col gap-2 relative overflow-hidden"
           :class="selected?.id === report.id 
-            ? 'bg-[var(--bg-surface)] border-[var(--accent-industry)]/40 shadow-[inset_0_0_20px_rgba(74,222,128,0.1)]' 
-            : 'bg-black/20 border-white/5 hover:border-white/10 hover:bg-black/40'"
+            ? 'bg-white border-[var(--accent-industry)]/40' 
+            : 'bg-gray-50 border-gray-100 hover:border-gray-200 hover:bg-white'"
           @click="selected = report"
         >
-          <div v-if="selected?.id === report.id" class="absolute left-0 top-0 bottom-0 w-1 bg-[var(--accent-industry)] shadow-[0_0_10px_var(--accent-industry)]"></div>
+          <div v-if="selected?.id === report.id" class="absolute left-0 top-0 bottom-0 w-1 bg-[var(--accent-industry)]"></div>
           
           <div class="flex justify-between items-start gap-2">
-            <strong class="text-white font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-[var(--text-secondary)]">
+            <strong class="text-[var(--text-primary)] font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-[var(--text-primary)] to-[var(--text-secondary)]">
               {{ report.report_date }}
             </strong>
           </div>
@@ -79,9 +79,9 @@ onMounted(() => {
       </div>
     </aside>
 
-    <main class="flex-1 flex flex-col min-w-0 glass-panel border border-[var(--line)] rounded-2xl overflow-hidden relative z-10 shadow-2xl">
+    <main class="flex-1 flex flex-col min-w-0 bg-white border border-[var(--line)] rounded-2xl overflow-hidden relative z-10 shadow-sm">
       <template v-if="selected">
-        <div class="relative shrink-0 border-b border-[var(--line)] bg-black/40 backdrop-blur-md overflow-hidden">
+        <div class="relative shrink-0 border-b border-[var(--line)] bg-white overflow-hidden">
           <div class="absolute inset-0 opacity-10">
             <img v-if="selected.items?.find((item) => item.image_url)" 
                  :src="selected.items.find((item) => item.image_url)?.image_url ?? ''" 
@@ -91,16 +91,16 @@ onMounted(() => {
             <p class="text-[10px] text-[var(--accent-industry)] uppercase tracking-widest font-bold mb-2 flex items-center gap-2">
               <Sparkles class="w-3 h-3" /> 智能日报详情
             </p>
-            <h2 class="text-2xl md:text-3xl font-bold text-white leading-tight drop-shadow-md">
+            <h2 class="text-2xl md:text-3xl font-bold text-[var(--text-primary)] leading-tight">
               {{ selected.title }}
             </h2>
             <div class="flex items-center gap-4 mt-4 text-xs font-medium">
-              <span class="text-[var(--text-secondary)] bg-white/5 px-3 py-1 rounded-full border border-white/10">{{ selected.report_date }}</span>
+              <span class="text-[var(--text-secondary)] bg-gray-100 px-3 py-1 rounded-full border border-gray-200">{{ selected.report_date }}</span>
             </div>
           </div>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-6 md:p-8 scroll-smooth z-0 bg-[rgba(0,0,0,0.1)]">
+        <div class="flex-1 overflow-y-auto p-6 md:p-8 scroll-smooth z-0 bg-gray-50">
           <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 pb-8">
             <ReportItemCard v-for="item in selected.items" :key="item.id" :item="item" />
           </div>

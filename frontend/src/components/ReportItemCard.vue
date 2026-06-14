@@ -141,21 +141,21 @@ const publishedLabel = computed(() => {
 
 <template>
   <article class="glass-card report-card flex flex-col overflow-hidden relative group" :style="cardStyle">
-    <div class="absolute top-0 left-0 w-full h-1 bg-[var(--card-accent)] opacity-50 group-hover:opacity-100 transition-opacity"></div>
+    <div class="absolute top-0 left-0 w-full h-1 bg-[var(--card-accent)] opacity-40 group-hover:opacity-80 transition-opacity"></div>
 
-    <div v-if="item.image_url" class="relative max-h-48 overflow-hidden bg-black/40 border-b border-white/5">
+    <div v-if="item.image_url" class="relative max-h-48 overflow-hidden bg-gray-100 border-b border-[var(--line)]">
       <img :src="item.image_url" :alt="item.image_caption || item.title" loading="lazy" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
-      <div v-if="item.has_verified_image" class="absolute top-2 right-2 bg-black/60 backdrop-blur-md rounded-full px-2 py-1 flex items-center gap-1 text-[10px] text-[var(--status-ok)] border border-[var(--status-ok)]/30">
+      <div v-if="item.has_verified_image" class="absolute top-2 right-2 bg-white/80 backdrop-blur-sm rounded-full px-2 py-1 flex items-center gap-1 text-[10px] text-[var(--status-ok)] border border-[var(--status-ok)]/30">
         <CheckCircle2 class="w-3 h-3" />
       </div>
     </div>
-    <div v-else class="relative h-32 overflow-hidden bg-black/20 border-b border-white/5">
+    <div v-else class="relative h-32 overflow-hidden bg-gray-50 border-b border-[var(--line)]">
       <img :src="categoryFallback(item.category)" :alt="item.category || '资讯'" class="w-full h-full object-cover opacity-60" />
     </div>
 
     <div class="p-5 flex-1 flex flex-col gap-3">
       <div class="flex justify-between items-start gap-3">
-        <h3 class="font-bold text-white text-lg leading-snug line-clamp-2 group-hover:text-[var(--card-accent)] transition-colors">
+        <h3 class="font-bold text-[var(--text-primary)] text-lg leading-snug line-clamp-2 group-hover:text-[var(--card-accent)] transition-colors">
           {{ item.title }}
         </h3>
         <span class="w-6 h-6 shrink-0 rounded-full flex items-center justify-center bg-[var(--card-accent)]/10 text-[var(--card-accent)] font-bold text-xs ring-1 ring-[var(--card-accent)]/30">
@@ -164,10 +164,10 @@ const publishedLabel = computed(() => {
       </div>
 
       <div class="flex flex-wrap items-center gap-2 text-[10px]">
-        <span class="px-2 py-1 rounded-full bg-[var(--card-accent)]/10 text-[var(--card-accent)] border border-[var(--card-accent)]/20">{{ sectionLabel }}</span>
-        <span v-if="categoryLabel" class="px-2 py-1 rounded-full bg-white/5 text-white/80 border border-white/10">{{ categoryLabel }}</span>
-        <span class="px-2 py-1 rounded-full bg-white/5 text-[var(--text-muted)] border border-white/10">{{ languageLabel }}</span>
-        <span v-for="kw in keywords" :key="kw" class="px-2 py-1 rounded-full bg-white/[0.03] text-[var(--text-muted)] border border-white/[0.06]">{{ kw }}</span>
+        <span class="px-2 py-1 rounded-full bg-[var(--card-accent)]/8 text-[var(--card-accent)] border border-[var(--card-accent)]/15">{{ sectionLabel }}</span>
+        <span v-if="categoryLabel" class="px-2 py-1 rounded-full bg-gray-100 text-gray-700 border border-gray-200">{{ categoryLabel }}</span>
+        <span class="px-2 py-1 rounded-full bg-gray-100 text-gray-700 border border-gray-200">{{ languageLabel }}</span>
+        <span v-for="kw in keywords" :key="kw" class="px-2 py-1 rounded-full bg-gray-50 text-[var(--text-muted)] border border-gray-100">{{ kw }}</span>
       </div>
 
       <p class="text-[var(--text-secondary)] text-sm line-clamp-3 leading-relaxed">
@@ -183,7 +183,7 @@ const publishedLabel = computed(() => {
 
         <div class="flex items-center justify-between text-xs mt-2">
           <div class="flex items-center gap-2 text-[var(--text-muted)]">
-            <span class="px-2 py-1 rounded bg-white/5">{{ friendlySourceName }}</span>
+            <span class="px-2 py-1 rounded bg-gray-100">{{ friendlySourceName }}</span>
             <span>{{ publishedLabel }}</span>
           </div>
 
@@ -203,7 +203,7 @@ const publishedLabel = computed(() => {
           {{ showBasis ? '收起入选依据' : '查看入选依据' }}
         </button>
 
-        <div v-if="showBasis && hasBasis" class="trace-panel mt-2 p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-xs leading-relaxed">
+        <div v-if="showBasis && hasBasis" class="trace-panel mt-2 p-3 rounded-lg bg-gray-50 border border-gray-100 text-xs leading-relaxed">
           <div class="mb-2">
             <span class="opacity-50">为什么重要：</span>
             <span class="text-[var(--text-secondary)]">{{ basis.why }}</span>
@@ -228,8 +228,8 @@ const publishedLabel = computed(() => {
 }
 
 .report-card:hover {
-  box-shadow: 0 12px 32px rgba(0,0,0,0.5), var(--card-glow);
-  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+  border-color: #cbd5e1;
   transform: translateY(-4px);
 }
 

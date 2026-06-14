@@ -89,15 +89,15 @@ onMounted(() => {
 
 <template>
   <div class="flex h-[calc(100vh-80px)] gap-6 max-w-7xl mx-auto w-full relative">
-    <aside class="w-72 hidden md:flex flex-col gap-4 border-r border-white/5 pr-4 relative z-10">
+    <aside class="w-72 hidden md:flex flex-col gap-4 border-r border-[var(--line)] pr-4 relative z-10">
       <div class="flex items-center justify-between pb-4 border-b border-[var(--line)]">
         <div>
-          <h2 class="text-xl font-bold text-white flex items-center gap-2">
+          <h2 class="text-xl font-bold text-[var(--text-primary)] flex items-center gap-2">
             <Sparkles class="w-5 h-5 text-[var(--accent-policy)]" />
             研究助手
           </h2>
         </div>
-        <button @click="newConversation" class="p-2 rounded-lg bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20 transition-colors border border-[var(--accent-primary)]/20 shadow-[0_0_10px_rgba(100,180,255,0.1)]">
+        <button @click="newConversation" class="p-2 rounded-lg bg-blue-50 text-[var(--accent-primary)] hover:bg-blue-100 transition-colors border border-blue-100">
           <Plus class="w-5 h-5" />
         </button>
       </div>
@@ -108,13 +108,13 @@ onMounted(() => {
           :key="conversation.id"
           class="w-full text-left p-3 rounded-xl border transition-all duration-300 group flex items-start gap-3"
           :class="activeConversation?.id === conversation.id 
-            ? 'bg-[var(--accent-policy)]/10 border-[var(--accent-policy)]/30 shadow-[inset_0_0_15px_rgba(167,139,250,0.1)]' 
-            : 'bg-black/20 border-white/5 hover:border-white/10 hover:bg-black/40'"
+            ? 'bg-blue-50 border-blue-200' 
+            : 'bg-gray-50 border-gray-100 hover:border-gray-200 hover:bg-gray-100'"
           @click="openConversation(conversation.id)"
         >
           <MessageSquare class="w-4 h-4 mt-1 flex-shrink-0" :class="activeConversation?.id === conversation.id ? 'text-[var(--accent-policy)]' : 'text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]'" />
           <div class="flex-1 overflow-hidden">
-            <p class="text-sm font-medium text-white truncate">{{ conversation.title }}</p>
+            <p class="text-sm font-medium text-[var(--text-primary)] truncate">{{ conversation.title }}</p>
             <p class="text-[10px] text-[var(--text-muted)] mt-1">{{ new Date(conversation.last_message_at).toLocaleDateString() }}</p>
           </div>
         </button>
@@ -122,9 +122,9 @@ onMounted(() => {
     </aside>
 
     <main class="flex-1 flex flex-col min-w-0 glass-panel border border-[var(--line)] rounded-2xl overflow-hidden shadow-2xl relative z-10">
-      <div class="px-6 py-4 border-b border-[var(--line)] bg-black/40 backdrop-blur-md flex items-center justify-between z-10 shrink-0">
+      <div class="px-6 py-4 border-b border-[var(--line)] bg-white flex items-center justify-between z-10 shrink-0">
         <div>
-          <h3 class="text-lg font-bold text-white tracking-tight">{{ activeConversation?.title || '新对话' }}</h3>
+          <h3 class="text-lg font-bold text-[var(--text-primary)] tracking-tight">{{ activeConversation?.title || '新对话' }}</h3>
           <p class="text-xs text-[var(--status-ok)] flex items-center gap-1.5 mt-0.5">
             <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse"></span>
             助手已就绪
@@ -146,35 +146,35 @@ onMounted(() => {
         </template>
         <template v-else>
           <div class="h-full flex flex-col items-center justify-center text-center opacity-70">
-            <div class="w-16 h-16 rounded-2xl bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 flex items-center justify-center mb-4 shadow-[0_0_20px_rgba(100,180,255,0.15)]">
+            <div class="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center mb-4">
               <Bot class="w-8 h-8 text-[var(--accent-primary)]" />
             </div>
-            <h4 class="text-xl font-bold text-white mb-2">研究助手在等待指示</h4>
+            <h4 class="text-xl font-bold text-[var(--text-primary)] mb-2">研究助手在等待指示</h4>
             <p class="text-[var(--text-secondary)] text-sm max-w-sm">可基于日报、来源和公开资料回答高分子材料加工相关问题。</p>
           </div>
         </template>
         
         <div v-if="loading" class="flex justify-center py-4">
-          <div class="flex items-center gap-2 text-[var(--accent-policy)] bg-black/40 px-4 py-2 rounded-full border border-[var(--accent-policy)]/20">
+          <div class="flex items-center gap-2 text-[var(--accent-policy)] bg-white px-4 py-2 rounded-full border border-gray-200 shadow-sm">
             <Loader2 class="w-4 h-4 animate-spin" />
             <span class="text-xs font-medium">正在整理回答...</span>
           </div>
         </div>
       </div>
 
-      <div class="p-4 bg-black/40 border-t border-[var(--line)] backdrop-blur-md z-10 shrink-0">
+      <div class="p-4 bg-white border-t border-[var(--line)] z-10 shrink-0">
         <div class="relative max-w-4xl mx-auto flex items-end gap-3">
           <textarea 
             v-model="draft" 
             placeholder="问日报、问来源、问某项设备或政策的影响..." 
-            class="flex-1 min-h-[56px] max-h-40 bg-[rgba(255,255,255,0.03)] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)] focus:bg-[rgba(255,255,255,0.06)] transition-all resize-y shadow-inner"
+            class="flex-1 min-h-[56px] max-h-40 bg-white border border-gray-200 rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)] focus:bg-white transition-all resize-y"
             @keydown.ctrl.enter="sendMessage"
             @keydown.meta.enter="sendMessage"
           />
           <button 
             @click="sendMessage"
             :disabled="loading || !draft.trim()"
-            class="h-14 px-6 rounded-xl bg-[var(--accent-primary)] text-black font-bold flex items-center gap-2 transition-all hover:bg-[var(--accent-primary)]/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 shadow-[0_0_15px_rgba(100,180,255,0.2)] hover:shadow-[0_0_20px_rgba(100,180,255,0.4)] hover:-translate-y-0.5"
+            class="h-14 px-6 rounded-xl bg-[var(--accent-primary)] text-white font-bold flex items-center gap-2 transition-all hover:bg-[#1e3f73] disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
           >
             <Send class="w-5 h-5" /> 
             <span class="hidden sm:inline">发送</span>

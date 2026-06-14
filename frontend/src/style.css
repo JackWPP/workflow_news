@@ -6,39 +6,28 @@
 }
 
 :root {
-  /* Foundations */
-  --bg-primary: #0a0e1a;
-  --bg-surface: rgba(15, 20, 40, 0.85);
-  --bg-card: rgba(20, 28, 55, 0.7);
-  --bg-hover: rgba(30, 40, 70, 0.9);
-  --border-glow: rgba(100, 180, 255, 0.15);
-  --line: rgba(255, 255, 255, 0.1);
-  --shadow: 0 12px 34px rgba(0, 0, 0, 0.3);
-  
-  /* Text */
-  --text-primary: #e8ecf4;
-  --text-secondary: #8892a8;
-  --text-muted: #5c647a;
+  --bg-primary: #f5f7fa;
+  --bg-surface: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #f1f5f9;
+  --border-glow: #e2e8f0;
+  --line: #e2e8f0;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
 
-  /* Accents */
-  --accent-academic: #6cb4ff;
-  --accent-industry: #4ade80;
-  --accent-policy: #a78bfa;
+  --text-primary: #1a1a2e;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+
+  --accent-academic: #2b5797;
+  --accent-industry: #16a34a;
+  --accent-policy: #7c3aed;
   --accent-primary: var(--accent-academic);
 
-  /* Status */
-  --status-ok: #34d399;
-  --status-warn: #fbbf24;
-  --status-error: #f87171;
-  --status-info: #60a5fa;
+  --status-ok: #16a34a;
+  --status-warn: #d97706;
+  --status-error: #dc2626;
+  --status-info: #2563eb;
 
-  /* Glows */
-  --glow-blue: 0 0 20px rgba(100, 180, 255, 0.3);
-  --glow-green: 0 0 20px rgba(74, 222, 128, 0.3);
-  --glow-purple: 0 0 20px rgba(167, 139, 250, 0.3);
-  --glow-primary: var(--glow-blue);
-
-  /* Typography */
   --font-sans: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
@@ -69,12 +58,11 @@ body {
 a {
   color: inherit;
   text-decoration: none;
-  transition: color 0.2s ease, text-shadow 0.2s ease;
+  transition: color 0.2s ease;
 }
 
 a:hover {
   color: var(--accent-primary);
-  text-shadow: var(--glow-primary);
 }
 
 button, input, textarea {
@@ -91,7 +79,7 @@ button {
 h1, h2, h3, h4, h5, h6 {
   margin: 0;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--text-primary);
   letter-spacing: -0.02em;
 }
 
@@ -105,35 +93,29 @@ h1, h2, h3, h4, h5, h6 {
 /* Utility Classes */
 .glass-panel {
   background: var(--bg-surface);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-glow);
   border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow);
 }
 
 .glass-card {
   background: var(--bg-card);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-glow);
   border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow);
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 .glass-card:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-glow);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), var(--glow-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
   transform: translateY(-2px);
 }
 
 /* Button variants */
 .btn-primary {
-  background: rgba(100, 180, 255, 0.15);
-  color: var(--accent-academic);
-  border: 1px solid rgba(100, 180, 255, 0.3);
+  background: var(--accent-academic);
+  color: #ffffff;
+  border: 1px solid transparent;
   padding: 8px 16px;
   border-radius: 8px;
   font-weight: 500;
@@ -141,8 +123,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-primary:hover {
-  background: rgba(100, 180, 255, 0.25);
-  box-shadow: var(--glow-blue);
+  opacity: 0.9;
+  box-shadow: 0 2px 8px rgba(43, 87, 151, 0.25);
   transform: translateY(-1px);
 }
 
@@ -155,14 +137,14 @@ h1, h2, h3, h4, h5, h6 {
 
 .btn-ghost:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 /* Form inputs */
 input, textarea {
   width: 100%;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #ffffff;
+  border: 1px solid var(--border-glow);
   color: var(--text-primary);
   padding: 12px 16px;
   border-radius: 8px;
@@ -172,7 +154,7 @@ input, textarea {
 input:focus, textarea:focus {
   outline: none;
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(100, 180, 255, 0.1);
+  box-shadow: 0 0 0 2px rgba(43, 87, 151, 0.1);
 }
 
 /* Scrollbar */
@@ -184,11 +166,11 @@ input:focus, textarea:focus {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.15);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.25);
 }
 
 /* Status Pills */
@@ -203,20 +185,12 @@ input:focus, textarea:focus {
   letter-spacing: 0.05em;
 }
 
-.status-ok { background: rgba(52, 211, 153, 0.1); color: var(--status-ok); border: 1px solid rgba(52, 211, 153, 0.2); }
-.status-warn { background: rgba(251, 191, 36, 0.1); color: var(--status-warn); border: 1px solid rgba(251, 191, 36, 0.2); }
-.status-error { background: rgba(248, 113, 113, 0.1); color: var(--status-error); border: 1px solid rgba(248, 113, 113, 0.2); }
-.status-info { background: rgba(96, 165, 250, 0.1); color: var(--status-info); border: 1px solid rgba(96, 165, 250, 0.2); }
+.status-ok { background: rgba(22, 163, 74, 0.1); color: var(--status-ok); border: 1px solid rgba(22, 163, 74, 0.2); }
+.status-warn { background: rgba(217, 119, 6, 0.1); color: var(--status-warn); border: 1px solid rgba(217, 119, 6, 0.2); }
+.status-error { background: rgba(220, 38, 38, 0.1); color: var(--status-error); border: 1px solid rgba(220, 38, 38, 0.2); }
+.status-info { background: rgba(37, 99, 235, 0.1); color: var(--status-info); border: 1px solid rgba(37, 99, 235, 0.2); }
 
 /* Animation Utils */
-@keyframes pulseGlow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-.animate-pulse-glow {
-  animation: pulseGlow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
 @keyframes float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-4px); }
@@ -236,7 +210,7 @@ input:focus, textarea:focus {
   line-height: 1.7;
 }
 .prose h1, .prose h2, .prose h3 {
-  color: #fff;
+  color: var(--text-primary);
   margin-top: 1.5em;
   margin-bottom: 0.5em;
 }
@@ -244,7 +218,7 @@ input:focus, textarea:focus {
   color: var(--accent-primary);
 }
 .prose code {
-  background: rgba(0, 0, 0, 0.3);
+  background: #f1f5f9;
   padding: 0.2em 0.4em;
   border-radius: 4px;
   font-family: var(--font-mono);
@@ -252,10 +226,10 @@ input:focus, textarea:focus {
   color: var(--accent-policy);
 }
 .prose pre {
-  background: rgba(0, 0, 0, 0.4);
+  background: #f8fafc;
   padding: 1em;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-glow);
   overflow-x: auto;
 }
 .prose pre code {

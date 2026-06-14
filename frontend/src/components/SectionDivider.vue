@@ -38,21 +38,21 @@ const colorClass = computed(() => {
 
 <template>
   <div class="flex items-center gap-4 my-8 relative w-full group">
-    <div class="flex-1 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent flex items-center justify-center"></div>
-    <div :class="['flex items-center gap-3 px-4 py-2 rounded-full border border-white/5 bg-black/40 backdrop-blur-sm transition-all duration-300 group-hover:bg-white/5', colorClass]">
+    <div class="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent flex items-center justify-center"></div>
+    <div :class="['flex items-center gap-3 px-4 py-2 rounded-full border border-gray-200 bg-white transition-all duration-300 group-hover:bg-gray-50', colorClass]">
       <component :is="icon" class="w-5 h-5 flex-shrink-0" />
       <h2 class="font-bold tracking-widest text-lg">{{ sectionLabel }}</h2>
       <span class="ml-2 text-xs font-mono opacity-60 tabular-nums">[{{ count }} 条]</span>
     </div>
-    <div class="flex-1 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+    <div class="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent"></div>
   </div>
 </template>
 
 <style scoped>
-.glow-academic { box-shadow: 0 0 15px rgba(108, 180, 255, 0.2); border-color: rgba(108, 180, 255, 0.4); }
-.glow-industry { box-shadow: 0 0 15px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.4); }
-.glow-policy { box-shadow: 0 0 15px rgba(167, 139, 250, 0.2); border-color: rgba(167, 139, 250, 0.4); }
-.glow-patent { box-shadow: 0 0 15px rgba(245, 158, 11, 0.2); border-color: rgba(245, 158, 11, 0.4); }
-.glow-wechat { box-shadow: 0 0 15px rgba(34, 197, 94, 0.2); border-color: rgba(34, 197, 94, 0.4); }
-.glow-lab { box-shadow: 0 0 15px rgba(139, 92, 246, 0.2); border-color: rgba(139, 92, 246, 0.4); }
+.glow-academic { color: var(--accent-academic); border-color: rgba(43, 87, 151, 0.2); }
+.glow-industry { color: var(--accent-industry); border-color: rgba(22, 163, 74, 0.2); }
+.glow-policy { color: var(--accent-policy); border-color: rgba(124, 58, 237, 0.2); }
+.glow-patent { color: #d97706; border-color: rgba(217, 119, 6, 0.2); }
+.glow-wechat { color: #16a34a; border-color: rgba(22, 163, 74, 0.2); }
+.glow-lab { color: #7c3aed; border-color: rgba(124, 58, 237, 0.2); }
 </style>

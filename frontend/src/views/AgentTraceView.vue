@@ -49,7 +49,7 @@ onMounted(() => {
     <aside class="w-80 flex-shrink-0 flex flex-col gap-4 border-r border-white/5 pr-4 relative z-10">
       <div class="flex items-center justify-between pb-4 border-b border-[var(--line)] shrink-0">
         <div>
-          <h2 class="text-xl font-bold text-white flex items-center gap-2">
+          <h2 class="text-xl font-bold text-[var(--text-primary)] flex items-center gap-2">
             <Activity class="w-5 h-5 text-[var(--accent-academic)]" />
             系统执行轨迹
           </h2>
@@ -70,14 +70,14 @@ onMounted(() => {
           :key="run.id"
           class="w-full text-left p-4 rounded-xl border transition-all duration-300 group flex flex-col gap-2 relative overflow-hidden"
           :class="selectedRunId === run.id 
-            ? 'bg-[var(--bg-surface)] border-[var(--accent-academic)]/40 shadow-[inset_0_0_20px_rgba(100,180,255,0.1)]' 
-            : 'bg-black/20 border-white/5 hover:border-white/10 hover:bg-black/40'"
+            ? 'bg-white border-[var(--accent-academic)]/40' 
+            : 'bg-gray-50 border-gray-100 hover:border-gray-200 hover:bg-white'"
           @click="inspectRun(run.id)"
         >
-          <div v-if="selectedRunId === run.id" class="absolute left-0 top-0 bottom-0 w-1 bg-[var(--accent-academic)] shadow-[0_0_10px_var(--accent-academic)]"></div>
+          <div v-if="selectedRunId === run.id" class="absolute left-0 top-0 bottom-0 w-1 bg-[var(--accent-academic)]"></div>
           
           <div class="flex justify-between items-start gap-2">
-            <strong class="text-white font-bold tracking-tight text-sm flex items-center gap-1">
+            <strong class="text-[var(--text-primary)] font-bold tracking-tight text-sm flex items-center gap-1">
               <TerminalSquare class="w-3.5 h-3.5 text-[var(--text-muted)]" />
               #{{ run.id }}
             </strong>
@@ -96,13 +96,13 @@ onMounted(() => {
       </div>
     </aside>
 
-    <main class="flex-1 flex flex-col min-w-0 glass-panel border border-[var(--line)] rounded-2xl overflow-hidden relative z-10 shadow-2xl">
+    <main class="flex-1 flex flex-col min-w-0 bg-white border border-[var(--line)] rounded-2xl overflow-hidden relative z-10 shadow-sm">
       <template v-if="traceData">
-        <div class="shrink-0 border-b border-[var(--line)] bg-black/40 backdrop-blur-md px-6 py-4 flex items-center justify-between z-10">
+        <div class="shrink-0 border-b border-[var(--line)] bg-white px-6 py-4 flex items-center justify-between z-10">
           <div class="flex items-center gap-3">
             <Server class="w-5 h-5 text-[var(--accent-academic)]" />
             <div>
-              <h2 class="text-lg font-bold text-white tracking-tight">Run #{{ selectedRunId }} Trace</h2>
+              <h2 class="text-lg font-bold text-[var(--text-primary)] tracking-tight">Run #{{ selectedRunId }} Trace</h2>
               <p class="text-xs text-[var(--text-muted)] uppercase tracking-widest mt-0.5">{{ traceData.agent_name }} Mode</p>
             </div>
           </div>
@@ -113,7 +113,7 @@ onMounted(() => {
             </div>
             <div class="flex flex-col text-right">
               <span class="text-[10px] text-[var(--text-muted)] uppercase">Cost</span>
-              <span class="text-xs text-white font-mono">${{ traceData.total_cost?.toFixed(4) || '0.00' }}</span>
+              <span class="text-xs text-[var(--text-primary)] font-mono">${{ traceData.total_cost?.toFixed(4) || '0.00' }}</span>
             </div>
           </div>
         </div>
@@ -129,11 +129,11 @@ onMounted(() => {
 
           <div class="relative pl-6 border-l border-[var(--line)] space-y-8">
             <div v-for="step in traceData.steps" :key="step.id" class="relative group">
-              <div class="absolute -left-[31px] top-6 w-4 h-4 rounded-full border-4 border-[#0a0e1a] bg-black ring-1 transition-colors"
+              <div class="absolute -left-[31px] top-6 w-4 h-4 rounded-full border-4 border-white bg-white ring-1 transition-colors"
                    :class="step.is_error ? 'ring-[var(--status-error)] bg-[var(--status-error)]/20' : step.harness_blocked ? 'ring-[var(--status-warn)] bg-[var(--status-warn)]/20' : 'ring-[var(--accent-academic)] group-hover:bg-[var(--accent-academic)]/20'">
               </div>
               
-              <div class="glass-card p-5 transition-colors" :class="step.is_error ? 'border-[var(--status-error)]/50 shadow-[0_0_15px_rgba(248,113,113,0.1)]!' : ''">
+              <div class="glass-card p-5 transition-colors" :class="step.is_error ? 'border-[var(--status-error)]/50!' : ''">
                 <div class="flex justify-between items-center mb-4 pb-3 border-b border-white/5">
                   <div class="flex items-center gap-3">
                     <span class="text-xs font-bold font-mono text-[var(--accent-academic)] bg-[var(--accent-academic)]/10 px-2 py-1 rounded">Step {{ step.step_number }}</span>
@@ -149,7 +149,7 @@ onMounted(() => {
                 <div class="space-y-4">
                   <div v-if="step.thought" class="flex flex-col gap-1.5">
                     <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-widest font-bold">LLM Thought</span>
-                    <p class="text-sm text-[var(--text-primary)] leading-relaxed italic bg-black/20 p-3 rounded-lg border border-white/5 border-l-[3px] border-l-[var(--accent-academic)]">
+                    <p class="text-sm text-[var(--text-primary)] leading-relaxed italic bg-gray-50 p-3 rounded-lg border border-gray-100 border-l-[3px] border-l-[var(--accent-academic)]">
                       {{ step.thought }}
                     </p>
                   </div>
@@ -159,8 +159,8 @@ onMounted(() => {
                       <span class="text-[10px] text-[var(--accent-industry)] uppercase tracking-widest font-bold flex items-center gap-1">
                         <TerminalSquare class="w-3 h-3" /> Tool Call
                       </span>
-                      <div class="bg-black/40 p-3 rounded-lg border border-white/5 h-full overflow-hidden">
-                        <strong class="text-xs text-white font-mono block mb-2">{{ step.tool_name }}()</strong>
+                      <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 h-full overflow-hidden">
+                        <strong class="text-xs text-[var(--text-primary)] font-mono block mb-2">{{ step.tool_name }}()</strong>
                         <pre class="text-[11px] text-[var(--text-secondary)] font-mono overflow-auto whitespace-pre-wrap max-h-40 scrollbar-hide">{{ JSON.stringify(step.tool_args, null, 2) }}</pre>
                       </div>
                     </div>
@@ -169,7 +169,7 @@ onMounted(() => {
                       <span class="text-[10px] text-[var(--status-ok)] uppercase tracking-widest font-bold flex items-center gap-1">
                         <Database class="w-3 h-3" /> Tool Output
                       </span>
-                      <div class="bg-black/40 p-3 rounded-lg border border-white/5 h-full overflow-hidden">
+                      <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 h-full overflow-hidden">
                         <pre class="text-[11px] text-[var(--text-secondary)] font-mono overflow-auto whitespace-pre-wrap max-h-48 scrollbar-hide" :class="{ 'text-[var(--status-error)]': step.is_error }">{{ step.tool_result }}</pre>
                       </div>
                     </div>
@@ -196,6 +196,5 @@ onMounted(() => {
 .border-l-\[3px\] { border-left-width: 3px; }
 .border-l-\[var\(--accent-academic\)\] { border-left-color: var(--accent-academic); }
 
-.shadow-\[0_0_15px_rgba\(248\,113\,113\,0\.1\)\]\! { box-shadow: 0 0 15px rgba(248, 113, 113, 0.1) !important; }
 .border-\[var\(--status-error\)\]\/50\! { border-color: rgba(248, 113, 113, 0.5) !important; }
 </style>

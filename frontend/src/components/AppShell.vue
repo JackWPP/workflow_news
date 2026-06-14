@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { 
   LayoutDashboard, 
@@ -11,13 +11,10 @@ import {
 } from 'lucide-vue-next'
 
 import { useSessionStore } from '../stores/session'
-import { ParticleSystem } from '../lib/particles'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
-const bgCanvas = ref<HTMLCanvasElement | null>(null)
-let particles: ParticleSystem | null = null
 
 const navItems = computed(() => [
   { to: '/', label: '今日日报', icon: LayoutDashboard },
@@ -25,18 +22,6 @@ const navItems = computed(() => [
   { to: '/chat', label: '研究助手', icon: MessageSquare },
   ...(session.isAdmin ? [{ to: '/admin', label: '管理后台', icon: Settings }] : []),
 ])
-
-onMounted(() => {
-  if (bgCanvas.value) {
-    particles = new ParticleSystem(bgCanvas.value)
-  }
-})
-
-onUnmounted(() => {
-  if (particles) {
-    particles.destroy()
-  }
-})
 
 async function handleLogout() {
   await session.logout()
@@ -46,13 +31,11 @@ async function handleLogout() {
 
 <template>
   <div class="h-screen w-full flex overflow-hidden bg-[var(--bg-primary)]">
-    <canvas ref="bgCanvas" class="fixed inset-0 pointer-events-none z-0 mix-blend-screen opacity-40"></canvas>
-    
-    <aside class="sidebar w-64 flex-shrink-0 flex flex-col z-10 glass-panel border-y-0 border-l-0 rounded-none h-full relative">
+    <aside class="sidebar w-64 flex-shrink-0 flex flex-col z-10 bg-[var(--bg-surface)] border-r border-[var(--line)] border-y-0 border-l-0 rounded-none h-full relative">
       <div class="p-6 flex flex-col items-center gap-2 text-center">
         <img src="/logo.png" alt="logo" class="logo-img" />
         <div>
-          <h1 class="text-lg font-bold tracking-tight text-white leading-tight">高分子视野</h1>
+          <h1 class="text-lg font-bold tracking-tight text-[var(--text-primary)] leading-tight">高分子视野</h1>
           <p class="text-[10px] text-[var(--accent-academic)] tracking-widest">智能情报平台</p>
         </div>
       </div>
@@ -63,7 +46,7 @@ async function handleLogout() {
           :key="item.to"
           :to="item.to"
           class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300"
-          :class="[route.path === item.to ? 'active-link' : 'text-[var(--text-secondary)] hover:text-white hover:bg-[rgba(255,255,255,0.05)]']"
+          :class="[route.path === item.to ? 'active-link' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[rgba(0,0,0,0.03)]']"
         >
           <component :is="item.icon" class="w-5 h-5" />
           <span class="font-medium">{{ item.label }}</span>
@@ -73,17 +56,17 @@ async function handleLogout() {
       <div class="p-4 border-t border-[var(--line)]">
         <div v-if="session.user" class="flex flex-col gap-3">
           <div class="flex items-center gap-3 px-2">
-            <div class="w-8 h-8 rounded-full bg-[rgba(255,255,255,0.1)] flex items-center justify-center">
+            <div class="w-8 h-8 rounded-full bg-[rgba(0,0,0,0.05)] flex items-center justify-center">
               <User class="w-4 h-4 text-[var(--text-secondary)]" />
             </div>
             <div class="flex-1 overflow-hidden">
-              <p class="text-sm text-white truncate">{{ session.user.email }}</p>
+              <p class="text-sm text-[var(--text-primary)] truncate">{{ session.user.email }}</p>
               <p class="text-xs text-[var(--status-ok)] flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse-glow"></span> 在线
+                <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse"></span> 在线
               </p>
             </div>
           </div>
-          <button @click="handleLogout" class="flex items-center justify-center gap-2 w-full py-2.5 text-sm text-[var(--text-muted)] hover:text-white bg-[rgba(255,255,255,0.03)] hover:bg-[rgba(255,255,255,0.08)] rounded-lg transition-colors">
+          <button @click="handleLogout" class="flex items-center justify-center gap-2 w-full py-2.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[rgba(0,0,0,0.02)] hover:bg-[rgba(0,0,0,0.05)] rounded-lg transition-colors">
             <LogOut class="w-4 h-4" /> 退出系统
           </button>
         </div>
@@ -105,14 +88,15 @@ async function handleLogout() {
 
 <style scoped>
 .sidebar {
-  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
+  box-shadow: none;
+  background: var(--bg-surface);
 }
 
 .active-link {
-  color: white;
-  background: rgba(100, 180, 255, 0.1) !important;
-  border-left: 3px solid var(--accent-primary);
-  box-shadow: inset 0 0 20px rgba(100, 180, 255, 0.05);
+  color: var(--accent-academic) !important;
+  background: rgba(43, 87, 151, 0.08) !important;
+  font-weight: 600;
+  border-left: 3px solid var(--accent-academic);
 }
 
 .logo-img {

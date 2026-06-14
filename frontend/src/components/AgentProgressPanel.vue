@@ -224,9 +224,9 @@ defineExpose({
 
 <style scoped>
 .agent-progress-panel {
-  background: rgba(15, 20, 35, 0.9);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glow);
+  box-shadow: var(--shadow);
   border-radius: 16px;
   padding: 20px;
   display: flex;
@@ -288,8 +288,8 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #60a5fa;
-  background: rgba(96, 165, 250, 0.1);
+  color: var(--status-info);
+  background: rgba(37,99,235,0.06);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 12px;
@@ -299,8 +299,8 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.08);
+  color: var(--status-warn);
+  background: rgba(217,119,6,0.06);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 12px;
@@ -310,8 +310,8 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--status-error);
+  background: rgba(220,38,38,0.06);
   border-radius: 8px;
   padding: 10px 14px;
   font-size: 13px;
@@ -323,7 +323,7 @@ defineExpose({
   gap: 4px;
   font-size: 12px;
   color: var(--text-secondary);
-  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  border-top: 1px dashed var(--border-glow);
   padding-top: 8px;
 }
 
@@ -341,8 +341,8 @@ defineExpose({
   gap: 4px;
   font-size: 12px;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: #f8fafc;
+  border: 1px solid var(--border-glow);
   border-radius: 8px;
   padding: 10px 12px;
 }
@@ -352,7 +352,7 @@ defineExpose({
 }
 
 .step-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(0,0,0,0.15);
   border-radius: 3px;
 }
 
@@ -366,8 +366,8 @@ defineExpose({
 }
 
 .step-row.step-current {
-  background: rgba(100, 180, 255, 0.08);
-  color: #fff;
+  background: rgba(43,87,151,0.06);
+  color: var(--text-primary);
 }
 
 .step-row.step-blocked {

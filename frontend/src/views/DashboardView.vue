@@ -165,34 +165,34 @@ onUnmounted(() => {
     <AgentProgressPanel ref="progressPanel" :active="generating" />
 
     <template v-if="report && !generating">
-      <div class="flex items-center gap-2 bg-black/40 p-1 rounded-xl border border-white/10 w-max">
+      <div class="flex items-center gap-2 bg-gray-100 p-1 rounded-xl border border-gray-200 w-max">
         <button
           @click="reportType = 'global'"
           :disabled="generating"
           class="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          :class="reportType === 'global' ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
+          :class="reportType === 'global' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
         >全球日报</button>
         <button
           @click="reportType = 'ai'"
           :disabled="generating"
           class="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          :class="reportType === 'ai' ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
+          :class="reportType === 'ai' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
         >AI 日报</button>
         <button
           @click="reportType = 'lab'"
           :disabled="generating"
           class="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          :class="reportType === 'lab' ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
+          :class="reportType === 'lab' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
         >实验室日报</button>
       </div>
 
-      <div v-if="!isLabReport && !isAiReport" class="flex items-center gap-2 bg-black/40 p-1 rounded-xl border border-white/10 w-max mt-4">
+      <div v-if="!isLabReport && !isAiReport" class="flex items-center gap-2 bg-gray-100 p-1 rounded-xl border border-gray-200 w-max mt-4">
         <button
           v-for="cat in (['all', '高材制造', '清洁能源'] as const)"
           :key="cat"
           @click="activeCategory = cat"
           class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-          :class="activeCategory === cat ? 'bg-[var(--accent-primary)] text-black' : 'text-[var(--text-secondary)] hover:text-white'"
+          :class="activeCategory === cat ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
         >{{ cat === 'all' ? '全部' : cat }}</button>
       </div>
 
@@ -225,25 +225,25 @@ onUnmounted(() => {
           />
         </div>
 
-        <div class="flex items-center gap-2 bg-black/40 p-1 rounded-xl border border-white/10 shrink-0">
+        <div class="flex items-center gap-2 bg-gray-100 p-1 rounded-xl border border-gray-200 shrink-0">
           <button 
             @click="viewMode = 'cards'" 
             class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            :class="viewMode === 'cards' ? 'bg-[var(--accent-primary)] text-black shadow-[0_0_15px_rgba(100,180,255,0.3)]' : 'text-[var(--text-secondary)] hover:text-white'"
+            :class="viewMode === 'cards' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
           >
             <LayoutGrid class="w-4 h-4" /> 聚合卡片
           </button>
           <button 
             @click="viewMode = 'markdown'" 
             class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            :class="viewMode === 'markdown' ? 'bg-[var(--accent-primary)] text-black shadow-[0_0_15px_rgba(100,180,255,0.3)]' : 'text-[var(--text-secondary)] hover:text-white'"
+            :class="viewMode === 'markdown' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
           >
             <FileText class="w-4 h-4" /> 全景速览报告
           </button>
         </div>
       </div>
 
-      <div v-if="qualityNote" class="text-sm text-[var(--text-secondary)] bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+      <div v-if="qualityNote" class="text-sm text-[var(--text-secondary)] bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
         {{ qualityNote }}
       </div>
 
@@ -271,12 +271,12 @@ onUnmounted(() => {
     </template>
     
     <div v-else-if="loading && !generating" class="flex flex-col items-center justify-center p-20 gap-4">
-      <div class="w-12 h-12 border-4 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin shadow-[0_0_15px_rgba(100,180,255,0.4)]"></div>
+      <div class="w-12 h-12 border-4 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin"></div>
       <p class="text-[var(--text-secondary)] animate-pulse">正在读取今日简报...</p>
     </div>
 
-    <div v-else class="flex flex-col items-center justify-center p-20 gap-4 glass-panel border border-white/10 rounded-2xl text-center">
-      <p class="text-white text-xl font-semibold">今日日报尚未生成</p>
+    <div v-else class="flex flex-col items-center justify-center p-20 gap-4 bg-white border border-gray-200 rounded-2xl text-center">
+      <p class="text-[var(--text-primary)] text-xl font-semibold">今日日报尚未生成</p>
       <p class="text-[var(--text-secondary)] max-w-xl">可以先更新今日简报。系统会优先整理高质量行业动态、政策信号和研究进展，再输出可阅读的日报版本。</p>
     </div>
   </div>
