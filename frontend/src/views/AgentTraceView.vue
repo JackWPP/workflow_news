@@ -44,12 +44,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex h-[calc(100vh-80px)] gap-6 max-w-7xl mx-auto w-full relative">
+  <div class="flex flex-col md:flex-row h-[calc(var(--app-vh)-var(--app-bar-h)-2rem)] md:h-[calc(var(--app-vh)-4rem)] gap-4 md:gap-6 max-w-7xl mx-auto w-full relative">
     
-    <aside class="w-80 flex-shrink-0 flex flex-col gap-4 border-r border-white/5 pr-4 relative z-10">
+    <aside class="w-full md:w-80 flex-shrink-0 flex flex-col gap-4 border-b md:border-b-0 md:border-r border-white/5 pr-0 md:pr-4 pb-4 md:pb-0 relative z-10 max-h-60 md:max-h-none overflow-hidden">
       <div class="flex items-center justify-between pb-4 border-b border-[var(--line)] shrink-0">
         <div>
-          <h2 class="text-xl font-bold text-[var(--text-primary)] flex items-center gap-2">
+          <h2 class="text-lg md:text-xl font-bold text-[var(--text-primary)] flex items-center gap-2">
             <Activity class="w-5 h-5 text-[var(--accent-academic)]" />
             系统执行轨迹
           </h2>
@@ -98,7 +98,7 @@ onMounted(() => {
 
     <main class="flex-1 flex flex-col min-w-0 bg-white border border-[var(--line)] rounded-2xl overflow-hidden relative z-10 shadow-sm">
       <template v-if="traceData">
-        <div class="shrink-0 border-b border-[var(--line)] bg-white px-6 py-4 flex items-center justify-between z-10">
+        <div class="shrink-0 border-b border-[var(--line)] bg-white px-4 md:px-6 py-3 md:py-4 flex flex-col md:flex-row md:items-center justify-between gap-3 z-10">
           <div class="flex items-center gap-3">
             <Server class="w-5 h-5 text-[var(--accent-academic)]" />
             <div>
@@ -118,7 +118,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-6 scroll-smooth z-0 bg-transparent flex flex-col gap-6">
+        <div class="flex-1 overflow-y-auto p-4 md:p-6 scroll-smooth z-0 bg-transparent flex flex-col gap-4 md:gap-6">
           <div v-if="traceData.error_message" class="bg-[var(--status-error)]/10 border border-[var(--status-error)]/20 p-4 rounded-xl flex items-start gap-3">
             <AlertCircle class="w-5 h-5 text-[var(--status-error)] shrink-0 mt-0.5" />
             <div>
@@ -127,14 +127,14 @@ onMounted(() => {
             </div>
           </div>
 
-          <div class="relative pl-6 border-l border-[var(--line)] space-y-8">
+          <div class="relative pl-4 md:pl-6 border-l border-[var(--line)] space-y-4 md:space-y-8">
             <div v-for="step in traceData.steps" :key="step.id" class="relative group">
-              <div class="absolute -left-[31px] top-6 w-4 h-4 rounded-full border-4 border-white bg-white ring-1 transition-colors"
+              <div class="absolute -left-6 md:-left-8 top-6 w-4 h-4 rounded-full border-4 border-white bg-white ring-1 transition-colors"
                    :class="step.is_error ? 'ring-[var(--status-error)] bg-[var(--status-error)]/20' : step.harness_blocked ? 'ring-[var(--status-warn)] bg-[var(--status-warn)]/20' : 'ring-[var(--accent-academic)] group-hover:bg-[var(--accent-academic)]/20'">
               </div>
               
-              <div class="glass-card p-5 transition-colors" :class="step.is_error ? 'border-[var(--status-error)]/50!' : ''">
-                <div class="flex justify-between items-center mb-4 pb-3 border-b border-white/5">
+              <div class="glass-card p-3 md:p-5 transition-colors" :class="step.is_error ? 'border-[var(--status-error)]/50!' : ''">
+                <div class="flex flex-wrap gap-2 justify-between items-center mb-3 md:mb-4 pb-3 border-b border-white/5">
                   <div class="flex items-center gap-3">
                     <span class="text-xs font-bold font-mono text-[var(--accent-academic)] bg-[var(--accent-academic)]/10 px-2 py-1 rounded">Step {{ step.step_number }}</span>
                     <span class="text-xs font-mono text-[var(--text-secondary)] flex items-center gap-1">
@@ -154,7 +154,7 @@ onMounted(() => {
                     </p>
                   </div>
 
-                  <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div v-if="step.tool_name" class="flex flex-col gap-1.5">
                       <span class="text-[10px] text-[var(--accent-industry)] uppercase tracking-widest font-bold flex items-center gap-1">
                         <TerminalSquare class="w-3 h-3" /> Tool Call

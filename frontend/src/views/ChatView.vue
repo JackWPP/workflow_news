@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
-import { Bot, Plus, MessageSquare, Send, Sparkles, Loader2 } from 'lucide-vue-next'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { Bot, Plus, MessageSquare, Send, Sparkles, Loader2, Menu, X } from 'lucide-vue-next'
 
 import { api } from '../lib/api'
 import { useSessionStore } from '../stores/session'
@@ -14,6 +14,15 @@ const draft = ref('')
 const loading = ref(false)
 const error = ref('')
 const listRef = ref<HTMLDivElement | null>(null)
+const convDrawerOpen = ref(false)
+
+watch(convDrawerOpen, (open) => {
+  document.body.style.overflow = open ? 'hidden' : ''
+})
+
+onUnmounted(() => {
+  document.body.style.overflow = ''
+})
 
 async function loadConversations() {
   const payload = await api.listConversations()
@@ -88,7 +97,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex h-[calc(100vh-80px)] gap-6 max-w-7xl mx-auto w-full relative">
+  <div class="flex h-[calc(var(--app-vh)-var(--app-bar-h)-2rem)] md:h-[calc(var(--app-vh)-4rem)] gap-6 max-w-7xl mx-auto w-full relative">
     <aside class="w-72 hidden md:flex flex-col gap-4 border-r border-[var(--line)] pr-4 relative z-10">
       <div class="flex items-center justify-between pb-4 border-b border-[var(--line)]">
         <div>
@@ -122,13 +131,18 @@ onMounted(() => {
     </aside>
 
     <main class="flex-1 flex flex-col min-w-0 glass-panel border border-[var(--line)] rounded-2xl overflow-hidden shadow-2xl relative z-10">
-      <div class="px-6 py-4 border-b border-[var(--line)] bg-white flex items-center justify-between z-10 shrink-0">
-        <div>
-          <h3 class="text-lg font-bold text-[var(--text-primary)] tracking-tight">{{ activeConversation?.title || '新对话' }}</h3>
-          <p class="text-xs text-[var(--status-ok)] flex items-center gap-1.5 mt-0.5">
-            <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse"></span>
-            助手已就绪
-          </p>
+      <div class="px-4 md:px-6 py-4 border-b border-[var(--line)] bg-white flex items-center justify-between z-10 shrink-0">
+        <div class="flex items-center gap-3">
+          <button @click="convDrawerOpen = true" class="p-2 -ml-2 rounded-lg hover:bg-[rgba(0,0,0,0.05)] transition-colors md:hidden" aria-label="会话列表">
+            <Menu class="w-5 h-5 text-[var(--text-primary)]" />
+          </button>
+          <div>
+            <h3 class="text-lg font-bold text-[var(--text-primary)] tracking-tight">{{ activeConversation?.title || '新对话' }}</h3>
+            <p class="text-xs text-[var(--status-ok)] flex items-center gap-1.5 mt-0.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] animate-pulse"></span>
+              助手已就绪
+            </p>
+          </div>
         </div>
       </div>
 
@@ -162,12 +176,13 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="p-4 bg-white border-t border-[var(--line)] z-10 shrink-0">
+      <div class="p-4 bg-white border-t border-[var(--line)] z-10 shrink-0 safe-area-bottom">
         <div class="relative max-w-4xl mx-auto flex items-end gap-3">
           <textarea 
             v-model="draft" 
             placeholder="问日报、问来源、问某项设备或政策的影响..." 
             class="flex-1 min-h-[56px] max-h-40 bg-white border border-gray-200 rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)] focus:bg-white transition-all resize-y"
+            @focus="scrollToBottom"
             @keydown.ctrl.enter="sendMessage"
             @keydown.meta.enter="sendMessage"
           />
@@ -183,6 +198,47 @@ onMounted(() => {
         <p class="text-center text-[10px] text-[var(--text-muted)] mt-2">提示：您可以使用 Ctrl+Enter 快捷发送</p>
       </div>
     </main>
+
+    <div v-if="convDrawerOpen" class="fixed inset-0 z-40 bg-black/40 md:hidden" @click="convDrawerOpen = false" aria-hidden="true"></div>
+
+    <div
+      class="mobile-drawer fixed top-0 left-0 bottom-0 z-50 w-[var(--sidebar-w)] max-w-[85vw] bg-[var(--bg-surface)] border-r border-[var(--line)] flex flex-col transform transition-transform duration-300 ease-in-out md:hidden safe-area-top"
+      :class="convDrawerOpen ? 'translate-x-0' : '-translate-x-full'"
+      :aria-hidden="!convDrawerOpen"
+    >
+      <div class="flex items-center justify-between px-4 py-3 border-b border-[var(--line)]">
+        <div class="flex items-center gap-2">
+          <Sparkles class="w-5 h-5 text-[var(--accent-policy)]" />
+          <span class="font-bold text-[var(--text-primary)]">研究助手</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <button @click="newConversation" class="p-2 rounded-lg bg-blue-50 text-[var(--accent-primary)] hover:bg-blue-100 transition-colors border border-blue-100" aria-label="新建对话">
+            <Plus class="w-4 h-4" />
+          </button>
+          <button @click="convDrawerOpen = false" class="p-2 rounded-lg hover:bg-[rgba(0,0,0,0.05)] transition-colors" aria-label="关闭会话列表">
+            <X class="w-5 h-5 text-[var(--text-secondary)]" />
+          </button>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-4 py-4 space-y-2">
+        <button
+          v-for="conversation in conversations"
+          :key="conversation.id"
+          class="w-full text-left p-3 rounded-xl border transition-all duration-300 group flex items-start gap-3"
+          :class="activeConversation?.id === conversation.id 
+            ? 'bg-blue-50 border-blue-200' 
+            : 'bg-gray-50 border-gray-100 hover:border-gray-200 hover:bg-gray-100'"
+          @click="convDrawerOpen = false; openConversation(conversation.id)"
+        >
+          <MessageSquare class="w-4 h-4 mt-1 flex-shrink-0" :class="activeConversation?.id === conversation.id ? 'text-[var(--accent-policy)]' : 'text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]'" />
+          <div class="flex-1 overflow-hidden">
+            <p class="text-sm font-medium text-[var(--text-primary)] truncate">{{ conversation.title }}</p>
+            <p class="text-[10px] text-[var(--text-muted)] mt-1">{{ new Date(conversation.last_message_at).toLocaleDateString() }}</p>
+          </div>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 

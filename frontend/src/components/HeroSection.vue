@@ -33,14 +33,14 @@ const supervisorSummary = computed(() => {
 </script>
 
 <template>
-  <div class="glass-panel overflow-hidden relative min-h-[300px] flex group mb-8">
+  <div class="glass-panel overflow-hidden relative min-h-[240px] md:min-h-[300px] flex group mb-8">
     <div class="absolute inset-0 z-0">
       <img v-if="heroItem?.image_url" :src="heroItem.image_url" class="w-full h-full object-cover opacity-10 transition-transform duration-1000 group-hover:scale-105" />
       <div v-else class="w-full h-full bg-gradient-to-br from-blue-50 to-slate-50"></div>
       <div class="absolute inset-0 bg-gradient-to-r from-white via-white/90 to-transparent"></div>
     </div>
 
-    <div class="relative z-10 p-8 md:p-12 flex flex-col justify-between w-full max-w-2xl">
+    <div class="relative z-10 p-5 sm:p-8 md:p-12 flex flex-col justify-between w-full max-w-2xl">
       <div>
         <div class="flex items-center gap-3 mb-4">
           <span class="px-3 py-1 bg-blue-50 rounded-full text-xs font-semibold tracking-widest text-[var(--accent-academic)] border border-blue-100 uppercase">
@@ -52,11 +52,11 @@ const supervisorSummary = computed(() => {
           </span>
         </div>
         
-        <h2 class="text-4xl font-bold text-[var(--text-primary)] mb-4 leading-tight tracking-tight">
+        <h2 class="text-2xl sm:text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-4 leading-tight tracking-tight">
           {{ report?.title || '高分子材料加工智能日报' }}
         </h2>
         
-        <p class="text-[var(--text-secondary)] text-lg leading-relaxed line-clamp-3 md:line-clamp-none max-w-xl">
+        <p class="text-[var(--text-secondary)] text-base md:text-lg leading-relaxed line-clamp-3 md:line-clamp-none max-w-xl">
           {{ report?.summary || '聚焦产业动态、政策信号与前沿研究，优先交付一份稳定、可信、可读的行业日报。' }}
         </p>
         <div v-if="thinReportNote || supervisorSummary" class="mt-4 flex flex-col gap-2 max-w-xl">
@@ -79,7 +79,7 @@ const supervisorSummary = computed(() => {
           {{ loading ? '正在更新...' : '更新今日简报' }}
         </button>
         
-        <div v-if="report" class="flex items-center gap-6 px-4 py-2 border-l border-[var(--line)] ml-2">
+        <div v-if="report" class="flex items-center gap-6 px-4 py-2 border-l-0 md:border-l border-[var(--line)] ml-0 md:ml-2">
           <div class="flex flex-col">
             <span class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1"><Calendar class="w-3 h-3"/> 日期</span>
             <span class="text-sm text-[var(--text-primary)] font-medium">{{ report.report_date }}</span>

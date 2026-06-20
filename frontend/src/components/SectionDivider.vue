@@ -37,7 +37,7 @@ const colorClass = computed(() => {
 </script>
 
 <template>
-  <div class="flex items-center gap-4 my-8 relative w-full group">
+  <div class="flex items-center gap-4 my-6 md:my-8 relative w-full group">
     <div class="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent flex items-center justify-center"></div>
     <div :class="['flex items-center gap-3 px-4 py-2 rounded-full border border-gray-200 bg-white transition-all duration-300 group-hover:bg-gray-50', colorClass]">
       <component :is="icon" class="w-5 h-5 flex-shrink-0" />

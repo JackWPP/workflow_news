@@ -414,4 +414,35 @@ defineExpose({
   color: var(--text-muted);
   margin: 0;
 }
+
+@media (max-width: 767px) {
+  .agent-progress-panel {
+    padding: 16px;
+  }
+
+  .phase-bar {
+    gap: 16px;
+  }
+
+  .phase-detail {
+    display: none;
+  }
+
+  .step-summary-row {
+    flex-wrap: wrap;
+  }
+
+  .step-index {
+    width: 28px;
+  }
+
+  .step-tool {
+    width: 80px;
+  }
+
+  .step-summary-text {
+    white-space: normal;
+    word-break: break-word;
+  }
+}
 </style>

@@ -20,7 +20,7 @@ const isUser = computed(() => props.message.role === 'user')
     <div class="flex flex-col gap-2 max-w-[85%] md:max-w-[75%]">
       <div class="p-4 rounded-2xl relative"
            :class="isUser ? 'bg-[var(--accent-academic)] text-white rounded-tr-sm shadow-sm' : 'bg-white border border-gray-200 text-[var(--text-primary)] rounded-tl-sm prose max-w-none shadow-sm'">
-        <p class="whitespace-pre-wrap leading-relaxed">{{ message.content }}</p>
+        <p class="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">{{ message.content }}</p>
 
         <div v-if="message.citations?.length" class="mt-4 pt-3 border-t" :class="isUser ? 'border-white/20' : 'border-white/10'">
           <div class="flex flex-wrap gap-2">

@@ -31,10 +31,10 @@ async function submit() {
 </script>
 
 <template>
-  <section class="min-h-screen flex items-center justify-center p-8 bg-[var(--bg-primary)]">
-    <form class="max-w-md w-full p-10 bg-white border border-gray-200 rounded-2xl shadow-lg" @submit.prevent="submit">
+  <section class="min-h-[calc(var(--app-vh)-var(--app-bar-h)-2rem)] md:min-h-[calc(var(--app-vh)-4rem)] flex items-center justify-center p-4 md:p-8 bg-[var(--bg-primary)]">
+    <form class="max-w-md w-full p-6 md:p-10 bg-white border border-gray-200 rounded-2xl shadow-lg" @submit.prevent="submit">
       <p class="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--accent-primary)] mb-2">Account</p>
-      <h2 class="text-2xl font-bold text-[var(--text-primary)] mb-3">{{ mode === 'login' ? '登录' : '注册' }}</h2>
+      <h2 class="text-xl md:text-2xl font-bold text-[var(--text-primary)] mb-3">{{ mode === 'login' ? '登录' : '注册' }}</h2>
       <p class="text-[var(--text-secondary)] text-sm mb-6 leading-relaxed">先打开会话能力，再进入日报收藏和后台配置。</p>
       <label class="block mb-4 text-sm font-medium text-[var(--text-primary)]">
         邮箱

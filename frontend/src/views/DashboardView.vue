@@ -17,7 +17,7 @@ const generating = ref(false)
 const error = ref('')
 const viewMode = ref<'cards' | 'markdown'>('cards')
 const reportType = ref<'global' | 'ai' | 'lab'>('global')
-const activeCategory = ref<'all' | '高材制造' | '清洁能源'>('all')
+const activeCategory = ref<'all' | '塑料' | '橡胶' | '纤维'>('all')
 const progressPanel = ref<InstanceType<typeof AgentProgressPanel> | null>(null)
 let activeES: EventSource | null = null
 
@@ -165,38 +165,38 @@ onUnmounted(() => {
     <AgentProgressPanel ref="progressPanel" :active="generating" />
 
     <template v-if="report && !generating">
-      <div class="flex items-center gap-2 bg-gray-100 p-1 rounded-xl border border-gray-200 w-max">
+      <div class="flex items-center gap-2 bg-gray-100 p-1 rounded-xl border border-gray-200 w-full md:w-max">
         <button
           @click="reportType = 'global'"
           :disabled="generating"
-          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          class="flex-1 md:flex-none whitespace-nowrap px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           :class="reportType === 'global' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
         >全球日报</button>
         <button
           @click="reportType = 'ai'"
           :disabled="generating"
-          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          class="flex-1 md:flex-none whitespace-nowrap px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           :class="reportType === 'ai' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
         >AI 日报</button>
         <button
           @click="reportType = 'lab'"
           :disabled="generating"
-          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          class="flex-1 md:flex-none whitespace-nowrap px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           :class="reportType === 'lab' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
         >实验室日报</button>
       </div>
 
-      <div v-if="!isLabReport && !isAiReport" class="flex items-center gap-2 bg-gray-100 p-1 rounded-xl border border-gray-200 w-max mt-4">
+      <div v-if="!isLabReport && !isAiReport" class="flex items-center gap-2 bg-gray-100 p-1 rounded-xl border border-gray-200 w-full md:w-max mt-4">
         <button
-          v-for="cat in (['all', '高材制造', '清洁能源'] as const)"
+          v-for="cat in (['all', '塑料', '橡胶', '纤维'] as const)"
           :key="cat"
           @click="activeCategory = cat"
-          class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          class="flex-1 md:flex-none whitespace-nowrap px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           :class="activeCategory === cat ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'"
         >{{ cat === 'all' ? '全部' : cat }}</button>
       </div>
 
-      <div class="flex flex-col lg:flex-row gap-6 items-end justify-between mb-2">
+      <div class="flex flex-col lg:flex-row gap-6 items-stretch lg:items-end justify-between mb-2">
         <div v-if="isLabReport" class="w-full lg:w-[480px]">
           <div class="glass-panel p-5">
             <h3 class="text-sm font-semibold tracking-wider text-[var(--text-secondary)] uppercase mb-3">实验室日报</h3>
@@ -256,7 +256,7 @@ onUnmounted(() => {
                 <div class="text-xs text-[var(--text-secondary)] uppercase tracking-wider mb-2 px-1">
                   {{ lang === 'zh' ? '中文来源' : '英文来源' }}
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                   <ReportItemCard v-for="item in langGroupedItems[section][lang]" :key="item.id" :item="item" />
                 </div>
               </div>

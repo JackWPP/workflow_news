@@ -4,15 +4,17 @@ import type { ReportItem } from '../types'
 import { ExternalLink, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-vue-next'
 import { cardBrief, presentSourceName, selectionBasis } from '../lib/reportPresentation'
 
-import fallbackManufacturing from '../assets/fallback-manufacturing.png'
-import fallbackEnergy from '../assets/fallback-energy.png'
+import fallbackPlastics from '../assets/fallback-plastics.svg'
+import fallbackRubber from '../assets/fallback-rubber.svg'
+import fallbackFibers from '../assets/fallback-fibers.svg'
 import fallbackAi from '../assets/fallback-ai.png'
 import fallbackDefault from '../assets/fallback-default.png'
 
 function categoryFallback(category?: string): string {
   switch (category) {
-    case '高材制造': return fallbackManufacturing
-    case '清洁能源': return fallbackEnergy
+    case '塑料': return fallbackPlastics
+    case '橡胶': return fallbackRubber
+    case '纤维': return fallbackFibers
     case 'AI': return fallbackAi
     default: return fallbackDefault
   }
@@ -153,7 +155,7 @@ const publishedLabel = computed(() => {
       <img :src="categoryFallback(item.category)" :alt="item.category || '资讯'" class="w-full h-full object-cover opacity-60" />
     </div>
 
-    <div class="p-5 flex-1 flex flex-col gap-3">
+    <div class="p-4 sm:p-5 flex-1 flex flex-col gap-3">
       <div class="flex justify-between items-start gap-3">
         <h3 class="font-bold text-[var(--text-primary)] text-lg leading-snug line-clamp-2 group-hover:text-[var(--card-accent)] transition-colors">
           {{ item.title }}
@@ -163,7 +165,7 @@ const publishedLabel = computed(() => {
         </span>
       </div>
 
-      <div class="flex flex-wrap items-center gap-2 text-[10px]">
+      <div class="flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs sm:text-[10px]">
         <span class="px-2 py-1 rounded-full bg-[var(--card-accent)]/8 text-[var(--card-accent)] border border-[var(--card-accent)]/15">{{ sectionLabel }}</span>
         <span v-if="categoryLabel" class="px-2 py-1 rounded-full bg-gray-100 text-gray-700 border border-gray-200">{{ categoryLabel }}</span>
         <span class="px-2 py-1 rounded-full bg-gray-100 text-gray-700 border border-gray-200">{{ languageLabel }}</span>
@@ -181,15 +183,15 @@ const publishedLabel = computed(() => {
           </p>
         </div>
 
-        <div class="flex items-center justify-between text-xs mt-2">
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs mt-2">
           <div class="flex items-center gap-2 text-[var(--text-muted)]">
             <span class="px-2 py-1 rounded bg-gray-100">{{ friendlySourceName }}</span>
             <span>{{ publishedLabel }}</span>
           </div>
 
           <div class="flex items-center gap-3">
-            <a :href="item.source_url" target="_blank" rel="noreferrer" class="flex items-center gap-1 text-[var(--text-secondary)] hover:text-[var(--card-accent)] transition-colors">
-              <ExternalLink class="w-3 h-3" /> 原文
+            <a :href="item.source_url" target="_blank" rel="noreferrer" class="flex items-center gap-1 py-1.5 px-1 text-[var(--text-secondary)] hover:text-[var(--card-accent)] transition-colors">
+              <ExternalLink class="w-3.5 h-3.5" /> 原文
             </a>
           </div>
         </div>
@@ -197,7 +199,7 @@ const publishedLabel = computed(() => {
         <button
           v-if="hasBasis"
           @click="showBasis = !showBasis"
-          class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--card-accent)] transition-colors mt-1"
+          class="flex items-center gap-1 text-xs py-1 text-[var(--text-muted)] hover:text-[var(--card-accent)] transition-colors mt-1"
         >
           <component :is="showBasis ? ChevronUp : ChevronDown" class="w-3 h-3" />
           {{ showBasis ? '收起入选依据' : '查看入选依据' }}

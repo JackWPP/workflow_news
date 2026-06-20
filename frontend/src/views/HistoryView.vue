@@ -31,11 +31,11 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex h-[calc(100vh-80px)] gap-6 max-w-7xl mx-auto w-full relative">
-    <aside class="w-80 flex-shrink-0 flex flex-col gap-4 border-r border-white/5 pr-4 relative z-10">
+  <div class="flex flex-col md:flex-row h-auto md:h-[calc(var(--app-vh)-4rem)] gap-4 md:gap-6 max-w-7xl mx-auto w-full relative">
+    <aside class="w-full md:w-80 flex-shrink-0 flex flex-col gap-4 border-b md:border-b-0 md:border-r border-white/5 pb-4 md:pb-0 md:pr-4 relative z-10 max-h-[45vh] md:max-h-none overflow-hidden">
       <div class="flex items-center justify-between pb-4 border-b border-[var(--line)] shrink-0">
         <div>
-          <h2 class="text-xl font-bold text-[var(--text-primary)] flex items-center gap-2">
+          <h2 class="text-lg md:text-xl font-bold text-[var(--text-primary)] flex items-center gap-2">
             <Calendar class="w-5 h-5 text-[var(--accent-industry)]" />
             历史日报
           </h2>
@@ -79,7 +79,7 @@ onMounted(() => {
       </div>
     </aside>
 
-    <main class="flex-1 flex flex-col min-w-0 bg-white border border-[var(--line)] rounded-2xl overflow-hidden relative z-10 shadow-sm">
+    <main class="flex-1 flex flex-col min-w-0 bg-white border border-[var(--line)] rounded-2xl overflow-hidden relative z-10 shadow-sm min-h-[50vh] md:min-h-0">
       <template v-if="selected">
         <div class="relative shrink-0 border-b border-[var(--line)] bg-white overflow-hidden">
           <div class="absolute inset-0 opacity-10">
@@ -87,7 +87,7 @@ onMounted(() => {
                  :src="selected.items.find((item) => item.image_url)?.image_url ?? ''" 
                  class="w-full h-full object-cover blur-sm" />
           </div>
-          <div class="relative px-8 py-6 z-10">
+          <div class="relative px-4 py-4 md:px-8 md:py-6 z-10">
             <p class="text-[10px] text-[var(--accent-industry)] uppercase tracking-widest font-bold mb-2 flex items-center gap-2">
               <Sparkles class="w-3 h-3" /> 智能日报详情
             </p>
@@ -100,7 +100,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-6 md:p-8 scroll-smooth z-0 bg-gray-50">
+        <div class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth z-0 bg-gray-50">
           <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 pb-8">
             <ReportItemCard v-for="item in selected.items" :key="item.id" :item="item" />
           </div>

@@ -264,23 +264,23 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="max-w-7xl mx-auto space-y-8 pb-12 relative z-10 w-full pl-4 md:pl-0 pr-4">
+  <div class="max-w-7xl mx-auto space-y-8 pb-12 relative z-10 w-full md:px-0">
     <div class="flex items-center gap-3 pb-6 border-b border-[var(--line)]">
       <div class="w-12 h-12 rounded-2xl bg-purple-50 flex items-center justify-center border border-purple-100 text-[var(--accent-policy)]">
         <ShieldAlert class="w-6 h-6" />
       </div>
       <div>
-        <h1 class="text-3xl font-bold text-[var(--text-primary)] tracking-tight">管理后台</h1>
+        <h1 class="text-xl md:text-3xl font-bold text-[var(--text-primary)] tracking-tight">管理后台</h1>
         <p class="text-sm text-[var(--accent-policy)] font-mono mt-1 uppercase tracking-widest">System Administration</p>
       </div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
       <section class="glass-panel flex flex-col h-[500px]">
-        <div class="p-6 border-b border-[var(--line)] flex justify-between items-center shrink-0">
+        <div class="p-4 md:p-6 border-b border-[var(--line)] flex justify-between items-center shrink-0">
           <div class="flex items-center gap-2">
             <Database class="w-5 h-5 text-[var(--accent-primary)]" />
-            <h2 class="text-lg font-bold text-[var(--text-primary)]">来源规则 (JSON)</h2>
+            <h2 class="text-base md:text-lg font-bold text-[var(--text-primary)]">来源规则 (JSON)</h2>
           </div>
           <button class="btn-primary text-xs py-1.5" @click="saveSources">保存规则</button>
         </div>
@@ -290,15 +290,15 @@ onUnmounted(() => {
       </section>
 
       <section class="glass-panel flex flex-col h-[500px]">
-        <div class="p-6 border-b border-[var(--line)] flex justify-between items-center shrink-0">
+        <div class="p-4 md:p-6 border-b border-[var(--line)] flex justify-between items-center shrink-0">
           <div class="flex items-center gap-2">
             <Settings class="w-5 h-5 text-[var(--accent-primary)]" />
-            <h2 class="text-lg font-bold text-[var(--text-primary)]">调度与模型配置</h2>
+            <h2 class="text-base md:text-lg font-bold text-[var(--text-primary)]">调度与模型配置</h2>
           </div>
           <button class="btn-primary text-xs py-1.5" @click="saveSettings">保存配置</button>
         </div>
-        <div class="flex-1 overflow-y-auto p-6 space-y-4">
-          <div class="grid grid-cols-2 gap-4">
+        <div class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
               主日报 Hour
               <input v-model.number="settings.report_hour" type="number" min="0" max="23" class="bg-white border border-gray-200 rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]" />
@@ -359,14 +359,14 @@ onUnmounted(() => {
     </div>
 
     <section class="glass-panel">
-      <div class="p-6 border-b border-[var(--line)] flex items-center gap-2">
+      <div class="p-4 md:p-6 border-b border-[var(--line)] flex items-center gap-2">
         <Database class="w-5 h-5 text-[var(--status-ok)]" />
-        <h2 class="text-lg font-bold text-[var(--text-primary)]">公众号同步</h2>
+        <h2 class="text-base md:text-lg font-bold text-[var(--text-primary)]">公众号同步</h2>
         <span class="ml-auto text-xs font-mono" :class="wechatTokenConfigured ? 'text-[var(--status-ok)]' : 'text-[var(--status-error)]'">
           Token: {{ wechatTokenConfigured ? '已配置' : '未配置' }}
         </span>
       </div>
-      <div class="p-6 space-y-4">
+      <div class="p-4 md:p-6 space-y-4">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="space-y-3">
             <label class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
@@ -410,14 +410,14 @@ onUnmounted(() => {
     </div>
 
     <section class="glass-panel">
-      <div class="p-6 border-b border-[var(--line)]">
+      <div class="p-4 md:p-6 border-b border-[var(--line)]">
         <div class="flex items-center gap-2">
           <BarChart3 class="w-5 h-5 text-[var(--accent-industry)]" />
-          <h2 class="text-lg font-bold text-[var(--text-primary)]">质量分析与模型指标</h2>
+          <h2 class="text-base md:text-lg font-bold text-[var(--text-primary)]">质量分析与模型指标</h2>
         </div>
       </div>
       
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 p-4 md:p-6">
         <div class="glass-card p-5 bg-gray-50 border-gray-100 flex flex-col gap-3">
           <h3 class="text-sm font-bold text-[var(--text-primary)] flex items-center gap-1.5 mb-2"><ListTree class="w-4 h-4 text-[var(--text-muted)]" /> 新增加工反馈</h3>
           
@@ -443,24 +443,24 @@ onUnmounted(() => {
         <div class="glass-card p-5 bg-gray-50 border-gray-100 lg:col-span-2">
           <h3 class="text-sm font-bold text-[var(--text-primary)] flex items-center gap-1.5 mb-4"><Activity class="w-4 h-4 text-[var(--accent-policy)]" /> 质量大盘数据</h3>
           
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" v-if="qualityOverview">
+           <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" v-if="qualityOverview">
              <div class="flex flex-col border-l-2 border-[var(--status-ok)] pl-3">
                <span class="text-[10px] uppercase tracking-widest text-[var(--text-muted)]">Avg Score</span>
-               <span class="text-xl font-bold text-[var(--text-primary)] tabular-nums">{{ formatScore(qualityOverview.average_daily_report_score) }}</span>
+               <span class="text-lg md:text-xl font-bold text-[var(--text-primary)] tabular-nums">{{ formatScore(qualityOverview.average_daily_report_score) }}</span>
              </div>
              <div class="flex flex-col border-l-2 border-[var(--accent-industry)] pl-3">
                <span class="text-[10px] uppercase tracking-widest text-[var(--text-muted)]">Policy Fill</span>
-               <span class="text-xl font-bold text-[var(--text-primary)] tabular-nums">{{ qualityOverview.policy_fill_rate || 0 }}</span>
+               <span class="text-lg md:text-xl font-bold text-[var(--text-primary)] tabular-nums">{{ qualityOverview.policy_fill_rate || 0 }}</span>
              </div>
              <div class="flex flex-col border-l-2 border-[var(--accent-academic)] pl-3">
                <span class="text-[10px] uppercase tracking-widest text-[var(--text-muted)]">Image Fill</span>
-               <span class="text-xl font-bold text-[var(--text-primary)] tabular-nums">{{ qualityOverview.image_fill_rate || 0 }}</span>
+               <span class="text-lg md:text-xl font-bold text-[var(--text-primary)] tabular-nums">{{ qualityOverview.image_fill_rate || 0 }}</span>
              </div>
              <div class="flex flex-col border-l-2 border-[var(--status-error)] pl-3">
                <span class="text-[10px] uppercase tracking-widest text-[var(--text-muted)]">Off-topic Escapes</span>
-               <span class="text-xl font-bold text-[var(--text-primary)] tabular-nums">{{ qualityOverview.off_topic_escape_count || 0 }}</span>
+               <span class="text-lg md:text-xl font-bold text-[var(--text-primary)] tabular-nums">{{ qualityOverview.off_topic_escape_count || 0 }}</span>
              </div>
-          </div>
+           </div>
 
           <div class="text-xs text-[var(--text-secondary)] space-y-2 font-mono leading-relaxed bg-gray-50 p-4 rounded-lg border border-gray-100">
             <p v-if="qualityOverview">feedback: <span class="text-[var(--text-muted)]">{{ formatFeedbackSummary(qualityOverview.feedback_summary) }}</span></p>
@@ -474,10 +474,10 @@ onUnmounted(() => {
     </section>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-      <section class="glass-panel flex flex-col min-h-[500px] h-[600px]">
-        <div class="p-6 border-b border-[var(--line)] shrink-0 flex items-center gap-2">
+      <section class="glass-panel flex flex-col min-h-[300px] md:min-h-[500px] h-auto md:h-[600px]">
+        <div class="p-4 md:p-6 border-b border-[var(--line)] shrink-0 flex items-center gap-2">
           <Fingerprint class="w-5 h-5 text-[var(--accent-primary)]" />
-          <h2 class="text-lg font-bold text-[var(--text-primary)]">流水线执行日志</h2>
+          <h2 class="text-base md:text-lg font-bold text-[var(--text-primary)]">流水线执行日志</h2>
         </div>
         <div class="flex-1 overflow-y-auto p-4 space-y-3">
           <button 
@@ -508,10 +508,10 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="glass-panel flex flex-col min-h-[500px] h-[600px]">
-        <div class="p-6 border-b border-[var(--line)] shrink-0 flex items-center gap-2">
+      <section class="glass-panel flex flex-col min-h-[300px] md:min-h-[500px] h-auto md:h-[600px]">
+        <div class="p-4 md:p-6 border-b border-[var(--line)] shrink-0 flex items-center gap-2">
           <ListTree class="w-5 h-5 text-[var(--status-info)]" />
-          <h2 class="text-lg font-bold text-[var(--text-primary)]">Candidates (#{{ selectedRunId || '-' }})</h2>
+          <h2 class="text-base md:text-lg font-bold text-[var(--text-primary)]">Candidates (#{{ selectedRunId || '-' }})</h2>
         </div>
         <div class="flex-1 overflow-y-auto p-4 space-y-3">
           <div v-if="!candidates.length" class="text-center text-[var(--text-muted)] text-sm py-12 flex flex-col items-center gap-2">
@@ -533,9 +533,9 @@ onUnmounted(() => {
             <p v-if="c.rejection_reason" class="text-xs text-[var(--status-warn)] mb-3 opacity-90 p-2 bg-[var(--status-warn)]/10 rounded border border-[var(--status-warn)]/20 line-clamp-2">{{ c.rejection_reason }}</p>
             
             <div class="flex gap-2 flex-wrap">
-              <button class="btn-primary text-[10px] px-2 py-1 flex items-center gap-1 opacity-60 hover:opacity-100" @click="markCandidate(c, 'good')"><CheckCircle2 class="w-3 h-3"/> Good</button>
-              <button class="btn-ghost border border-white/10 text-[10px] px-2 py-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]" @click="markCandidate(c, 'keep_borderline')">Bordeline</button>
-              <button class="btn-ghost border border-[var(--status-error)]/30 bg-[var(--status-error)]/5 text-[var(--status-error)] text-[10px] px-2 py-1 hover:bg-[var(--status-error)]/20" @click="markCandidate(c, 'bad_off_topic')">Off-topic</button>
+              <button class="btn-primary text-xs px-2.5 py-1.5 flex items-center gap-1 opacity-60 hover:opacity-100" @click="markCandidate(c, 'good')"><CheckCircle2 class="w-3 h-3"/> Good</button>
+              <button class="btn-ghost border border-white/10 text-xs px-2.5 py-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]" @click="markCandidate(c, 'keep_borderline')">Bordeline</button>
+              <button class="btn-ghost border border-[var(--status-error)]/30 bg-[var(--status-error)]/5 text-[var(--status-error)] text-xs px-2.5 py-1.5 hover:bg-[var(--status-error)]/20" @click="markCandidate(c, 'bad_off_topic')">Off-topic</button>
             </div>
           </div>
           <div v-if="candidates.length > 15" class="text-center text-[10px] text-[var(--text-muted)]">

@@ -30,6 +30,16 @@
 
   --font-sans: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  --app-bar-h: 56px;
+  --sidebar-w: 16rem;
+  --app-vh: 100vh;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --app-vh: 100dvh;
+  }
 }
 
 * {
@@ -81,6 +91,7 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
 }
 
 /* Layout */
@@ -242,4 +253,67 @@ input:focus, textarea:focus {
   margin-left: 0;
   padding-left: 1em;
   color: var(--text-secondary);
+}
+.prose table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+.prose img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Safe Area Utilities */
+.safe-area-top { padding-top: env(safe-area-inset-top); }
+.safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-area-x { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+
+/* ============================================
+   Mobile UX Enhancements
+   ============================================ */
+
+/* Scroll inertia for touch devices */
+* {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Tap feedback — replace hover on touch devices */
+@media (hover: none) {
+  button,
+  a:not(.prose a) {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button:active,
+  .btn-primary:active,
+  .btn-ghost:active,
+  .nav-link:active,
+  a:not(.prose a):active {
+    transform: scale(0.97);
+  }
+}
+
+/* Disable text selection on UI controls */
+button,
+.nav-link,
+.status-pill,
+.sidebar,
+.mobile-topbar,
+.mobile-drawer {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Long text / URL overflow in prose */
+.prose a,
+.prose code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* Drawer GPU acceleration */
+.mobile-drawer {
+  will-change: transform;
 }
