@@ -3,9 +3,12 @@ search_router.py — 统一搜索路由器
 
 替代各处直连 Bocha/Zhipu 的分散调用。
 提供统一的 search() 接口，内部按 provider 健康度自动 failover。
+
+V2 Phase B: 改为并行调用 Bocha + Zhipu，合并结果 + URL 去重。
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -83,7 +86,7 @@ class SearchRouter:
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """统一搜索入口。自动 failover + 缓存 + blocklist 过滤。"""
+        """统一搜索入口。V2 Phase B: 并行调用 Bocha + Zhipu，合并结果 + URL 去重。"""
 
         # 检查缓存
         cache_key = "_".join(
@@ -101,38 +104,57 @@ class SearchRouter:
             logger.debug("SearchRouter: cache hit for '%s'", query[:50])
             return cached[1]
 
-        results: list[dict[str, Any]] = []
-
-        # 尝试 Bocha
+        # V2 Phase B: 并行调用 Bocha + Zhipu
+        tasks = []
         if self._bocha and self._bocha.enabled:
-            try:
-                bocha_results = await self._bocha.search(
-                    query, count=max_results, freshness=freshness,
-                    include_domains=include_domains, exclude_domains=exclude_domains,
-                )
-                if bocha_results:
-                    results = bocha_results
-                    logger.info("SearchRouter: bocha returned %d for '%s'", len(results), query[:50])
-            except Exception as exc:
-                logger.warning("SearchRouter: bocha failed for '%s': %s", query[:50], exc)
+            tasks.append(("bocha", self._bocha.search(
+                query, count=max_results, freshness=freshness,
+                include_domains=include_domains, exclude_domains=exclude_domains,
+            )))
+        if self._zhipu and self._zhipu.enabled:
+            tasks.append(("zhipu", self._zhipu.search(
+                query, count=max_results, recency=freshness,
+            )))
 
-        # Bocha 空结果 → 尝试 Zhipu
-        if not results and self._zhipu and self._zhipu.enabled:
-            try:
-                zhipu_results = await self._zhipu.search(query, count=max_results, recency=freshness)
-                if zhipu_results:
-                    results = zhipu_results
-                    logger.info("SearchRouter: zhipu fallback returned %d for '%s'", len(results), query[:50])
-            except Exception as exc:
-                logger.warning("SearchRouter: zhipu failed for '%s': %s", query[:50], exc)
+        # 并行执行，单源失败不阻塞
+        results_per_source: dict[str, list[dict[str, Any]]] = {}
+        if tasks:
+            gathered = await asyncio.gather(
+                *[task for _, task in tasks],
+                return_exceptions=True,
+            )
+            for (source, _), result in zip(tasks, gathered):
+                if isinstance(result, BaseException):
+                    logger.warning("SearchRouter: %s failed for '%s': %s", source, query[:50], result)
+                elif isinstance(result, list):
+                    results_per_source[source] = result
+
+        # 合并：Bocha 优先（实验显示 0% 重叠，但保险起见还是去重）
+        merged: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        for source in ("bocha", "zhipu"):
+            for row in results_per_source.get(source, []):
+                url = row.get("url") or ""
+                if url and url not in seen_urls:
+                    merged.append(row)
+                    seen_urls.add(url)
 
         # blocklist 过滤
         filtered = []
-        for r in results:
+        for r in merged:
             domain = r.get("domain") or extract_domain(r.get("url", ""))
             if _is_blocked(domain):
                 continue
             filtered.append(r)
+
+        # 结构化日志（Phase 0.5 要求）
+        bocha_count = len(results_per_source.get("bocha", []))
+        zhipu_count = len(results_per_source.get("zhipu", []))
+        logger.info(
+            "SearchRouter '%s' (%s) → %d (bocha=%d, zhipu=%d, filtered=%d)",
+            query[:50], language, len(filtered), bocha_count, zhipu_count,
+            len(merged) - len(filtered),
+        )
 
         # 缓存
         self._cache[cache_key] = (time.time(), filtered)

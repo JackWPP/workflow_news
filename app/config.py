@@ -39,7 +39,7 @@ class Settings:
     )
 
     bocha_api_key: str = os.getenv("BOCHA_API_KEY", "")
-    bocha_search_count: int = int(os.getenv("BOCHA_SEARCH_COUNT", "10"))
+    bocha_search_count: int = int(os.getenv("BOCHA_SEARCH_COUNT", "50"))
 
     zhipu_api_key: str = os.getenv("ZHIPU_API_KEY", "")
     zhipu_search_engine: str = os.getenv("ZHIPU_SEARCH_ENGINE", "search_pro_sogou")

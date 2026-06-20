@@ -1,7 +1,7 @@
 # AGENTS.md — 高分子材料加工每日资讯平台
 
-> 最后更新：2026-05-12
-> 当前阶段：**架构简化完成**（Agent 自主 + 轻量检查点，稳定产出 6 篇/3 板块/complete）
+> 最后更新：2026-06-20
+> 当前阶段：**V2 搜索优化完成**（调度节流 96%、count=50、智谱 reader 兜底、SSL 重试）
 
 ---
 
@@ -26,24 +26,23 @@
 ```
 ┌─────────────────────────────────────────┐
 │           ContinuousIngester             │
-│  (RSS + Bocha 模板搜索, 每小时)          │
+│  V2: RSS 每小时 + Bocha 按需触发         │
+│  (旧: RSS+Bocha 每小时 → 现: RSS hourly, │
+│   Bocha 仅日报启动时按池子健康度触发)     │
 │  → ArticlePool (URL+MinHash去重)        │
 └──────────────┬──────────────────────────┘
                │ seed (最多30条, 零LLM)
 ┌──────────────▼──────────────────────────┐
-│           AgentCore (tool-use loop)      │
-│  自主搜索 → 阅读 → 评估 → 找图 → 写作    │
-│  4 个强制检查点确保进度:                  │
-│    step 5:  必须开始阅读                  │
-│    step 10: 必须开始评估                  │
-│    step 16: 必须开始写作                  │
-│    step 28: 未finish则强制收尾            │
-│  Harness: 65步/1200s, 仅时间+步数限制    │
+│     DailyOrchestrator (V2 主路径)        │
+│  3 × ExplorerAgent 并行搜索+评估         │
+│  3 × SectionEditorAgent 并行编辑         │
+│  1 × SummaryAgent 汇总                   │
+│  DailyReportAgent 仅作 fallback          │
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
 │               Report                     │
-│  6-10 篇文章 × 3 板块 × 图片             │
+│  12 篇文章 × 3 板块 × 图片               │
 └─────────────────────────────────────────┘
 ```
 
@@ -130,15 +129,23 @@ Checkpoint 3 (step 28): 没有 finish → auto_finish 收尾
 
 | 模块 | 文件 | 职责 | LLM 调用 |
 |------|------|------|---------|
-| `ContinuousIngester` | `ingester.py` | RSS + 模板搜索 → ArticlePool (URL+MinHash去重) | **零** |
+| `DailyOrchestrator` | `daily_orchestrator.py` | V2 主路径：3×Explorer + 3×Editor + Summary 并行编排 | **零**（编排器） |
+| `ExplorerAgent` | `explorer_agent.py` | 按板块并行搜索+评估候选文章 | **全部 LLM 调用通过 AgentCore** |
+| `SectionEditorAgent` | `section_editor_agent.py` | 消费 Explorer 候选，去重/排序/评审/生成卡片 | **同上** |
+| `SummaryAgent` | `summary_agent.py` | 汇总 3 个板块，生成日报摘要 | **同上** |
+| `DailyReportAgent` | `daily_report_agent.py` | V2 fallback 路径（DailyOrchestrator 失败时）| **同上** |
+| `ContinuousIngester` | `ingester.py` | V2: RSS 每小时 + Bocha 按需触发 → ArticlePool | **零** |
 | `DailyComposer` | `composer.py` | 从 ArticlePool 拉取种子 (URL+MinHash去重, 不评估) | **零** |
 | `AgentCore` | `agent_core.py` | Agent 循环 + 4 检查点 (自主搜索→阅读→评估→写作) | **全部 LLM 调用通过此引擎** |
 | `Harness` | `harness.py` | 安全底线 (步数+超时+域名黑名单, 不管配额) | **零** |
 | `SemanticDedup` | `semantic_dedup.py` | URL + MinHash 去重 (Embedding 可选) | **零** (仅 embedding API) |
-| `LLMClient` | `llm_client.py` | 统一 LLM 入口 (DeepSeek V4 Flash) | **所有 LLM 调用** |
+| `LLMClient` | `llm_client.py` | 统一 LLM 入口 (DeepSeek V4 Flash + SSL 重试) | **所有 LLM 调用** |
 | `Tools` | `tools.py` | web_search, read_page, evaluate_article, search_images, verify_image, write_section, check_coverage, finish | **按需** |
-| `Content Extractor` | `scraper.py, jina_reader.py, content_extractor.py` | 三层提取 (Jina-first → Trafilatura → direct HTTP) | **零** |
-| `BochaSearch` | `bocha_search.py` | Bocha web-search + ai-search, include/freshness | **零** |
+| `ScraperClient` | `scraper.py` | V2 四层降级：Trafilatura → 智谱 Reader → Jina → direct HTTP | **零** |
+| `ZhipuReaderClient` | `zhipu_reader.py` | V2 Phase C.2：智谱 Web Reader API（read_page 兜底） | **零** |
+| `BochaSearch` | `bocha_search.py` | Bocha web-search + ai-search, V2: count=50 + summary_full 字段 | **零** |
+| `ZhipuSearch` | `zhipu_search.py` | 智谱 search_pro_sogou, V2: content_size=high + engine 校验 | **零** |
+| `SearchRouter` | `search_router.py` | V2: 并行 Bocha+智谱 + URL 去重（Phase B 回滚后不触发并行） | **零** |
 
 **不再使用的模块** (保留代码但不参与主流程):
 - `BatchEvaluator` — Map-Reduce 批量评估 (太重，已由 Agent evaluate_article 替代)
@@ -148,16 +155,17 @@ Checkpoint 3 (step 28): 没有 finish → auto_finish 收尾
 ### 3.3 数据流（单次日报生成）
 
 ```
-ContinuousIngester (每小时)
-  → RSS + Bocha 模板搜索
+ContinuousIngester (V2: RSS 每小时, Bocha 按需)
+  → RSS + arXiv (每小时, 免费)
+  → Bocha 模板搜索 (仅日报触发时, 按池子健康度)
   → URL + MinHash 去重
   → 域名黑名单过滤
   → ArticlePool 表
 
-DailyComposer.gather_seeds() (日报触发时)
-  1. SELECT * FROM article_pool WHERE ingested_at > NOW() - 72h
-  2. URL去重 → MinHash去重 (零 LLM)
-  3. 返回最多 30 条种子 (RSS优先)
+DailyOrchestrator.gather_seeds() → _ensure_pool_fresh_before_report() (V2 Phase 0)
+  1. 检查 ArticlePool 过去 24h 入池数
+  2. < 15 条 → 触发完整 ingester (含 Bocha 模板搜索)
+  3. >= 15 条 → 跳过, 直接用池子种子
 
 AgentCore.run() (自主循环)
   4. 从种子开始，自由搜索→阅读→评估→找图
@@ -219,8 +227,9 @@ class EvaluationRun(Base):
 |------|----------------------|----------------------|
 | 单次日报 token | ~0 (卡死在Composer) | **~250K** (~¥0.25/次) |
 | 单次日报步数 | 0 | **23-28 步** |
-| 日报产出 | 2篇/degraded | **6篇/complete** |
+| 日报产出 | 2篇/degraded | **12篇/complete** |
 | 月 LLM 成本 | — | **~¥7.5** (30天) |
+| 月搜索成本 | — | **~¥68** (V2 改造前 ~¥1,063) |
 | DeepSeek API 调用 | — | **~15-20 次** (含评估+写作) |
 
 ### 4.1 当前技术栈
@@ -229,10 +238,12 @@ class EvaluationRun(Base):
 |------|------|------|
 | FastAPI + Vue 3 + Vite | ✅ | 保持不变 |
 | SQLite (WAL) | ✅ | 年 7000 条，够用 |
-| DeepSeek V4 Flash | ✅ | 日耗 ~¥0.25，直连 |
-| Bocha Web Search | ✅ | include/freshness/ai-search |
+| DeepSeek V4 Flash | ✅ | 日耗 ~¥0.25，直连 + V2 SSL 重试 |
+| Bocha Web Search | ✅ | V2: count=50 + summary_full + health_snapshot 6 字段 |
+| 智谱 search_pro_sogou | ✅ | V2: content_size=high + engine 校验（Phase B 回滚后仅 fallback） |
 | SiliconFlow BGE-M3 | ✅ | Embedding 去重 (API, 可选) |
-| Trafilatura + Jina + HTTP | ✅ | 三层 fallback，中文站主要走 direct HTTP |
+| Trafilatura + 智谱 Reader + Jina + HTTP | ✅ | V2: 四层 fallback，智谱 reader 国内可达性好 |
+| DailyOrchestrator 多 agent | ✅ | V2 主路径：3×Explorer + 3×Editor + Summary 并行 |
 | 图片提取 (评分系统) | ✅ | 内容图优先，logo/模板硬拒绝，AI兜底 |
 | RSS (14条中英文源) | ⚠️ | 英文源多数被墙，中文源部分 404 |
 | Feeddd 微信桥接 | ⚠️ | 返回 0 条目，需验证 |
@@ -312,6 +323,13 @@ class EvaluationRun(Base):
 - [x] Ingester 域名黑名单 + 关键词白名单
 - [x] 三分类 + 语言标记
 - [x] 前端中文化 + 三方向 Tab
+- [x] **DailyOrchestrator 多 agent 架构**（3×Explorer + 3×Editor + Summary）
+- [x] **V2 搜索优化 Phase 0**：取消 hourly Bocha 调度 → 按需触发（节流 96%，月成本 ¥1,063→¥68）
+- [x] **V2 Phase 0.5**：health_snapshot 加 6 个累积统计字段 + last-run 加 ingest_decision
+- [x] **V2 Phase A**：count=10→50、summary_full/snippet_raw 字段、_MAX_POOL_ARTICLES=1000、智谱 content_size=high
+- [x] **V2 Phase C.2**：智谱 reader 兜底（Trafilatura → 智谱 reader → Jina → direct HTTP 四层）
+- [x] **V2 SSL 修复**：LLMClient 加 SSL 错误指数退避重试（1s/2s/4s，最多 3 次）
+- [x] **V2 Phase B 回滚**：双源并行 ROI 不高（成本 +107%，文章数没增加），已回滚
 
 ### 待完成
 
@@ -337,17 +355,21 @@ app/
   models.py               # SQLAlchemy 模型（ArticlePool, Report, ReportItem 等）
   database.py             # DB 引擎 + session_scope
   services/
-    daily_report_agent.py # 主编排器（gather_seeds → AgentCore → persist）
+    daily_orchestrator.py # V2 主编排器（3×Explorer + 3×Editor + Summary 并行）
+    daily_report_agent.py # V2 fallback 路径（DailyOrchestrator 失败时）
     agent_core.py         # Agent 循环引擎 + 4 检查点
     composer.py           # DailyComposer（gather_seeds, 仅去重不评估）
-    ingester.py           # ContinuousIngester（RSS + 模板搜索, 域名黑名单）
+    ingester.py           # ContinuousIngester（V2: RSS 每小时 + Bocha 按需触发）
     harness.py            # 安全约束（仅步数+时间+域名, 无工具级配额）
-    llm_client.py         # LLM 客户端（DeepSeek 直连）
-    bocha_search.py       # Bocha API（web-search + ai-search + include/freshness）
+    llm_client.py         # LLM 客户端（DeepSeek 直连 + V2 SSL 重试）
+    bocha_search.py       # Bocha API（V2: count=50 + summary_full + health_snapshot 6 字段）
+    zhipu_search.py       # 智谱 API（V2: content_size=high + engine 校验 + summary_full）
+    zhipu_reader.py       # V2 Phase C.2: 智谱 Web Reader API（read_page 兜底）
+    search_router.py      # V2: 并行 Bocha+智谱 + URL 去重（Phase B 回滚后不触发并行）
     tools.py              # Agent 工具集（9 个工具）
     working_memory.py     # 工作记忆（ArticleSummary, CoverageState, StepRecord）
     jina_reader.py        # Jina Reader + direct HTTP fallback（含图片评分）
-    scraper.py            # 三层抓取（Jina-first → Trafilatura → HTTP）
+    scraper.py            # V2 四层抓取（Trafilatura → 智谱 reader → Jina → HTTP）
     content_extractor.py  # 独立内容提取路径
     rss.py                # RSS feed 拉取
     semantic_dedup.py     # URL + MinHash + Embedding（SiliconFlow API）
@@ -648,29 +670,28 @@ curl http://localhost:8765/api/agent-runs/42
 ## 十、当前状态与下一步
 
 **当前分支**：`refactor`
-**状态**：架构简化完成，Agent 自主 + 轻量检查点稳定产出 complete 级日报。
+**状态**：V2 搜索优化完成，月成本从 ¥1,063 降到 ¥68（-94%），日报 publish_grade=complete。
 
-**已完成（2026-05-11 ~ 2026-05-12）**：
+**已完成（2026-05-11 ~ 2026-06-20）**：
 - [x] DeepSeek V4 Flash 直连 + Bocha 搜索 + 诊断 API
 - [x] **架构简化**：砍掉 Phase 1/2/3 分段、BatchEvaluator 预评估、ArticleAgent 并发、Harness 死板配额
 - [x] **Agent 自主 + 4 检查点**：Agent 自由搜索→阅读→评估→写作，检查点强制推进
-- [x] **图片评分系统**：内容图片优先，logo/模板图片硬拒绝，AI 生成分类兜底图
-- [x] **RSS 源接入**：14 条中英文 RSS（Nature/ACS/ScienceDirect/北化大学报/Feeddd）
-- [x] **Bocha 优化**：`include` 域名限定 + `freshness` 日期范围 + `ai_search` 端点
-- [x] Ingester 域名黑名单 + 关键词白名单，ArticlePool 质量治理
-- [x] 三分类（高材制造/清洁能源/AI）+ 语言标记（zh/en）
-- [x] 前端全中文化 + 三方向 Tab + AI 兜底图
+- [x] **DailyOrchestrator 多 agent 架构**：3×Explorer + 3×Editor + Summary 并行
+- [x] **V2 搜索优化 Phase 0**：取消 hourly Bocha 调度 → 按需触发（节流 96%）
+- [x] **V2 Phase 0.5**：health_snapshot 加累积统计字段 + last-run 加 ingest_decision
+- [x] **V2 Phase A**：count=50、summary_full 字段、_MAX_POOL_ARTICLES=1000、智谱 content_size=high
+- [x] **V2 Phase C.2**：智谱 reader 兜底（四层抓取：Trafilatura → 智谱 reader → Jina → HTTP）
+- [x] **V2 SSL 修复**：LLMClient 加 SSL 错误指数退避重试
+- [x] **V2 Phase B 回滚**：双源并行 ROI 不高，已回滚
 
 **稳定产出（实测）**：
 | 指标 | 值 |
 |------|-----|
-| 文章数 | 6 篇 |
+| 文章数 | 12 篇 |
 | 板块 | industry + academic + policy |
-| 图片 | 3-4 张（真实图 + AI 兜底图）|
 | 等级 | complete_auto_publish |
-| Token | ~250K (~¥0.25) |
-| 步数 | 23-28 |
-| 完成方式 | finish_tool 或 auto_finish |
+| Bocha 调用/次日报 | ~63 次 |
+| 月成本 | ~¥68（从 ¥1,063 降 94%）|
 
 **下一步**：
 1. 连续跑 3 天，验证稳定性

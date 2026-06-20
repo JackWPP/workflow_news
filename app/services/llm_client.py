@@ -335,57 +335,76 @@ class LLMClient:
         history_reset_retry_used = False
         for attempt in range(max_retries):
             async with self._semaphore:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    resp = await client.post(
-                        f"{provider.base_url}/chat/completions",
-                        json=payload,
-                        headers=provider.headers,
-                    )
-                    if resp.status_code == 429 and attempt < max_retries - 1:
-                        self._metrics["kimi_rate_limit_errors"] += 1
-                        wait = self._retry_wait_for_attempt(resp, attempt)
-                        logger.info(
-                            "LLM %s 429 overload, retrying in %.1fs", model, wait
+                try:
+                    async with httpx.AsyncClient(timeout=self.timeout) as client:
+                        resp = await client.post(
+                            f"{provider.base_url}/chat/completions",
+                            json=payload,
+                            headers=provider.headers,
                         )
+                        if resp.status_code == 429 and attempt < max_retries - 1:
+                            self._metrics["kimi_rate_limit_errors"] += 1
+                            wait = self._retry_wait_for_attempt(resp, attempt)
+                            logger.info(
+                                "LLM %s 429 overload, retrying in %.1fs", model, wait
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        if resp.status_code == 400:
+                            # 400 是请求格式错误（如 reasoning_content 缺失），重试无意义
+                            # 直接 raise 让外层 fallback 到下一个模型
+                            body = resp.text[:500]
+                            self._metrics["llm_bad_request_count"] += 1
+                            if (
+                                _is_kimi_model(model)
+                                and not history_reset_retry_used
+                                and "reasoning_content is missing" in body.lower()
+                            ):
+                                history_reset_retry_used = True
+                                self._metrics["moonshot_reasoning_history_errors"] += 1
+                                self._metrics["tool_use_history_reset_count"] += 1
+                                payload["messages"] = (
+                                    self._build_history_reset_retry_messages(
+                                        messages, model
+                                    )
+                                )
+                                logger.warning(
+                                    "LLM %s returned Moonshot reasoning history error; retrying with history reset",
+                                    model,
+                                )
+                                continue
+                            logger.warning(
+                                "LLM %s returned 400 (non-retryable): %s", model, body
+                            )
+                            resp.raise_for_status()
+                        if resp.status_code == 429:
+                            self._metrics["kimi_rate_limit_errors"] += 1
+                        if resp.status_code != 200:
+                            body = resp.text[:500]
+                            logger.warning(
+                                "LLM %s returned %d: %s", model, resp.status_code, body
+                            )
+                            resp.raise_for_status()
+                        data = resp.json()
+                        break
+                except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+                    # V2: SSL 证书错误 / 连接错误重试
+                    if attempt < max_retries - 1:
+                        wait = 2 ** attempt  # 指数退避：1s, 2s, 4s
+                        logger.warning(
+                            "LLM %s connection error (attempt %d/%d), retrying in %.1fs: %s",
+                            model, attempt + 1, max_retries, wait, str(exc)[:200],
+                        )
+                        self._metrics.setdefault("llm_connection_errors", 0)
+                        self._metrics["llm_connection_errors"] += 1
                         await asyncio.sleep(wait)
                         continue
-                    if resp.status_code == 400:
-                        # 400 是请求格式错误（如 reasoning_content 缺失），重试无意义
-                        # 直接 raise 让外层 fallback 到下一个模型
-                        body = resp.text[:500]
-                        self._metrics["llm_bad_request_count"] += 1
-                        if (
-                            _is_kimi_model(model)
-                            and not history_reset_retry_used
-                            and "reasoning_content is missing" in body.lower()
-                        ):
-                            history_reset_retry_used = True
-                            self._metrics["moonshot_reasoning_history_errors"] += 1
-                            self._metrics["tool_use_history_reset_count"] += 1
-                            payload["messages"] = (
-                                self._build_history_reset_retry_messages(
-                                    messages, model
-                                )
-                            )
-                            logger.warning(
-                                "LLM %s returned Moonshot reasoning history error; retrying with history reset",
-                                model,
-                            )
-                            continue
-                        logger.warning(
-                            "LLM %s returned 400 (non-retryable): %s", model, body
-                        )
-                        resp.raise_for_status()
-                    if resp.status_code == 429:
-                        self._metrics["kimi_rate_limit_errors"] += 1
-                    if resp.status_code != 200:
-                        body = resp.text[:500]
-                        logger.warning(
-                            "LLM %s returned %d: %s", model, resp.status_code, body
-                        )
-                        resp.raise_for_status()
-                    data = resp.json()
-                    break
+                    # 最后一次重试也失败，raise 让外层 fallback
+                    logger.error(
+                        "LLM %s connection error after %d retries: %s",
+                        model, max_retries, str(exc)[:200],
+                    )
+                    raise
 
         if "choices" not in data or not data["choices"]:
             # Log error details if present (e.g., OpenRouter returns {"error": {...}})

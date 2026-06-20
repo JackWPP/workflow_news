@@ -234,6 +234,8 @@ def _default_report_settings() -> dict[str, object]:
 
 async def scheduled_report_run():
     logger.info("Starting scheduled native report run.")
+    # V2 Phase 0: 池子健康度预热——日报启动前确认池子有 fresh 数据，否则触发完整 ingester
+    await _ensure_pool_fresh_before_report()
     try:
         if isinstance(pipeline, DailyOrchestrator):
             result = await pipeline.run()
@@ -257,17 +259,114 @@ async def scheduled_report_run():
         # await _send_alert("report_failed", str(exc))
 
 
-async def scheduled_ingester_run():
+async def scheduled_rss_ingester_run():
+    """V2 Phase 0: 每小时只跑 RSS + arXiv（免费），不烧 Bocha 钱。
+
+    改造前: scheduled_ingester_run() 每小时调用 41 次 Bocha = ~¥1,063/月.
+    改造后: 完整 ingester（含 Bocha 模板搜索）改为日报启动时按需触发。
+    """
     from app.services.ingester import ContinuousIngester
-    logger.info("Starting hourly ingester run.")
+    logger.info("Starting hourly RSS-only ingester run.")
+    try:
+        ingester = ContinuousIngester()
+        count = await ingester.run_rss_only()
+        logger.info("Hourly RSS ingester finished: %d new articles.", count)
+    except Exception as exc:
+        logger.error("Hourly RSS ingester failed: %s", exc, exc_info=True)
+
+    # 重试之前失败的正文抓取
+    try:
+        from app.services.ingester import retry_failed_fetches
+        retried = await retry_failed_fetches()
+        if retried > 0:
+            logger.info("Failed-fetch retrier: %d articles recovered.", retried)
+    except Exception as exc:
+        logger.warning("Failed-fetch retrier failed: %s", exc)
+
+
+# V2 Phase 0: 池子健康度预热的全局指标（last-run 端点会读这个）
+_LAST_INGEST_DECISION: dict[str, object] = {
+    "fresh_count_at_check": 0,
+    "ingester_triggered": False,
+    "trigger_reason": "not_yet_run",
+    "checked_at": None,
+}
+
+
+async def _ensure_pool_fresh_before_report(max_age_hours: int = 24, min_fresh: int = 15):
+    """V2 Phase 0: 日报启动前检查 ArticlePool 健康度，陈旧或不足才触发完整 ingester.
+
+    - 直接 SQL 数过去 N 小时入池数量，不经 composer，避免 LIMIT 200 采样偏差.
+    - 决策结果写入 _LAST_INGEST_DECISION，由 /api/diagnostics/last-run 暴露.
+    """
+    from datetime import datetime, timedelta, timezone as _tz
+
+    from sqlalchemy import func, select
+
+    from app.models import ArticlePool
+
+    cutoff = datetime.now(_tz.utc) - timedelta(hours=max_age_hours)
+    fresh_count = 0
+    try:
+        with session_scope() as session:
+            fresh_count = session.scalar(
+                select(func.count(ArticlePool.id)).where(ArticlePool.ingested_at >= cutoff)
+            ) or 0
+    except Exception as exc:
+        logger.warning("[Pool prewarm] DB query failed: %s, will trigger ingester defensively", exc)
+        fresh_count = 0
+
+    needs_refresh = fresh_count < min_fresh
+    decision = {
+        "fresh_count_at_check": int(fresh_count),
+        "max_age_hours": max_age_hours,
+        "min_fresh_threshold": min_fresh,
+        "ingester_triggered": needs_refresh,
+        "trigger_reason": (
+            f"fresh_count<{min_fresh}" if needs_refresh else "pool_healthy"
+        ),
+        "checked_at": datetime.now(_tz.utc).isoformat(),
+    }
+
+    if needs_refresh:
+        logger.info(
+            "[Pool prewarm] fresh count=%d < %d, triggering full ingester (Bocha + RSS + arXiv)",
+            fresh_count, min_fresh,
+        )
+        try:
+            from app.services.ingester import ContinuousIngester
+            ingested = await ContinuousIngester().run()
+            decision["ingester_ingested"] = ingested
+            logger.info("[Pool prewarm] full ingester finished: %d new articles", ingested)
+        except Exception as exc:
+            logger.error("[Pool prewarm] full ingester failed: %s", exc, exc_info=True)
+            decision["ingester_error"] = str(exc)[:200]
+    else:
+        logger.info(
+            "[Pool prewarm] fresh count=%d >= %d, skipping ingester",
+            fresh_count, min_fresh,
+        )
+
+    _LAST_INGEST_DECISION.clear()
+    _LAST_INGEST_DECISION.update(decision)
+
+
+async def scheduled_ingester_run():
+    """⚠️ Legacy: 完整 ingester（含 Bocha 模板搜索）。
+
+    V2 Phase 0 后，这个函数不再挂 hourly scheduler。
+    现在仅作为手动触发或某些 fallback 路径的入口保留。
+    日常自动触发改用 _ensure_pool_fresh_before_report() 在日报启动前按需触发.
+    """
+    from app.services.ingester import ContinuousIngester
+    logger.info("Starting full ingester run (manual / fallback).")
     try:
         ingester = ContinuousIngester()
         count = await ingester.run()
-        logger.info("Hourly ingester finished: %d new articles.", count)
+        logger.info("Full ingester finished: %d new articles.", count)
     except Exception as exc:
-        logger.error("Hourly ingester failed: %s", exc, exc_info=True)
+        logger.error("Full ingester failed: %s", exc, exc_info=True)
 
-    # 重试之前失败的正文抓取
     try:
         from app.services.ingester import retry_failed_fetches
         retried = await retry_failed_fetches()
@@ -392,7 +491,13 @@ async def lifespan(app: FastAPI):
     )
     if not report_settings.get("ai_report_enabled", True):
         scheduler.pause_job("daily_ai_report")
-    scheduler.add_job(scheduled_ingester_run, CronTrigger(hour="*"), id="hourly_ingester", replace_existing=True)
+    # V2 Phase 0: hourly Bocha 模板搜索取消，改成日报启动前按需触发
+    # （见 _ensure_pool_fresh_before_report() 和 scheduled_report_run() 顶部）
+    # hourly 调度只跑 RSS + arXiv（免费），完全不调用 Bocha
+    scheduler.add_job(
+        scheduled_rss_ingester_run, CronTrigger(hour="*"),
+        id="hourly_rss_ingester", replace_existing=True,
+    )
     scheduler.add_job(
         scheduled_lab_report_run,
         CronTrigger(hour=report_settings["report_hour"], minute=report_settings["report_minute"] + 30, timezone=settings.timezone),
@@ -1500,6 +1605,7 @@ async def diagnostics_last_run():
                 "tool_use_model": debug.get("tool_use_model"),
             },
             "search_health": search_health,
+            "ingest_decision": dict(_LAST_INGEST_DECISION),  # V2 Phase 0.5 新增
             "key_failures": key_failures,
             "harness": {
                 "step_count": harness.get("step_count", 0),

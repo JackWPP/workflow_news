@@ -17,7 +17,7 @@ from app.utils import now_local
 logger = logging.getLogger(__name__)
 
 _LOOKBACK_HOURS = 72
-_MAX_POOL_ARTICLES = 200
+_MAX_POOL_ARTICLES = 1000  # V2 Phase A.6: 200 → 1000，匹配 count=50 后 ingester 写入量
 _TOP_K_AFTER_EVAL = 20
 
 
@@ -73,6 +73,7 @@ class DailyComposer:
                     "language": a.language, "source_type": a.source_type,
                     "section": a.section, "category": a.category,
                     "metadata": a.eval_metadata or {},
+                    "ingested_at": a.ingested_at,  # V2 Phase 0: 用于 staleness 判断
                 })
 
         # Sort: RSS first, then template search

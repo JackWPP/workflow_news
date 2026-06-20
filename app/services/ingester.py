@@ -117,11 +117,23 @@ class ContinuousIngester:
         return self._search_engine
 
     async def run(self) -> int:
+        """完整跑：RSS + 模板搜索 + arXiv. 仅在日报触发或手动触发时调用.
+
+        ⚠️ 此方法会消耗 Bocha API（41 个模板搜索）。V2 Phase 0 后不再 hourly 触发。
+        """
         total_ingested = 0
         total_ingested += await self._ingest_rss()
         total_ingested += await self._ingest_template_searches()
         total_ingested += await self._ingest_arxiv_api()
         logger.info("ContinuousIngester: ingested %d new articles", total_ingested)
+        return total_ingested
+
+    async def run_rss_only(self) -> int:
+        """轻量跑：只拉 RSS + arXiv，不烧 Bocha 钱. V2 Phase 0 后由 hourly 调度调用."""
+        total_ingested = 0
+        total_ingested += await self._ingest_rss()
+        total_ingested += await self._ingest_arxiv_api()
+        logger.info("ContinuousIngester[rss_only]: ingested %d new articles", total_ingested)
         return total_ingested
 
     async def _ingest_rss(self) -> int:

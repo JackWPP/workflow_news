@@ -66,9 +66,13 @@ class TestBochaWebSearch:
 
     @pytest.mark.asyncio
     async def test_web_search_disabled(self):
-        client = BochaSearchClient(api_key="")
-        results = await client.search("test")
-        assert results == []
+        # 需要 mock settings.bocha_api_key 为空，否则 __init__ 会 fallback 到 settings
+        from unittest.mock import patch
+        with patch("app.services.bocha_search.settings") as mock_settings:
+            mock_settings.bocha_api_key = ""
+            client = BochaSearchClient(api_key=None)
+            results = await client.search("test")
+            assert results == []
 
     @pytest.mark.asyncio
     async def test_web_search_http_error(self):
@@ -149,6 +153,10 @@ class TestBochaHealthSnapshot:
         assert snap["enabled"] is True
 
     def test_disabled_state(self):
-        client = BochaSearchClient(api_key="")
-        snap = client.health_snapshot()
-        assert snap["health_state"] == "disabled"
+        # 需要 mock settings.bocha_api_key 为空，否则 __init__ 会 fallback 到 settings
+        from unittest.mock import patch
+        with patch("app.services.bocha_search.settings") as mock_settings:
+            mock_settings.bocha_api_key = ""
+            client = BochaSearchClient(api_key=None)
+            snap = client.health_snapshot()
+            assert snap["health_state"] == "disabled"

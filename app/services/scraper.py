@@ -82,15 +82,18 @@ def _extract_html_meta(html: str) -> tuple[str, str | None, Any]:
 
 
 class ScraperClient:
-    """三层降级抓取：Trafilatura → Jina Reader → direct_http。
+    """三层降级抓取：Trafilatura → 智谱 Reader → Jina Reader → direct_http。
 
     每层独立失败，绝不级联。
+    V2 Phase C.2: 新增智谱 reader 作为第二层（Trafilatura 之后、Jina 之前）。
+    exp2 实测：Trafilatura + 智谱 reader 双兜底 = 100% 命中（60/60）。
     """
 
     def __init__(
         self,
         jina_client: Any = None,
         browser_fallback: Any = None,
+        zhipu_reader: Any = None,
     ) -> None:
         # Lazy import to avoid circular dependency at module level
         if jina_client is not None:
@@ -99,6 +102,13 @@ class ScraperClient:
             from app.services.jina_reader import JinaReaderClient
 
             self._jina = JinaReaderClient()
+        # V2 Phase C.2: 智谱 reader 作为第二层兜底
+        if zhipu_reader is not None:
+            self._zhipu_reader = zhipu_reader
+        else:
+            from app.services.zhipu_reader import ZhipuReaderClient
+
+            self._zhipu_reader = ZhipuReaderClient()
         self._browser_fallback = browser_fallback
 
     @property
@@ -128,7 +138,17 @@ class ScraperClient:
         except (Exception, asyncio.CancelledError) as exc:
             logger.debug("scraper: Trafilatura failed for %s: %s", url, exc)
 
-        # 第二层：Jina Reader
+        # 第二层：智谱 Reader（V2 Phase C.2，国内可达性好）
+        if self._zhipu_reader and self._zhipu_reader.enabled:
+            try:
+                result = await self._zhipu_reader.scrape(url, timeout_seconds=timeout)
+                if result.get("status") != "error" and result.get("markdown"):
+                    logger.debug("scraper: ZhipuReader success for %s", url)
+                    return result
+            except (Exception, asyncio.CancelledError) as exc:
+                logger.debug("scraper: ZhipuReader failed for %s: %s", url, exc)
+
+        # 第三层：Jina Reader
         try:
             result = await self._jina.scrape(url, timeout_seconds=timeout)
             if result.get("status") != "error" and result.get("markdown"):
@@ -137,7 +157,7 @@ class ScraperClient:
         except (Exception, asyncio.CancelledError) as exc:
             logger.debug("scraper: Jina failed for %s: %s", url, exc)
 
-        # 第三层：direct_http fallback
+        # 第四层：direct_http fallback
         try:
             result = await self._jina._fallback_scrape(url, timeout)
             logger.debug("scraper: httpx fallback for %s", url)

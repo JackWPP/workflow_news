@@ -45,6 +45,36 @@ from app.services.rss import fetch_feed_entries
 logger = logging.getLogger(__name__)
 
 
+def _seeds_too_stale(seeds: list[dict], max_age_hours: int = 24) -> bool:
+    """V2 Phase 0: 判断 seeds 是否全部超过 max_age_hours.
+
+    依赖 composer.gather_seeds() 返回的 dict 必须含 'ingested_at' 字段（顶层）.
+    fresh_count 是 0 → 视为陈旧 → 返回 True 触发刷新.
+    """
+    from datetime import datetime, timedelta, timezone
+    if not seeds:
+        return True  # 空池视为陈旧
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=max_age_hours)
+    fresh_count = 0
+    for s in seeds:
+        ingested_at = s.get("ingested_at")
+        if not ingested_at:
+            continue
+        if isinstance(ingested_at, str):
+            try:
+                ts = datetime.fromisoformat(ingested_at.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+        else:
+            ts = ingested_at  # datetime 对象
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts >= cutoff:
+            fresh_count += 1
+    return fresh_count == 0
+
+
 class DailyReportAgent:
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self._llm_client = llm_client or LLMClient()
@@ -265,8 +295,23 @@ class DailyReportAgent:
         from app.services.composer import DailyComposer
         composer = DailyComposer(llm_client=llm_client)
         seeds = await composer.gather_seeds(target_date)
-        if not seeds:
-            logger.info("[DailyReportAgent] ArticlePool empty, triggering Ingester first")
+
+        # V2 Phase 0: 池子健康度检查——空、不足、或全部陈旧 → 触发完整 ingester
+        needs_refresh = (
+            not seeds
+            or len(seeds) < 15
+            or _seeds_too_stale(seeds, max_age_hours=24)
+        )
+        if needs_refresh:
+            reason = (
+                "empty" if not seeds
+                else f"insufficient({len(seeds)})" if len(seeds) < 15
+                else "all_stale_24h"
+            )
+            logger.info(
+                "[DailyReportAgent] Pool needs refresh (reason=%s), triggering full ingester",
+                reason,
+            )
             try:
                 from app.services.ingester import ContinuousIngester
                 await ContinuousIngester().run()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,6 +35,10 @@ class BochaSearchClient:
         self._last_error = ""
         self._consecutive_empty_queries = 0
         self._last_api_code: int | None = None
+        # ── V2 Phase 0.5: 累积统计（用于 health_snapshot 暴露）──
+        self._total_results = 0          # 累计返回的结果总数
+        self._latencies_ms: list[int] = []  # 每次成功请求的延迟（ms）
+        self._summary_chars: list[int] = []  # 每条结果 summary 的字数（采样）
 
     @property
     def enabled(self) -> bool:
@@ -85,6 +90,7 @@ class BochaSearchClient:
 
         try:
             self._request_count += 1
+            _start_time = time.perf_counter()
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(_BASE_URL, json=payload, headers=headers)
                 if resp.status_code != 200:
@@ -137,7 +143,9 @@ class BochaSearchClient:
             results.append({
                 "url": url,
                 "title": item.get("name") or "",
-                "snippet": ai_summary if ai_summary else snippet,
+                "snippet": ai_summary if ai_summary else snippet,  # 维持现状（下游已依赖）
+                "summary_full": ai_summary,                          # V2 Phase A.2: 显式 800字 summary
+                "snippet_raw": snippet,                              # V2 Phase A.2: 原始 100字 snippet
                 "image_url": image_url,
                 "published_at": published_at,
                 "domain": domain,
@@ -146,6 +154,15 @@ class BochaSearchClient:
                 "provider": "bocha",
                 "metadata": item,
             })
+            # V2 Phase 0.5: 累积 summary 字数样本（限制存量避免内存膨胀）
+            if ai_summary and len(self._summary_chars) < 1000:
+                self._summary_chars.append(len(ai_summary))
+
+        # V2 Phase 0.5: 累积统计
+        latency_ms = int((time.perf_counter() - _start_time) * 1000)
+        if len(self._latencies_ms) < 1000:
+            self._latencies_ms.append(latency_ms)
+        self._total_results += len(results)
 
         logger.info("BochaSearch '%s' → %d results", query, len(results))
         return results
@@ -246,7 +263,9 @@ class BochaSearchClient:
                     results.append({
                         "url": url,
                         "title": item.get("name") or "",
-                        "snippet": ai_summary if ai_summary else snippet,
+                        "snippet": ai_summary if ai_summary else snippet,  # 维持现状（下游已依赖）
+                        "summary_full": ai_summary,                          # V2 Phase A.2: 显式 800字 summary
+                        "snippet_raw": snippet,                              # V2 Phase A.2: 原始 100字 snippet
                         "image_url": image_url,
                         "published_at": published_at,
                         "domain": domain,
@@ -281,6 +300,20 @@ class BochaSearchClient:
             health_state = "degraded"
         else:
             health_state = "healthy"
+
+        # V2 Phase 0.5: 累积统计衍生指标
+        def _pct(lst: list[int], p: float) -> int:
+            if not lst:
+                return 0
+            s = sorted(lst)
+            return s[min(len(s) - 1, int(len(s) * p))]
+
+        successful_requests = max(self._request_count - self._failure_count, 0)
+        avg_results = (
+            round(self._total_results / successful_requests, 1)
+            if successful_requests > 0 else 0
+        )
+
         return {
             "provider": "bocha",
             "enabled": self.enabled,
@@ -292,6 +325,13 @@ class BochaSearchClient:
             "last_error": self._last_error,
             "state": "degraded" if self._consecutive_failures >= 2 else "healthy",
             "health_state": health_state,
+            # ── V2 Phase 0.5 新增字段 ──
+            "avg_results_per_query": avg_results,
+            "p50_summary_chars": _pct(self._summary_chars, 0.5),
+            "p95_summary_chars": _pct(self._summary_chars, 0.95),
+            "p50_latency_ms": _pct(self._latencies_ms, 0.5),
+            "p95_latency_ms": _pct(self._latencies_ms, 0.95),
+            "total_results": self._total_results,
         }
 
 
