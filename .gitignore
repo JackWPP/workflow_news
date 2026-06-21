@@ -23,3 +23,13 @@ help3.md
 .claude/ralph-loop.local.md
 全部专利-纠错后.xlsx
 .worktrees
+
+# Runtime / local artifacts
+.slim/
+backups/
+*.log
+
+# Experiments & third-party docs
+experiments/
+bocha_docs/
+*.zip
