@@ -8,7 +8,7 @@
 #   kind: 信源类型 rss/api/listing/search
 #   tier: 信源等级 S/A/B/C/D/Watch-only
 #   sections: 可入选的日报板块 [industry, policy, academic]
-#   categories: 可入选的方向 [高材制造, 清洁能源, AI]
+#   categories: 可入选的方向 [塑料, 橡胶, 纤维] (AI 由独立 AI日报 处理)
 #   language: 主要语言 zh/en
 #   country: 国家/地区代码
 #   priority: 优先级（越高越优先）
@@ -34,7 +34,7 @@
   kind: search
   tier: A
   sections: [policy]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 95
@@ -54,7 +54,7 @@
   kind: search
   tier: A
   sections: [policy]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 87
@@ -74,7 +74,7 @@
   kind: search
   tier: A
   sections: [policy]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 88
@@ -94,7 +94,7 @@
   kind: search
   tier: A
   sections: [policy]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 84
@@ -114,7 +114,7 @@
   kind: search
   tier: A
   sections: [policy]
-  categories: [清洁能源]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 82
@@ -137,7 +137,7 @@
   kind: rss
   tier: A
   sections: [academic]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料, 橡胶, 纤维]
   language: en
   country: GB
   priority: 90
@@ -155,7 +155,7 @@
   kind: rss
   tier: A
   sections: [academic]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料, 橡胶, 纤维]
   language: en
   country: US
   priority: 86
@@ -173,7 +173,7 @@
   kind: rss
   tier: A
   sections: [academic]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料, 橡胶, 纤维]
   language: en
   country: NL
   priority: 85
@@ -192,7 +192,7 @@
   kind: rss
   tier: A
   sections: [academic, industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: en
   country: US
   priority: 80
@@ -210,7 +210,7 @@
   kind: rss
   tier: A
   sections: [academic]
-  categories: [高材制造]
+  categories: [塑料]
   language: en
   country: US
   priority: 78
@@ -228,7 +228,7 @@
   kind: rss
   tier: A
   sections: [academic]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料, 橡胶, 纤维]
   language: en
   country: US
   priority: 77
@@ -247,7 +247,7 @@
   kind: rss
   tier: A
   sections: [academic]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 75
@@ -266,7 +266,7 @@
   kind: rss
   tier: A
   sections: [academic]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料, 橡胶, 纤维]
   language: en
   country: US
   priority: 85
@@ -285,7 +285,7 @@
   kind: rss
   tier: A
   sections: [academic]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料, 橡胶, 纤维]
   language: en
   country: US
   priority: 80
@@ -308,7 +308,7 @@
   kind: search
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 86
@@ -328,7 +328,7 @@
   kind: search
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料, 橡胶]
   language: zh
   country: HK
   priority: 85
@@ -348,7 +348,7 @@
   kind: search
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 80
@@ -368,7 +368,7 @@
   kind: listing
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 78
@@ -389,7 +389,7 @@
   kind: search
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 72
@@ -409,7 +409,7 @@
   kind: search
   tier: B
   sections: [industry, policy]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 77
@@ -429,7 +429,7 @@
   kind: search
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 75
@@ -449,7 +449,7 @@
   kind: search
   tier: B
   sections: [industry, policy]
-  categories: [清洁能源]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 74
@@ -469,7 +469,7 @@
   kind: search
   tier: B
   sections: [policy, industry]
-  categories: [清洁能源]
+  categories: [塑料]
   language: en
   country: US
   priority: 72
@@ -489,7 +489,7 @@
   kind: rss
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: en
   country: IN
   priority: 70
@@ -507,7 +507,7 @@
   kind: rss
   tier: B
   sections: [industry]
-  categories: [清洁能源]
+  categories: [塑料]
   language: en
   country: US
   priority: 70
@@ -525,7 +525,7 @@
   kind: rss
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: en
   country: US
   priority: 70
@@ -544,7 +544,7 @@
   kind: rss
   tier: B
   sections: [academic]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料, 橡胶, 纤维]
   language: en
   country: US
   priority: 68
@@ -563,7 +563,7 @@
   kind: rss
   tier: B
   sections: [academic]
-  categories: [高材制造, 清洁能源]
+  categories: [塑料, 橡胶, 纤维]
   language: en
   country: US
   priority: 68
@@ -583,7 +583,7 @@
   kind: listing
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 76
@@ -601,7 +601,7 @@
   kind: listing
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 76
@@ -620,7 +620,7 @@
   kind: rss
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: en
   country: DE
   priority: 72
@@ -639,7 +639,7 @@
   kind: rss
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 70
@@ -657,7 +657,7 @@
   kind: rss
   tier: B
   sections: [industry, policy]
-  categories: [清洁能源]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 70
@@ -675,7 +675,7 @@
   kind: rss
   tier: B
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 70
@@ -697,7 +697,7 @@
   kind: listing
   tier: C
   sections: [industry]
-  categories: [高材制造]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 60
@@ -716,7 +716,7 @@
   kind: rss
   tier: C
   sections: [industry]
-  categories: [清洁能源]
+  categories: [塑料]
   language: zh
   country: CN
   priority: 65

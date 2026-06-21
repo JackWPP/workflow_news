@@ -31,20 +31,24 @@ logger = logging.getLogger(__name__)
 _TITLE_SIMILARITY_THRESHOLD = 0.75
 
 _KEYWORDS = {
-    "高材制造": [
-        "高分子", "塑料", "树脂", "橡胶", "复合材料", "注塑", "挤出", "吹塑",
-        "薄膜", "改性", "聚合物", "聚乳酸", "pbat", "pla", "polymer", "plastic",
-        "resin", "rubber", "composite", "injection", "extrusion",
+    "塑料": [
+        "塑料","树脂","注塑","挤出","吹塑","薄膜","改性","聚乙烯","聚丙烯","聚苯乙烯",
+        "聚氯乙烯","PET","PVC","PE","PP","PS","PLA","PBAT","PBS","EVA","POE",
+        "回收","再生塑料","限塑","禁塑","碳关税","CBAM","隔膜","胶膜","封装",
+        "质子交换膜","导电高分子","聚苯胺","3D打印","增材制造",
+        "plastic","polymer","resin","injection","extrusion","film","recycling","biodegradable",
     ],
-    "清洁能源": [
-        "回收", "降解", "碳关税", "碳排放", "可持续", "新能源", "光伏", "电池",
-        "隔膜", "recycling", "biodegradable", "cbam", "carbon", "sustainable",
-        "battery", "membrane", "separator",
+    "橡胶": [
+        "橡胶","轮胎","合成橡胶","天然橡胶","丁苯橡胶","丁腈橡胶","硅橡胶","氟橡胶",
+        "聚氨酯","弹性体","热塑性弹性体","TPU","TPE","TPV","硫化","密炼","开炼",
+        "密封件","胶管","胶带","输送带","减震",
+        "rubber","tire","tyre","elastomer","vulcanization","SBR","NBR","EPDM",
     ],
-    "AI": [
-        "人工智能", "机器学习", "深度学习", "智能制造", "数字化", "ai",
-        "artificial intelligence", "machine learning", "deep learning",
-        "materials informatics", "digital twin",
+    "纤维": [
+        "纤维","碳纤维","芳纶","超高分子量聚乙烯纤维","涤纶","锦纶","尼龙","丙纶",
+        "腈纶","氨纶","维纶","粘胶","化纤","纺丝","熔体纺丝","湿法纺丝","静电纺丝",
+        "玻璃纤维","预浸料",
+        "fiber","fibre","carbon fiber","aramid","UHMWPE","spinning","nylon","polyester","prepreg",
     ],
 }
 
@@ -157,11 +161,9 @@ class SectionEditorAgent:
 
     def __init__(
         self,
-        section: str,
         category: str,
         llm_client: LLMClient | None = None,
     ) -> None:
-        self.section = section
         self.category = category
         self._llm = llm_client or LLMClient()
 
@@ -198,7 +200,6 @@ class SectionEditorAgent:
 
         return (
             f"当前时间：{now.isoformat(' ', 'seconds')}\n\n"
-            f"板块：{self.section}\n"
             f"方向：{self.category}\n\n"
             f"候选清单（共 {len(candidates)} 条，已去重排序）：\n{candidate_block}\n\n"
             f"工作流程：\n"
@@ -233,7 +234,6 @@ class SectionEditorAgent:
                 "metadata": {
                     "explorer_candidate": True,
                     "why_selected": c.get("why_selected", ""),
-                    "section": self.section,
                     "category": self.category,
                 },
             })
@@ -244,15 +244,18 @@ class SectionEditorAgent:
         run_id: int | None = None,
     ) -> list[dict[str, Any]]:
         if not candidates:
-            logger.info("[SectionEditorAgent] No candidates provided")
+            logger.warning(
+                "[SectionEditorAgent] %s: No candidates provided — "
+                "section will be empty. Root cause: Explorer returned 0 articles.",
+                self.category,
+            )
             return []
 
         deduped = deduplicate_candidates(candidates)
         ranked = rank_candidates(deduped, category=self.category)
 
         logger.info(
-            "[SectionEditorAgent] %s/%s: %d candidates → %d deduped → %d ranked",
-            self.section,
+            "[SectionEditorAgent] %s: %d candidates → %d deduped → %d ranked",
             self.category,
             len(candidates),
             len(deduped),
@@ -272,8 +275,7 @@ class SectionEditorAgent:
         cards = self._build_cards(ranked, result, memory)
 
         logger.info(
-            "[SectionEditorAgent] %s/%s finished: %d cards, reason=%s",
-            self.section,
+            "[SectionEditorAgent] %s finished: %d cards, reason=%s",
             self.category,
             len(cards),
             result.finished_reason,
@@ -293,9 +295,12 @@ class SectionEditorAgent:
         cards: list[dict[str, Any]] = []
         for i, c in enumerate(ranked):
             url = c.get("url", "")
+            card_section = c.get("section", "industry")
+            if url in pub_map:
+                card_section = pub_map[url].section or card_section
             card: dict[str, Any] = {
                 **c,
-                "section": self.section,
+                "section": card_section,
                 "category": self.category,
                 "rank": i + 1,
                 "status": "approved" if url in pub_urls else "draft",

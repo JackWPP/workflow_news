@@ -53,7 +53,7 @@ class ArticleSummary:
     allowed_for_trend_summary: bool = False
     is_primary_source: bool = False
     requires_observation_only: bool = False
-    category: str = ""  # 高材制造 / 清洁能源 / AI
+    category: str = ""  # 塑料 / 橡胶 / 纤维
     selection_reason: str = ""
     topic_confidence: str = ""
     excluded_reason: str = ""

@@ -185,7 +185,7 @@ def build_combined_report_payload(reports: list[Report]) -> SimpleNamespace | No
         image_review_summary={"verified_image_count": image_count},
         created_at=getattr(primary, "created_at"),
         report_type="combined",
-        categories=["高材制造", "清洁能源", "AI"],
+        categories=["塑料", "橡胶", "纤维"],
         english_section_count=sum(1 for item in items if item.language == "en"),
         chinese_section_count=sum(1 for item in items if item.language != "en"),
         overall_score=None,

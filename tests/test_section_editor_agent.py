@@ -26,6 +26,7 @@ def _make_candidate(
     key_finding: str = "",
     why_selected: str = "",
     image_url: str | None = None,
+    section: str = "industry",
 ) -> dict:
     return {
         "url": url,
@@ -39,6 +40,7 @@ def _make_candidate(
         "why_selected": why_selected,
         "image_url": image_url,
         "published_at": published_at,
+        "section": section,
     }
 
 
@@ -74,24 +76,24 @@ class TestTitleSimilarity:
 
 
 class TestKeywordScore:
-    def test_high_material_category_match(self):
-        text = "新型注塑机采用高分子复合材料"
-        score = _keyword_score(text, "高材制造")
+    def test_plastic_category_match(self):
+        text = "新型注塑机采用聚乙烯薄膜"
+        score = _keyword_score(text, "塑料")
+        assert score > 0.05
+
+    def test_rubber_category_match(self):
+        text = "轮胎橡胶密封件弹性体TPU"
+        score = _keyword_score(text, "橡胶")
         assert score > 0.1
 
-    def test_clean_energy_category_match(self):
-        text = "塑料回收与碳排放新规"
-        score = _keyword_score(text, "清洁能源")
-        assert score > 0.1
-
-    def test_ai_category_match(self):
-        text = "machine learning and deep learning for materials informatics"
-        score = _keyword_score(text, "AI")
+    def test_fiber_category_match(self):
+        text = "碳纤维芳纶涤纶纺丝工艺"
+        score = _keyword_score(text, "纤维")
         assert score > 0.1
 
     def test_no_match(self):
         text = "今天天气不错"
-        score = _keyword_score(text, "高材制造")
+        score = _keyword_score(text, "塑料")
         assert score == 0.0
 
     def test_unknown_category(self):
@@ -195,11 +197,11 @@ class TestRanking:
             _make_candidate(
                 url="https://b.com/2",
                 title="注塑机新品发布",
-                summary="高分子复合材料应用",
+                summary="聚乙烯薄膜应用",
                 source_tier="B",
             ),
         ]
-        result = rank_candidates(candidates, category="高材制造")
+        result = rank_candidates(candidates, category="塑料")
         assert result[0]["url"] == "https://b.com/2"
 
     def test_empty_input(self):
@@ -214,7 +216,7 @@ class TestRanking:
             ),
             _make_candidate(
                 url="https://b.com/2",
-                published_at="2026-06-13T10:00:00Z",
+                published_at="2026-06-19T10:00:00Z",
                 source_tier="A",
             ),
         ]
@@ -227,28 +229,26 @@ class TestRanking:
 
 class TestSectionEditorAgentInit:
     def test_init_with_defaults(self):
-        agent = SectionEditorAgent(section="industry", category="高材制造")
-        assert agent.section == "industry"
-        assert agent.category == "高材制造"
+        agent = SectionEditorAgent(category="塑料")
+        assert agent.category == "塑料"
         assert agent._llm is not None
 
     def test_init_with_custom_llm(self):
         mock_llm = SimpleNamespace()
         agent = SectionEditorAgent(
-            section="policy",
-            category="清洁能源",
+            category="橡胶",
             llm_client=mock_llm,
         )
         assert agent._llm is mock_llm
 
     def test_harness_limits(self):
-        agent = SectionEditorAgent(section="industry", category="高材制造")
+        agent = SectionEditorAgent(category="塑料")
         harness = agent._build_harness()
         assert harness.max_steps == 20
         assert harness.max_duration_seconds == 240.0
 
     def test_tools_include_expected(self):
-        agent = SectionEditorAgent(section="industry", category="高材制造")
+        agent = SectionEditorAgent(category="塑料")
         tools = agent._build_tools()
         tool_names = {t.name for t in tools}
         assert "evaluate_article" in tool_names
@@ -258,21 +258,20 @@ class TestSectionEditorAgentInit:
         assert "finish" in tool_names
 
     def test_tools_exclude_search(self):
-        agent = SectionEditorAgent(section="industry", category="高材制造")
+        agent = SectionEditorAgent(category="塑料")
         tools = agent._build_tools()
         tool_names = {t.name for t in tools}
         assert "web_search" not in tool_names
         assert "read_page" not in tool_names
 
-    def test_task_prompt_contains_section_and_category(self):
-        agent = SectionEditorAgent(section="academic", category="AI")
+    def test_task_prompt_contains_category(self):
+        agent = SectionEditorAgent(category="纤维")
         candidates = [_make_candidate()]
         prompt = agent._build_task_prompt(candidates)
-        assert "academic" in prompt
-        assert "AI" in prompt
+        assert "纤维" in prompt
 
     def test_task_prompt_lists_candidates(self):
-        agent = SectionEditorAgent(section="industry", category="高材制造")
+        agent = SectionEditorAgent(category="塑料")
         candidates = [
             _make_candidate(title="Article One", domain="a.com"),
             _make_candidate(title="Article Two", domain="b.com"),
@@ -287,7 +286,7 @@ class TestSectionEditorAgentInit:
 
 class TestCardOutput:
     def test_card_has_all_required_fields(self):
-        agent = SectionEditorAgent(section="industry", category="高材制造")
+        agent = SectionEditorAgent(category="塑料")
         ranked = [_make_candidate()]
         result = SimpleNamespace(
             success=True,
@@ -313,7 +312,7 @@ class TestCardOutput:
             assert field in card, f"Missing field: {field}"
 
     def test_card_rank_is_sequential(self):
-        agent = SectionEditorAgent(section="industry", category="高材制造")
+        agent = SectionEditorAgent(category="塑料")
         ranked = [
             _make_candidate(url=f"https://a.com/{i}", title=f"Article {i}")
             for i in range(5)
@@ -331,9 +330,9 @@ class TestCardOutput:
         for i, card in enumerate(cards):
             assert card["rank"] == i + 1
 
-    def test_card_section_and_category_match_agent(self):
-        agent = SectionEditorAgent(section="policy", category="清洁能源")
-        ranked = [_make_candidate()]
+    def test_card_section_from_candidate_and_category_match_agent(self):
+        agent = SectionEditorAgent(category="橡胶")
+        ranked = [_make_candidate(section="policy")]
         result = SimpleNamespace(
             success=True,
             finished_reason="finish_tool",
@@ -345,13 +344,13 @@ class TestCardOutput:
 
         cards = agent._build_cards(ranked, result, memory)
         assert cards[0]["section"] == "policy"
-        assert cards[0]["category"] == "清洁能源"
+        assert cards[0]["category"] == "橡胶"
 
     def test_empty_candidates_returns_empty(self):
         import asyncio
 
         async def run():
-            agent = SectionEditorAgent(section="industry", category="高材制造")
+            agent = SectionEditorAgent(category="塑料")
             return await agent.edit([])
 
         cards = asyncio.get_event_loop().run_until_complete(run())
@@ -382,5 +381,5 @@ class TestEditIntegration:
         ]
         deduped = deduplicate_candidates(candidates)
         assert len(deduped) == 2
-        ranked = rank_candidates(deduped, "高材制造")
+        ranked = rank_candidates(deduped, "塑料")
         assert ranked[0]["url"] == "https://b.com/2"

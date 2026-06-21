@@ -153,7 +153,7 @@ class LabReportComposer:
                 "image_url": wa.image_url,
                 "language": "zh",
                 "decision_trace": {
-                    "category": "高材制造",
+                    "category": "塑料",
                     "source_type": "wechat",
                     "source_domain": "mp.weixin.qq.com",
                 },
@@ -188,7 +188,7 @@ class LabReportComposer:
             "image_url": None,
             "language": a.language or "zh",
             "decision_trace": {
-                "category": "高材制造",
+                "category": "塑料",
                 "source_type": a.source_type,
                 "source_domain": a.domain,
             },

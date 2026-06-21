@@ -1,7 +1,7 @@
 # AGENTS.md — 高分子材料加工每日资讯平台
 
 > 最后更新：2026-06-20
-> 当前阶段：**V2 搜索优化完成**（调度节流 96%、count=50、智谱 reader 兜底、SSL 重试）
+> 当前阶段：**V3 分类重构完成**（三分类：塑料/橡胶/纤维，AI 独立为 AI日报；材料分类为日报主轴）
 
 ---
 
@@ -9,7 +9,7 @@
 
 **高分子材料加工领域垂直研究情报平台**。每天自动检索全球范围内的高分子材料加工相关新闻、政策、学术成果，经过去重、评估、分类后，生成结构化中文日报。同时提供交互式研究助手对话。
 
-**用户**：实验室师生（约 10-30 人），关注高材制造、清洁能源、AI 三个方向的行业动态。
+**用户**：实验室师生（约 10-30 人），关注塑料、橡胶、纤维三个材料方向的行业动态，以及 AI 在材料领域的应用进展。
 
 **当前运行模式**：FastAPI 单体应用，APScheduler 每日 10:00 触发日报生成，Vue 3 SPA 前端展示。
 
@@ -100,7 +100,7 @@ Checkpoint 3 (step 28): 没有 finish → auto_finish 收尾
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Vue 3 Frontend                            │
-│  全球日报 / 实验室日报 / 高材制造·清洁能源·AI 分类 / 研究助手     │
+│  全球日报 / 实验室日报 / 塑料·橡胶·纤维 分类 / AI日报 / 研究助手   │
 ├─────────────────────────────────────────────────────────────────┤
 │                      FastAPI Backend                              │
 │                                                                   │
@@ -195,14 +195,14 @@ class ArticlePool(Base):
     ingested_at: datetime
     quality_score: float | None  # 由 BatchEvaluator 填充
     section: str | None  # "industry" | "policy" | "academic"
-    category: str | None  # "高材制造" | "清洁能源" | "AI"
+    category: str | None  # "塑料" | "橡胶" | "纤维"（全球日报）；"AI"（AI日报独立）
     eval_metadata: JSON | None
 
 # Report: 日报（修改现有）
 class Report(Base):
     # 新增字段
     report_type: str  # "global" | "lab"
-    categories: JSON  # ["高材制造", "清洁能源", "AI"]
+    categories: JSON  # ["塑料", "橡胶", "纤维"]（全球日报）；AI 日报独立
     english_section_count: int  # 英文文章数
     chinese_section_count: int  # 中文文章数
 
@@ -321,8 +321,8 @@ class EvaluationRun(Base):
 - [x] 图片评分 + AI 兜底图
 - [x] Bocha include/freshness/ai_search 优化
 - [x] Ingester 域名黑名单 + 关键词白名单
-- [x] 三分类 + 语言标记
-- [x] 前端中文化 + 三方向 Tab
+- [x] 三分类（塑料/橡胶/纤维）+ 语言标记；AI 独立为 AI日报
+- [x] 前端中文化 + 材料分类 Tab（塑料/橡胶/纤维）
 - [x] **DailyOrchestrator 多 agent 架构**（3×Explorer + 3×Editor + Summary）
 - [x] **V2 搜索优化 Phase 0**：取消 hourly Bocha 调度 → 按需触发（节流 96%，月成本 ¥1,063→¥68）
 - [x] **V2 Phase 0.5**：health_snapshot 加 6 个累积统计字段 + last-run 加 ingest_decision
@@ -330,6 +330,7 @@ class EvaluationRun(Base):
 - [x] **V2 Phase C.2**：智谱 reader 兜底（Trafilatura → 智谱 reader → Jina → direct HTTP 四层）
 - [x] **V2 SSL 修复**：LLMClient 加 SSL 错误指数退避重试（1s/2s/4s，最多 3 次）
 - [x] **V2 Phase B 回滚**：双源并行 ROI 不高（成本 +107%，文章数没增加），已回滚
+- [x] **V3 分类重构**：高材制造/清洁能源/AI → 塑料/橡胶/纤维（材料分类为日报主轴，AI 独立为 AI日报）
 
 ### 待完成
 

@@ -10,7 +10,7 @@ SOURCE_TIER_RANK = {"A": 4, "B": 3, "C": 2, "D": 1}
 SOURCE_RELIABILITY_LABEL = {
     "A": "高（规则判定）",
     "B": "中高（规则判定）",
-    "C": "中（仅可辅助参考）",
+    "C": "中（行业媒体/一般来源，需交叉验证）",
     "D": "低（不纳入）",
 }
 
@@ -54,6 +54,18 @@ MAINSTREAM_MEDIA_SUFFIXES = (
 )
 VERTICAL_MEDIA = {
     "f3dp.cn",
+    "86pla.com",
+    "hg707.com",
+    "chem17.com",
+    "ccin.com.cn",
+    "chemmade.com",
+    "cria.org.cn",
+    "carbonfiber.com.cn",
+    "frponline.com.cn",
+    "cppia.com.cn",
+    "plas.hc360.com",
+    "chem.hc360.com",
+    "cnplastic.com",
 }
 OFFICIAL_NEWSROOM_DOMAINS = {
     "clariant.com",
@@ -96,9 +108,7 @@ LOW_VALUE_DOMAINS = {
     "51sole.com": "aggregator",
     "foodmate.net": "aggregator",
     "m.foodmate.net": "aggregator",
-    "mysteel.com": "aggregator",
-    "m.mysteel.com": "aggregator",
-    "100ppi.com": "aggregator",
+
     "bohe.cn": "aggregator",
     "qcc.com": "aggregator",
     "tianyancha.com": "aggregator",
@@ -213,7 +223,7 @@ def classify_source(
         publish_block_reason = "低可信来源或页面类型，不纳入日报"
     elif page_kind == "price_snapshot" and not is_valid_price_content(title, content):
         publish_block_reason = "价格快照页缺少上下文分析，不纳入日报"
-    elif page_kind in {"download", "anti_bot", "binary", "navigation", "homepage"}:
+    elif page_kind in {"download", "anti_bot", "binary", "navigation"}:
         publish_block_reason = "页面类型不适合直接作为日报证据"
 
     return {
@@ -273,7 +283,9 @@ def detect_page_kind(url: str, title: str = "", content: str = "") -> str:
     if any(hint in url_signals for hint in PRICE_HINTS):
         return "price_snapshot"
     if path in {"", "/"}:
-        return "homepage"
+        if looks_like_navigation_page(title_lower, content_head):
+            return "homepage"
+        return "article"
     if (
         any(part in path for part in NEWS_PATH_PARTS)
         or "/article/" in path
@@ -338,7 +350,6 @@ def infer_source_tier(
         "navigation",
         "product",
         "about",
-        "homepage",
     }:
         return "D"
     if source_kind in {"ecommerce", "marketing", "aggregator"}:

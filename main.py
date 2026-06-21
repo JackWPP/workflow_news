@@ -762,7 +762,7 @@ async def run_report(payload: ReportRunRequest, request: Request):
                                 image_url=card.get("image_url"),
                                 language=card.get("language", "zh"),
                                 decision_trace={
-                                    "category": card.get("category", "高材制造"),
+                                    "category": card.get("category", "塑料"),
                                     "source_tier": card.get("source_tier", ""),
                                     "source_kind": card.get("source_kind", ""),
                                     "selection_reason": card.get("why_selected", ""),

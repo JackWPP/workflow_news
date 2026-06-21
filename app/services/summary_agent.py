@@ -22,23 +22,9 @@ from app.services.working_memory import ArticleSummary, WorkingMemory
 
 logger = logging.getLogger(__name__)
 
-_SECTION_LABELS = {
-    "industry": "产业动态与设备",
-    "policy": "下游应用与政策",
-    "academic": "前沿技术与学术",
-}
+_CATEGORY_LABELS = {"塑料": "塑料", "橡胶": "橡胶", "纤维": "纤维"}
 
-_SECTION_EMOJIS = {
-    "industry": "🏭",
-    "policy": "📢",
-    "academic": "🔬",
-}
-
-_CATEGORY_EMOJIS = {
-    "高材制造": "🧪",
-    "清洁能源": "⚡",
-    "AI": "🤖",
-}
+_CATEGORY_EMOJIS = {"塑料": "🧴", "橡胶": "🛞", "纤维": "🧵"}
 
 
 class SummaryAgent:
@@ -80,8 +66,8 @@ class SummaryAgent:
     def _group_by_section(self, cards: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for card in cards:
-            section = card.get("section") or "industry"
-            grouped[section].append(card)
+            category = card.get("category") or "塑料"
+            grouped[category].append(card)
         return dict(grouped)
 
     async def _analyze(
@@ -128,22 +114,22 @@ class SummaryAgent:
 
     @staticmethod
     def _heuristic_analysis(grouped: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
-        section_counts = {s: len(items) for s, items in grouped.items()}
-        total = sum(section_counts.values())
+        category_counts = {c: len(items) for c, items in grouped.items()}
+        total = sum(category_counts.values())
 
         parts = []
-        for section, count in section_counts.items():
-            label = _SECTION_LABELS.get(section, section)
+        for category, count in category_counts.items():
+            label = _CATEGORY_LABELS.get(category, category)
             parts.append(f"{label} {count} 条")
         summary = f"今日共收录 {total} 篇文章，覆盖{'、'.join(parts)}。"
 
         trends = []
-        if section_counts.get("industry", 0) >= 2:
-            trends.append("产业动态持续活跃")
-        if section_counts.get("academic", 0) >= 2:
-            trends.append("学术研究产出稳定")
-        if section_counts.get("policy", 0) >= 1:
-            trends.append("政策环境有所变化")
+        if category_counts.get("塑料", 0) >= 2:
+            trends.append("塑料板块活跃")
+        if category_counts.get("橡胶", 0) >= 2:
+            trends.append("橡胶产业动态稳定")
+        if category_counts.get("纤维", 0) >= 1:
+            trends.append("纤维领域有新进展")
 
         return {
             "summary": summary,
@@ -160,7 +146,7 @@ class SummaryAgent:
     ) -> str:
         today = date.today().isoformat()
         total = len(all_cards)
-        section_counts = {s: len(grouped.get(s, [])) for s in ("industry", "policy", "academic")}
+        category_counts = {c: len(grouped.get(c, [])) for c in ("塑料", "橡胶", "纤维")}
         source_tiers = {}
         for c in all_cards:
             t = c.get("source_tier", "?")
@@ -177,20 +163,20 @@ class SummaryAgent:
 
         nav_items = []
         section_blocks = []
-        for section in ("industry", "policy", "academic"):
-            items = grouped.get(section, [])
+        for category in ("塑料", "橡胶", "纤维"):
+            items = grouped.get(category, [])
             if not items:
                 continue
-            label = _SECTION_LABELS.get(section, section)
-            emoji = _SECTION_EMOJIS.get(section, "")
+            label = _CATEGORY_LABELS.get(category, category)
+            emoji = _CATEGORY_EMOJIS.get(category, "")
             count = len(items)
             nav_items.append(
-                f'<a href="#section-{section}" class="nav-pill">'
+                f'<a href="#section-{category}" class="nav-pill">'
                 f'{emoji} {label} <span class="nav-count">{count}</span></a>'
             )
             cards_html = self._render_cards(items)
             section_blocks.append(
-                f'<section id="section-{section}" class="section-block">'
+                f'<section id="section-{category}" class="section-block">'
                 f'<div class="section-header">'
                 f'<h2>{emoji} {label}</h2>'
                 f'<span class="section-count">{count} 条</span>'
@@ -319,9 +305,9 @@ class SummaryAgent:
   .category-badge {{
     display:inline-block; font-size:10px; padding:2px 8px; border-radius:4px; font-weight:500;
   }}
-  .cat-高材制造 {{ background:rgba(46,125,50,0.15); color:#66bb6a; }}
-  .cat-清洁能源 {{ background:rgba(21,101,192,0.15); color:#64b5f6; }}
-  .cat-AI {{ background:rgba(123,31,162,0.15); color:#ce93d8; }}
+  .cat-塑料 {{ background:rgba(25,118,210,0.15); color:#42a5f5; }}
+  .cat-橡胶 {{ background:rgba(46,125,50,0.15); color:#66bb6a; }}
+  .cat-纤维 {{ background:rgba(123,31,162,0.15); color:#ce93d8; }}
 
   /* Insight Boxes */
   .insight-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:28px; }}
@@ -356,9 +342,9 @@ class SummaryAgent:
     <div class="date">{today}</div>
     <div class="stats">
       <div class="stat"><div class="stat-num">{total}</div><div class="stat-label">Articles</div></div>
-      <div class="stat"><div class="stat-num">{section_counts.get("industry", 0)}</div><div class="stat-label">Industry</div></div>
-      <div class="stat"><div class="stat-num">{section_counts.get("policy", 0)}</div><div class="stat-label">Policy</div></div>
-      <div class="stat"><div class="stat-num">{section_counts.get("academic", 0)}</div><div class="stat-label">Academic</div></div>
+      <div class="stat"><div class="stat-num">{category_counts.get("塑料", 0)}</div><div class="stat-label">塑料</div></div>
+      <div class="stat"><div class="stat-num">{category_counts.get("橡胶", 0)}</div><div class="stat-label">橡胶</div></div>
+      <div class="stat"><div class="stat-num">{category_counts.get("纤维", 0)}</div><div class="stat-label">纤维</div></div>
     </div>
   </div>
 

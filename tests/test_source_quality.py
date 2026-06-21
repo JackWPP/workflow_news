@@ -39,7 +39,7 @@ class TestClassifySourceLowTier:
 
     def test_homepage(self):
         result = classify_source(url="https://example.com/", title="Home", content="")
-        assert result["source_tier"] == "D"
+        assert result["source_tier"] == "C"
 
     def test_industry_report_seo_domain(self):
         result = classify_source(
@@ -61,7 +61,7 @@ class TestClassifySourceLowTier:
             assert result["source_tier"] == "D"
 
     def test_newly_added_low_value_domains(self):
-        for domain in ("mysteel.com", "100ppi.com", "bohe.cn", "qcc.com", "tianyancha.com", "aiqicha.baidu.com"):
+        for domain in ("bohe.cn", "qcc.com", "tianyancha.com", "aiqicha.baidu.com"):
             result = classify_source(
                 url=f"https://{domain}/news/1",
                 title="塑料材料资讯",
@@ -69,6 +69,25 @@ class TestClassifySourceLowTier:
             )
             assert result["source_kind"] == "aggregator"
             assert result["source_tier"] == "D"
+
+    def test_chinese_industry_media_classified_as_vertical(self):
+        for domain in ("86pla.com", "hg707.com", "ccin.com.cn", "cria.org.cn", "cppia.com.cn"):
+            result = classify_source(
+                url=f"https://{domain}/news/1",
+                title="塑料行业新闻",
+                content="高分子 塑料",
+            )
+            assert result["source_kind"] == "vertical_media", f"{domain} should be vertical_media"
+            assert result["source_tier"] == "B", f"{domain} should be tier B"
+
+    def test_mysteel_not_blocked(self):
+        result = classify_source(
+            url="https://www.mysteel.com/rubber/2026/06/test.html",
+            title="橡胶价格",
+            content="合成橡胶",
+        )
+        assert result["source_tier"] != "D"
+        assert result["publish_block_reason"] is None
 
 
 class TestDomainTierRank:
@@ -89,7 +108,7 @@ class TestDetectPageKind:
         assert detect_page_kind("https://example.com/products/injection-mold") == "product"
 
     def test_homepage(self):
-        assert detect_page_kind("https://example.com/") == "homepage"
+        assert detect_page_kind("https://example.com/") == "article"
 
     def test_pdf_download(self):
         assert detect_page_kind("https://example.com/files/report.pdf") == "download"

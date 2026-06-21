@@ -97,14 +97,14 @@ class TestEditorAgentSeedRanking:
 
     def test_section_minimum_quota_fills_policy(self):
         articles = [
-            _article(idx=1, domain="a.com", title="Industry 1", section="industry", category="高材制造"),
-            _article(idx=2, domain="b.com", title="Industry 2", section="industry", category="高材制造"),
-            _article(idx=3, domain="c.com", title="Industry 3", section="industry", category="清洁能源"),
-            _article(idx=4, domain="d.com", title="Industry 4", section="industry", category="AI"),
-            _article(idx=5, domain="e.com", title="Academic 1", section="academic", category="高材制造"),
-            _article(idx=6, domain="f.com", title="Academic 2", section="academic", category="清洁能源"),
-            _article(idx=7, domain="g.com", title="Policy 1", section="policy", category="清洁能源"),
-            _article(idx=8, domain="h.com", title="Policy 2", section="policy", category="AI"),
+            _article(idx=1, domain="a.com", title="Industry 1", section="industry", category="塑料"),
+            _article(idx=2, domain="b.com", title="Industry 2", section="industry", category="塑料"),
+            _article(idx=3, domain="c.com", title="Industry 3", section="industry", category="橡胶"),
+            _article(idx=4, domain="d.com", title="Industry 4", section="industry", category="纤维"),
+            _article(idx=5, domain="e.com", title="Academic 1", section="academic", category="塑料"),
+            _article(idx=6, domain="f.com", title="Academic 2", section="academic", category="橡胶"),
+            _article(idx=7, domain="g.com", title="Policy 1", section="policy", category="塑料"),
+            _article(idx=8, domain="h.com", title="Policy 2", section="policy", category="橡胶"),
         ]
 
         selected = EditorAgent._rank_and_balance_seed_articles(articles, limit=8)
@@ -116,9 +116,9 @@ class TestEditorAgentSeedRanking:
 
     def test_section_minimum_quota_skipped_when_insufficient_candidates(self):
         articles = [
-            _article(idx=1, domain="a.com", title="Industry 1", section="industry", category="高材制造"),
-            _article(idx=2, domain="b.com", title="Industry 2", section="industry", category="清洁能源"),
-            _article(idx=3, domain="c.com", title="Academic 1", section="academic", category="高材制造"),
+            _article(idx=1, domain="a.com", title="Industry 1", section="industry", category="塑料"),
+            _article(idx=2, domain="b.com", title="Industry 2", section="industry", category="橡胶"),
+            _article(idx=3, domain="c.com", title="Academic 1", section="academic", category="塑料"),
         ]
 
         selected = EditorAgent._rank_and_balance_seed_articles(articles, limit=10)

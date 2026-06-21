@@ -9,7 +9,7 @@ export interface DecisionTrace {
   key_finding: string
   source_domain: string
   section: string
-  category?: string                // "高材制造" | "清洁能源" | "AI"
+  category?: string                // "塑料" | "橡胶" | "纤维" | "AI"
   source_tier?: string
   source_reliability_label?: string
   source_kind?: string
@@ -59,7 +59,7 @@ export interface ReportItem {
   combined_score: number
   decision_trace: DecisionTrace
   language: string              // "zh" | "en"
-  category: string              // "高材制造" | "清洁能源" | "AI"
+  category: string              // "塑料" | "橡胶" | "纤维" | "AI"
 }
 
 export interface Report {
@@ -80,7 +80,7 @@ export interface Report {
   created_at: string
   items: ReportItem[]
   report_type: string           // "global" | "lab"
-  categories: string[]          // ["高材制造", "清洁能源", "AI"]
+  categories: string[]          // ["塑料", "橡胶", "纤维"]
   english_section_count: number
   chinese_section_count: number
   overall_score: number | null  // LLM-as-Judge 加权总分

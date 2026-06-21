@@ -40,7 +40,7 @@ _SEED_DOMAIN_CAP = 2
 _SEED_LIMIT = 20
 _LOW_VALUE_SEED_KINDS = {"marketing", "ecommerce", "aggregator", "content_platform"}
 _SECTION_ORDER = ("industry", "academic", "policy")
-_CATEGORY_ORDER = ("高材制造", "清洁能源", "AI")
+_CATEGORY_ORDER = ("塑料", "橡胶", "纤维")
 _SECTION_MIN_QUOTA: dict[str, int] = {"industry": 2, "academic": 2, "policy": 2}
 _SEED_POSITIVE_KEYWORDS = (
     "高分子",
@@ -330,7 +330,7 @@ class EditorAgent:
     def _seed_category(cls, article: ArticlePool) -> str:
         discovery = cls._discovery_metadata(article)
         category = article.category or discovery.get("intended_category") or ""
-        return str(category) if category in _CATEGORY_ORDER else "高材制造"
+        return str(category) if category in _CATEGORY_ORDER else "塑料"
 
     @classmethod
     def _seed_text(cls, article: ArticlePool) -> str:
@@ -382,8 +382,6 @@ class EditorAgent:
             score += 2.0
         if section in {"academic", "policy"}:
             score += 0.6
-        if category == "AI":
-            score += 0.8
         source_kind = str(quality.get("source_kind") or "")
         if source_kind in {"government", "academic_journal", "official_company_newsroom"}:
             score += 1.2

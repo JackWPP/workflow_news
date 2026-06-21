@@ -1076,7 +1076,7 @@ class EvaluateArticleTool(Tool):
             quality_score = pre_evaluated.get("quality_score", 0)
             worthy = bool(quality_score >= 0.25)
             section = pre_evaluated.get("section", "industry")
-            category = pre_evaluated.get("category", "高材制造")
+            category = pre_evaluated.get("category", "塑料")
             key_finding = pre_evaluated.get("key_finding", title[:50])
             reason = pre_evaluated.get("relevance_rationale", "") or pre_evaluated.get("reason", "")
             image_worthiness = True  # Images are nice-to-have, not a quality gate
@@ -1086,18 +1086,45 @@ class EvaluateArticleTool(Tool):
         else:
             system_prompt = (
                 "你是高分子材料加工领域的日报研究员。\n"
-                "评估这篇文章是否值得纳入今日日报，并给出理由。\n"
-                "优先选择中国大陆权威媒体或英文学术/产业新闻，对台湾或非相关繁体媒体降低评分权重！\n"
-                "对以下内容必须直接拒绝：纯宏观战争新闻、纯医药并购、纯体育社会新闻。\n"
-                "注意：当文章涉及塑料回收、新材料、化工设备、产业政策、环保法规、碳排放、"
-                "可持续发展、包装、汽车轻量化、医疗器械、新能源材料等相关领域时，即使与高分子加工不直接相关，也应倾向于保留。\n"
-                "政府网站（.gov.cn）、大学网站（.edu.cn）、学术期刊（Nature/ACS/ScienceDirect）是高可信源，优先收录。\n"
-                "企业 newsroom、行业协会、行业媒体也是优质来源。\n"
-                "当有疑问时，倾向于保留（标记 confidence 为 low），不要轻易拒绝。\n"
+                "评估这篇文章是否值得纳入今日日报，并给出理由。\n\n"
+                "【入选标准——宽松原则】\n"
+                "高分子材料加工是一个专业B2B领域，大部分行业动态由行业垂直媒体、企业官网、行业协会发布。\n"
+                "只要文章满足以下条件，就应纳入：\n"
+                "  1. 内容涉及塑料/橡胶/纤维的材料、设备、工艺、应用、政策或市场\n"
+                "  2. 有具体的事实信息（新产品、价格数据、政策条文、技术参数、产能数据等）\n"
+                "  3. 发布时间在合理时效内\n"
+                "来源等级仅作参考，不构成拒绝理由——行业垂直媒体和B2B行业平台是这类内容的主要载体。\n\n"
+                "【明确拒绝的情况——仅此5类】\n"
+                "  - 纯宏观战争/政治/社会新闻，与材料行业无关\n"
+                "  - 纯医药/纯体育/纯娱乐内容\n"
+                "  - 纯电商产品列表页（如alibaba、1688产品页）、价格比价页\n"
+                "  - 纯SEO/营销软文，全文无具体行业信息\n"
+                "  - 主题是AI/机器学习/数字化技术本身（非材料应用）——此类由AI日报独立处理\n\n"
+                "【关键原则——当有疑问时必须保留】\n"
+                "宁可多收一篇，不可漏掉一条。如果文章可能有价值但不完全确定，设 worthy=true。\n"
+                "行业媒体（如我的钢铁、中塑在线、化工707、慧聪、sina财经等）发布的产业新闻是合法来源。\n"
+                "不要因为来源不是\"权威媒体\"就拒绝——在高分子材料B2B领域，行业垂直媒体就是权威。\n\n"
                 "输出 JSON，包含：\n"
                 "  - worthy: true/false\n"
-                "  - section: academic/industry/policy\n"
-                "  - category: 高材制造/清洁能源/AI（按文章主题归类：高分子材料、塑料、复合材料等材料相关→高材制造；新能源、回收、降解、碳关税、环保→清洁能源；人工智能、数字化、智能制造、机器学习→AI）\n"
+                "  - section: academic/industry/policy（按文章核心内容归类，不按来源网站归类）\n"
+                "      industry:\n"
+                "        · 市场行情（价格/供需/周评/月报）\n"
+                "        · 产能建设（扩产/投产/产线开车/产能规划）\n"
+                "        · 企业经营（新品发布/并购重组/财报/战略合作）\n"
+                "        · 行业活动（会议/展会/论坛/排行榜/推荐名录）\n"
+                "      policy:\n"
+                "        · 法规与监管（限塑令/碳关税CBAM/EUDR/REACH/环保法规）\n"
+                "        · 标准与规范（国标GB/行标/ISO/ASTM/检测方法）\n"
+                "        · 政府政策（产业规划/补贴/准入/贸易政策/关税调整）\n"
+                "      academic:\n"
+                "        · 研究突破（新机理/新方法/首次合成/性能重大提升）\n"
+                "        · 学术成果（期刊论文/会议论文/高校/研究院所进展）\n"
+                "        · 基础研究（工艺机理/材料表征/理论模型/仿真研究）\n"
+                "      判断原则：以文章核心内容为第一判断依据，来源类型仅作参考。\n"
+                "      模糊时：涉及\"从实验室到产线\"的，若重点在技术突破→academic，若重点在量产/商业化→industry。\n"
+                "      注意：企业新闻稿中的\"技术突破\"若无学术支撑，应标 industry。\n"
+                "  - category: 塑料/橡胶/纤维（按文章主题归类：塑料原料/制品/注塑/挤出/薄膜/改性/回收/限塑/碳关税/功能薄膜(隔膜/胶膜/质子膜)/导电高分子/3D打印→塑料；天然橡胶/合成橡胶/轮胎/弹性体/硫化/密封件→橡胶；化学纤维/碳纤维/芳纶/涤纶/锦纶/纺丝/复合材料/预浸料→纤维）\n"
+                "  - 注意：若文章核心是 AI/机器学习/数字化/智能制造技术本身（即便应用于高分子材料），请将 worthy 设为 false——此类内容由独立的 AI 日报处理，不纳入全球日报。\n"
                 "  - key_finding: 一句话的核心发现（30字以内，必须是中文）\n"
                 "  - reason: 评估理由（50字以内，写明为什么值得或不值得，必须是中文）\n"
                 "  - image_worthiness: true/false（这个主题值不值得配图）\n"
@@ -1136,7 +1163,7 @@ class EvaluateArticleTool(Tool):
 
             worthy = bool(result.get("worthy", False))
             section = result.get("section", "industry")
-            category = result.get("category", "高材制造")
+            category = result.get("category", "塑料")
             key_finding = result.get("key_finding", title[:50])
             reason = result.get("reason", "")
             image_worthiness = True  # Always try to find images; nice-to-have, not a gate
@@ -1162,7 +1189,7 @@ class EvaluateArticleTool(Tool):
                 section=section
                 if section in {"academic", "industry", "policy"}
                 else "industry",
-                category=category if category in {"高材制造", "清洁能源", "AI"} else "高材制造",
+                category=category if category in {"塑料", "橡胶", "纤维"} else "塑料",
                 key_finding=key_finding,
                 worth_publishing=True,
                 evaluation_reason=reason,
@@ -1835,15 +1862,15 @@ class CheckCoverageTool(Tool):
                 for gap in gaps:
                     if "产业" in gap:
                         suggestions.append(
-                            "建议搜索产业动态：如 '\"注塑机\" 新品发布', '\"生物基材料\" 产业化', '\"轮胎\" 涨价 扩产'"
+                            "建议搜索塑料/橡胶/纤维产业动态：如 '注塑机 新品', '轮胎 产能 扩建', '碳纤维 应用 产业化'"
                         )
                     elif "政策" in gap:
                         suggestions.append(
-                            "建议搜索政策标准：如 '\"以旧换新\" 塑料回收', '\"欧盟\" 碳关税 塑料', '\"国标\" 橡胶检测'"
+                            "建议搜索政策标准：如 '限塑令 最新政策', '橡胶 行业标准', '碳关税 纤维行业'"
                         )
                     elif "学术" in gap:
                         suggestions.append(
-                            "建议搜索学术方向：如 '\"微纳米层叠\" 最新应用', '\"静电纺丝\" 产业化', 'polymer processing latest research'"
+                            "建议搜索学术方向：如 '高分子改性 研究', '弹性体 新材料', '静电纺丝 最新进展'"
                         )
                     elif "图片" in gap:
                         suggestions.append("用 search_images 为主要文章找配图")

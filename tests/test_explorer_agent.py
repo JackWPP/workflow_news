@@ -6,39 +6,37 @@ import pytest
 
 from app.services.explorer_agent import (
     ExplorerAgent,
-    SECTION_CATEGORY_QUERIES,
+    CATEGORY_QUERIES,
     _build_explorer_prompt,
     get_search_queries,
 )
 
 
 class TestSearchQueryGeneration:
-    def test_industry_high_material_returns_queries(self):
-        queries = get_search_queries("industry", "高材制造")
-        assert len(queries) == 5
+    def test_plastic_returns_queries(self):
+        queries = get_search_queries("塑料")
+        assert len(queries) == 8
         assert all("query" in q and "language" in q for q in queries)
         assert queries[0]["query"] == "注塑机 新品 2026"
 
-    def test_policy_clean_energy_returns_queries(self):
-        queries = get_search_queries("policy", "清洁能源")
-        assert len(queries) == 4
-        assert any("碳关税" in q["query"] for q in queries)
+    def test_rubber_returns_queries(self):
+        queries = get_search_queries("橡胶")
+        assert len(queries) == 8
+        assert any("轮胎" in q["query"] for q in queries)
 
-    def test_academic_ai_returns_queries(self):
-        queries = get_search_queries("academic", "AI")
-        assert len(queries) == 3
-        assert all(q["language"] == "en" for q in queries)
+    def test_fiber_returns_queries(self):
+        queries = get_search_queries("纤维")
+        assert len(queries) == 8
+        assert any("碳纤维" in q["query"] for q in queries)
 
-    def test_unknown_section_returns_empty(self):
-        queries = get_search_queries("unknown", "unknown")
+    def test_unknown_category_returns_empty(self):
+        queries = get_search_queries("unknown")
         assert queries == []
 
-    def test_all_query_keys_are_section_category_tuples(self):
-        for key in SECTION_CATEGORY_QUERIES:
-            assert isinstance(key, tuple)
-            assert len(key) == 2
-            section, category = key
-            assert section in {"industry", "policy", "academic"}
+    def test_all_query_keys_are_category_strings(self):
+        for key in CATEGORY_QUERIES:
+            assert isinstance(key, str)
+            assert key in {"塑料", "橡胶", "纤维"}
 
 
 class TestSourceQualityFiltering:
@@ -59,7 +57,7 @@ class TestSourceQualityFiltering:
         result = ExplorerAgent._article_to_candidate(article)
         assert result is None
 
-    def test_filters_homepage_page_kind(self):
+    def test_domain_only_url_not_filtered(self):
         article = {
             "title": "Example.com",
             "url": "https://example.com/",
@@ -74,7 +72,7 @@ class TestSourceQualityFiltering:
             "published_at": None,
         }
         result = ExplorerAgent._article_to_candidate(article)
-        assert result is None
+        assert result is not None
 
     def test_filters_product_page_kind(self):
         article = {
@@ -197,36 +195,32 @@ class TestCandidateOutput:
 
 class TestExplorerAgentInit:
     def test_init_with_defaults(self):
-        agent = ExplorerAgent(section="industry", category="高材制造")
-        assert agent.section == "industry"
-        assert agent.category == "高材制造"
+        agent = ExplorerAgent(category="塑料")
+        assert agent.category == "塑料"
         assert agent._llm is not None
 
     def test_init_with_custom_llm(self):
         mock_llm = SimpleNamespace()
         agent = ExplorerAgent(
-            section="policy",
-            category="清洁能源",
+            category="橡胶",
             llm_client=mock_llm,
         )
         assert agent._llm is mock_llm
 
-    def test_system_prompt_contains_section_and_category(self):
-        prompt = _build_explorer_prompt("industry", "高材制造")
-        assert "industry" in prompt
-        assert "高材制造" in prompt
+    def test_system_prompt_contains_category(self):
+        prompt = _build_explorer_prompt("塑料")
+        assert "塑料" in prompt
 
     def test_task_prompt_contains_queries(self):
-        agent = ExplorerAgent(section="industry", category="高材制造")
+        agent = ExplorerAgent(category="塑料")
         prompt = agent._build_task_prompt()
         assert "注塑机 新品 2026" in prompt
-        assert "高材制造" in prompt
-        assert "industry" in prompt
+        assert "塑料" in prompt
 
 
 class TestExplorerAgentHarness:
     def test_harness_limits(self):
-        agent = ExplorerAgent(section="industry", category="高材制造")
+        agent = ExplorerAgent(category="塑料")
         harness = agent._build_harness()
-        assert harness.max_steps == 12
-        assert harness.max_duration_seconds == 240.0
+        assert harness.max_steps == 32
+        assert harness.max_duration_seconds == 420.0

@@ -267,7 +267,7 @@ async def result_to_report(
                     ),
                     "source_kind": article.get("source_kind", ""),
                     "page_kind": article.get("page_kind", ""),
-                    "category": article.get("category", "高材制造"),
+                    "category": article.get("category", "塑料"),
                     "evidence_strength": article.get("evidence_strength", ""),
                     "supports_numeric_claims": bool(
                         article.get("supports_numeric_claims", False)

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 250" fill="none">
+  <rect width="400" height="250" fill="#F3E5F5"/>
+  <g transform="translate(150,50)">
+    <line x1="30" y1="10" x2="30" y2="90" stroke="#ce93d8" stroke-width="3" opacity="0.4"/>
+    <line x1="50" y1="10" x2="50" y2="90" stroke="#ce93d8" stroke-width="3" opacity="0.5"/>
+    <line x1="70" y1="10" x2="70" y2="90" stroke="#ce93d8" stroke-width="3" opacity="0.4"/>
+    <line x1="20" y1="30" x2="80" y2="30" stroke="#ce93d8" stroke-width="2" opacity="0.3"/>
+    <line x1="20" y1="60" x2="80" y2="60" stroke="#ce93d8" stroke-width="2" opacity="0.3"/>
+    <rect x="20" y="95" width="60" height="20" rx="4" fill="#ce93d8" opacity="0.3"/>
+  </g>
+  <text x="200" y="180" text-anchor="middle" font-family="system-ui" font-size="14" fill="#ce93d8" opacity="0.6">纤维</text>
+</svg>

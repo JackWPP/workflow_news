@@ -11,7 +11,7 @@ def _card(
     url: str = "https://example.com/1",
     domain: str = "example.com",
     section: str = "industry",
-    category: str = "高材制造",
+    category: str = "塑料",
     summary: str = "这是一篇关于高分子材料的测试文章摘要",
     key_finding: str = "新型聚乳酸材料突破",
     evaluation_reason: str = "与高分子加工高度相关",
@@ -37,21 +37,21 @@ def _make_cards() -> list[dict]:
         _card(
             title="新型注塑设备发布",
             section="industry",
-            category="高材制造",
+            category="塑料",
             key_finding="某企业发布新型注塑机",
         ),
         _card(
             title="聚乳酸降解新进展",
             section="academic",
-            category="清洁能源",
+            category="塑料",
             key_finding="PLA降解效率提升30%",
             keywords=["聚乳酸", "降解", "PLA"],
         ),
         _card(
-            title="欧盟碳关税新规",
-            section="policy",
-            category="清洁能源",
-            key_finding="CBAM覆盖范围扩大至塑料制品",
+            title="轮胎产能扩建",
+            section="industry",
+            category="橡胶",
+            key_finding="某企业新建轮胎生产线",
         ),
     ]
 
@@ -62,20 +62,18 @@ class TestGroupBySection:
         cards = _make_cards()
         grouped = agent._group_by_section(cards)
 
-        assert "industry" in grouped
-        assert "academic" in grouped
-        assert "policy" in grouped
-        assert len(grouped["industry"]) == 1
-        assert len(grouped["academic"]) == 1
-        assert len(grouped["policy"]) == 1
+        assert "塑料" in grouped
+        assert "橡胶" in grouped
+        assert len(grouped["塑料"]) == 2
+        assert len(grouped["橡胶"]) == 1
 
-    def test_default_section_is_industry(self):
+    def test_default_category_is_plastic(self):
         agent = SummaryAgent(llm_client=None)
-        cards = [_card(section=None)]
+        cards = [_card(category=None)]
         grouped = agent._group_by_section(cards)
 
-        assert "industry" in grouped
-        assert len(grouped["industry"]) == 1
+        assert "塑料" in grouped
+        assert len(grouped["塑料"]) == 1
 
     def test_empty_cards(self):
         agent = SummaryAgent(llm_client=None)
@@ -86,8 +84,8 @@ class TestGroupBySection:
 class TestHeuristicAnalysis:
     def test_returns_expected_keys(self):
         grouped = {
-            "industry": [_card(section="industry"), _card(section="industry")],
-            "academic": [_card(section="academic")],
+            "塑料": [_card(category="塑料"), _card(category="塑料")],
+            "橡胶": [_card(category="橡胶")],
         }
         result = SummaryAgent._heuristic_analysis(grouped)
 
@@ -99,18 +97,18 @@ class TestHeuristicAnalysis:
         assert isinstance(result["follow_up"], list)
 
     def test_mentions_article_count(self):
-        grouped = {"industry": [_card(), _card()], "policy": [_card()]}
+        grouped = {"塑料": [_card(), _card()], "橡胶": [_card()]}
         result = SummaryAgent._heuristic_analysis(grouped)
 
         assert "3" in result["summary"]
 
-    def test_industry_trend_included(self):
+    def test_plastic_trend_included(self):
         grouped = {
-            "industry": [_card(), _card(), _card()],
+            "塑料": [_card(), _card(), _card()],
         }
         result = SummaryAgent._heuristic_analysis(grouped)
 
-        assert any("产业" in t for t in result["trends"])
+        assert any("塑料" in t for t in result["trends"])
 
 
 class TestGenerate:
@@ -136,15 +134,14 @@ class TestGenerate:
         assert "follow_up" in result
 
     @pytest.mark.asyncio
-    async def test_html_contains_section_nav(self):
+    async def test_html_contains_category_nav(self):
         agent = SummaryAgent(llm_client=None)
         cards = _make_cards()
         result = await agent.generate(cards)
 
         html = result["html"]
-        assert "section-industry" in html
-        assert "section-academic" in html
-        assert "section-policy" in html
+        assert "section-塑料" in html
+        assert "section-橡胶" in html
 
     @pytest.mark.asyncio
     async def test_html_contains_card_titles(self):
@@ -155,7 +152,7 @@ class TestGenerate:
         html = result["html"]
         assert "新型注塑设备发布" in html
         assert "聚乳酸降解新进展" in html
-        assert "欧盟碳关税新规" in html
+        assert "轮胎产能扩建" in html
 
     @pytest.mark.asyncio
     async def test_html_contains_summary_and_trends(self):
@@ -199,10 +196,10 @@ class TestGenerate:
     @pytest.mark.asyncio
     async def test_html_contains_category_badge(self):
         agent = SummaryAgent(llm_client=None)
-        cards = [_card(category="AI")]
+        cards = [_card(category="橡胶")]
         result = await agent.generate(cards)
 
-        assert "AI" in result["html"]
+        assert "橡胶" in result["html"]
         assert "category-badge" in result["html"]
 
 

@@ -57,7 +57,7 @@ class ReportOut(ORMModel):
     image_review_summary: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     report_type: str = "global"
-    categories: list[str] = Field(default_factory=lambda: ["高材制造", "清洁能源", "AI"])
+    categories: list[str] = Field(default_factory=lambda: ["塑料", "橡胶", "纤维"])
     english_section_count: int = 0
     chinese_section_count: int = 0
     overall_score: float | None = None

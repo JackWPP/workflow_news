@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services.daily_orchestrator import SECTIONS, DailyOrchestrator
+from app.services.daily_orchestrator import CATEGORIES, DailyOrchestrator
 
 
 def _candidate(
@@ -14,8 +14,7 @@ def _candidate(
     title: str = "Test Article",
     url: str = "https://example.com/1",
     domain: str = "example.com",
-    section: str = "industry",
-    category: str = "高材制造",
+    category: str = "塑料",
 ) -> dict:
     return {
         "title": title,
@@ -37,7 +36,7 @@ def _card(
     title: str = "Test Article",
     url: str = "https://example.com/1",
     section: str = "industry",
-    category: str = "高材制造",
+    category: str = "塑料",
 ) -> dict:
     return {
         "title": title,
@@ -53,17 +52,12 @@ def _card(
     }
 
 
-class TestSections:
-    def test_sections_has_three_entries(self):
-        assert len(SECTIONS) == 3
+class TestCategories:
+    def test_categories_has_three_entries(self):
+        assert len(CATEGORIES) == 3
 
-    def test_sections_cover_expected_categories(self):
-        categories = {c for _, c in SECTIONS}
-        assert categories == {"高材制造", "清洁能源", "AI"}
-
-    def test_sections_cover_expected_sections(self):
-        sections = {s for s, _ in SECTIONS}
-        assert sections == {"industry", "policy", "academic"}
+    def test_categories_cover_expected_materials(self):
+        assert set(CATEGORIES) == {"塑料", "橡胶", "纤维"}
 
 
 class TestOrchestratorInit:
@@ -83,8 +77,8 @@ class TestParallelExplore:
         explore_calls = []
 
         async def mock_explore(self, run_id=None):
-            explore_calls.append(self.section)
-            return [_candidate(section=self.section, category=self.category)]
+            explore_calls.append(self.category)
+            return [_candidate(category=self.category)]
 
         orchestrator = DailyOrchestrator(llm_client=SimpleNamespace())
 
@@ -95,7 +89,7 @@ class TestParallelExplore:
             results = await orchestrator._phase_explore(None, None)
 
         assert len(results) == 3
-        assert set(explore_calls) == {"industry", "policy", "academic"}
+        assert set(explore_calls) == {"塑料", "橡胶", "纤维"}
 
     @pytest.mark.asyncio
     async def test_explore_returns_empty_on_exception(self):
@@ -146,11 +140,11 @@ class TestParallelEdit:
         edit_calls = []
 
         async def mock_edit(self, candidates, run_id=None):
-            edit_calls.append(self.section)
-            return [_card(section=self.section)]
+            edit_calls.append(self.category)
+            return [_card(category=self.category)]
 
         orchestrator = DailyOrchestrator(llm_client=SimpleNamespace())
-        explore_results = [[_candidate()] for _ in SECTIONS]
+        explore_results = [[_candidate()] for _ in CATEGORIES]
 
         with patch(
             "app.services.daily_orchestrator.SectionEditorAgent.edit",
@@ -159,7 +153,7 @@ class TestParallelEdit:
             results = await orchestrator._phase_edit(explore_results, None, None)
 
         assert len(results) == 3
-        assert set(edit_calls) == {"industry", "policy", "academic"}
+        assert set(edit_calls) == {"塑料", "橡胶", "纤维"}
 
     @pytest.mark.asyncio
     async def test_edit_returns_empty_on_exception(self):
@@ -167,7 +161,7 @@ class TestParallelEdit:
             raise RuntimeError("edit failed")
 
         orchestrator = DailyOrchestrator(llm_client=SimpleNamespace())
-        explore_results = [[_candidate()] for _ in SECTIONS]
+        explore_results = [[_candidate()] for _ in CATEGORIES]
 
         with patch(
             "app.services.daily_orchestrator.SectionEditorAgent.edit",
@@ -186,7 +180,7 @@ class TestParallelEdit:
             return [_card()]
 
         orchestrator = DailyOrchestrator(llm_client=SimpleNamespace())
-        explore_results = [[_candidate()] for _ in SECTIONS]
+        explore_results = [[_candidate()] for _ in CATEGORIES]
 
         with patch(
             "app.services.daily_orchestrator.SectionEditorAgent.edit",
@@ -229,10 +223,10 @@ class TestFullRun:
     @pytest.mark.asyncio
     async def test_run_returns_all_keys(self):
         async def mock_explore(self, run_id=None):
-            return [_candidate(section=self.section, category=self.category)]
+            return [_candidate(category=self.category)]
 
         async def mock_edit(self, candidates, run_id=None):
-            return [_card(section=self.section, category=self.category)]
+            return [_card(category=self.category)]
 
         orchestrator = DailyOrchestrator(llm_client=None)
 
@@ -255,10 +249,10 @@ class TestFullRun:
     @pytest.mark.asyncio
     async def test_run_meta_contains_expected_fields(self):
         async def mock_explore(self, run_id=None):
-            return [_candidate(section=self.section, category=self.category)]
+            return [_candidate(category=self.category)]
 
         async def mock_edit(self, candidates, run_id=None):
-            return [_card(section=self.section, category=self.category)]
+            return [_card(category=self.category)]
 
         orchestrator = DailyOrchestrator(llm_client=None)
 
@@ -274,7 +268,7 @@ class TestFullRun:
         meta = result["meta"]
         assert "total_cards" in meta
         assert "elapsed_seconds" in meta
-        assert "sections" in meta
+        assert "categories" in meta
         assert meta["total_cards"] == 3
 
     @pytest.mark.asyncio
@@ -313,7 +307,7 @@ class TestFullRun:
             raise RuntimeError("boom")
 
         async def mock_edit(self, candidates, run_id=None):
-            return [_card(section=self.section)] if candidates else []
+            return [_card(category=self.category)] if candidates else []
 
         orchestrator = DailyOrchestrator(llm_client=None)
 

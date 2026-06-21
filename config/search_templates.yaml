@@ -6,130 +6,130 @@
 #   query: 搜索关键词
 #   language: zh/en
 #   section: industry/policy/academic
-#   category: 高材制造/清洁能源/AI
+#   category: 塑料/橡胶/纤维 (AI 由独立 AI日报 处理)
 #   query_family: 查询类别（用于诊断和分析）
 #   freshness: 时效性 oneDay/oneWeek/oneMonth（默认 oneWeek）
 #   include_domains: 限定域名（可选）
 #   exclude_domains: 排除域名（可选）
 
 # ============================================================================
-# 高材制造 (industry)
+# 塑料 (industry) — 设备/原料/应用/产能
 # ============================================================================
 - query: "注塑机 新品发布"
   language: zh
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: equipment_news
 
 - query: "挤出设备 技术升级"
   language: zh
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: equipment_news
 
 - query: "高分子材料 产能扩建"
   language: zh
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: capacity_news
 
 - query: "塑料原料 价格行情"
   language: zh
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: market_watch
 
 - query: "复合材料 汽车轻量化"
   language: zh
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: application_news
 
 - query: "改性塑料 应用"
   language: zh
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: application_news
 
 - query: "3D打印 高分子材料"
   language: zh
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: advanced_processing
 
 - query: "塑料 行业 动态"
   language: zh
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: industry_news
 
 - query: "polymer industry news"
   language: en
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: industry_news
 
 - query: "injection molding machine new product"
   language: en
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: equipment_news
 
 - query: "polymer processing equipment innovation"
   language: en
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: equipment_news
 
 - query: "additive manufacturing polymer"
   language: en
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: advanced_processing
 
 # ============================================================================
-# 清洁能源 (industry)
+# 塑料 (industry) — 功能薄膜/回收/降解
 # ============================================================================
 - query: "锂电池 隔膜 材料"
   language: zh
   section: industry
-  category: 清洁能源
+  category: 塑料
   query_family: energy_materials
 
 - query: "光伏 胶膜 封装材料"
   language: zh
   section: industry
-  category: 清洁能源
+  category: 塑料
   query_family: energy_materials
 
 - query: "氢能 质子交换膜"
   language: zh
   section: industry
-  category: 清洁能源
+  category: 塑料
   query_family: energy_materials
 
 - query: "PLA 聚乳酸 降解"
   language: zh
   section: industry
-  category: 清洁能源
+  category: 塑料
   query_family: biopolymer
 
 - query: "PBAT 生物降解塑料"
   language: zh
   section: industry
-  category: 清洁能源
+  category: 塑料
   query_family: biopolymer
 
 - query: "plastics recycling technology breakthrough"
   language: en
   section: industry
-  category: 清洁能源
+  category: 塑料
   query_family: recycling
 
 - query: "biodegradable polymer technology"
   language: en
   section: industry
-  category: 清洁能源
+  category: 塑料
   query_family: biopolymer
 
 # ============================================================================
@@ -165,55 +165,55 @@
 - query: "限塑令 最新政策"
   language: zh
   section: policy
-  category: 清洁能源
+  category: 塑料
   query_family: policy
 
 - query: "碳关税 塑料行业"
   language: zh
   section: policy
-  category: 清洁能源
+  category: 塑料
   query_family: policy
 
 - query: "环保法规 高分子材料"
   language: zh
   section: policy
-  category: 清洁能源
+  category: 塑料
   query_family: policy
 
 - query: "塑料 回收 循环经济"
   language: zh
   section: policy
-  category: 清洁能源
+  category: 塑料
   query_family: policy
 
 - query: "EU plastic regulation policy"
   language: en
   section: policy
-  category: 清洁能源
+  category: 塑料
   query_family: policy
 
 - query: "microplastics regulation polymer"
   language: en
   section: policy
-  category: 清洁能源
+  category: 塑料
   query_family: policy
 
 - query: "高分子材料 国家标准"
   language: zh
   section: policy
-  category: 高材制造
+  category: 塑料
   query_family: policy
 
 - query: "塑料制品 行业规范"
   language: zh
   section: policy
-  category: 高材制造
+  category: 塑料
   query_family: policy
 
 - query: "新材料 产业政策"
   language: zh
   section: policy
-  category: 高材制造
+  category: 塑料
   query_family: policy
 
 - query: "人工智能 制造业 政策"
@@ -234,41 +234,155 @@
 - query: "导电高分子"
   language: zh
   section: academic
-  category: 清洁能源
+  category: 塑料
   query_family: research_signal
 
 - query: "高分子改性 研究进展"
   language: zh
   section: academic
-  category: 高材制造
+  category: 塑料
   query_family: research_signal
 
 - query: "聚合物 新材料 论文"
   language: zh
   section: academic
-  category: 高材制造
+  category: 塑料
   query_family: research_signal
 
 - query: "北京化工大学 英蓝实验室 高分子 研究"
   language: zh
   section: academic
-  category: 高材制造
+  category: 塑料
   query_family: lab_watch
 
 - query: "英蓝云展 高分子材料 加工技术"
   language: zh
   section: industry
-  category: 高材制造
+  category: 塑料
   query_family: lab_watch
 
 - query: "polymer composite materials science research"
   language: en
   section: academic
-  category: 高材制造
+  category: 塑料
   query_family: research_signal
 
 - query: "biodegradable polymer research"
   language: en
   section: academic
-  category: 清洁能源
+  category: 塑料
   query_family: research_signal
+
+# ============================================================================
+# 橡胶方向
+# ============================================================================
+- query: "轮胎 行业动态 产能"
+  language: zh
+  section: industry
+  category: 橡胶
+  query_family: rubber_industry
+
+- query: "合成橡胶 价格 行情"
+  language: zh
+  section: industry
+  category: 橡胶
+  query_family: rubber_market
+
+- query: "弹性体 TPU TPE 新材料"
+  language: zh
+  section: industry
+  category: 橡胶
+  query_family: rubber_materials
+
+- query: "橡胶 密封件 汽车应用"
+  language: zh
+  section: industry
+  category: 橡胶
+  query_family: rubber_application
+
+- query: "橡胶 行业标准 政策"
+  language: zh
+  section: policy
+  category: 橡胶
+  query_family: rubber_policy
+
+- query: "弹性体 研究进展"
+  language: zh
+  section: academic
+  category: 橡胶
+  query_family: rubber_research
+
+- query: "rubber tire industry news"
+  language: en
+  section: industry
+  category: 橡胶
+  query_family: rubber_industry
+
+- query: "synthetic rubber price capacity"
+  language: en
+  section: industry
+  category: 橡胶
+  query_family: rubber_market
+
+# ============================================================================
+# 纤维方向
+# ============================================================================
+- query: "碳纤维 应用 产业化"
+  language: zh
+  section: industry
+  category: 纤维
+  query_family: fiber_industry
+
+- query: "化学纤维 涤纶 锦纶 行情"
+  language: zh
+  section: industry
+  category: 纤维
+  query_family: fiber_market
+
+- query: "芳纶 高性能纤维 应用"
+  language: zh
+  section: industry
+  category: 纤维
+  query_family: fiber_materials
+
+- query: "纺丝 工艺 技术 突破"
+  language: zh
+  section: academic
+  category: 纤维
+  query_family: fiber_research
+
+- query: "碳纤维 复合材料 研究"
+  language: zh
+  section: academic
+  category: 纤维
+  query_family: fiber_research
+
+- query: "纤维 行业标准 政策"
+  language: zh
+  section: policy
+  category: 纤维
+  query_family: fiber_policy
+
+- query: "carbon fiber application industry"
+  language: en
+  section: industry
+  category: 纤维
+  query_family: fiber_industry
+
+- query: "aramid fiber high performance"
+  language: en
+  section: industry
+  category: 纤维
+  query_family: fiber_materials
+
+- query: "chemical fiber polyester nylon"
+  language: en
+  section: industry
+  category: 纤维
+  query_family: fiber_market
+
+- query: "electrospinning polymer fiber research"
+  language: en
+  section: academic
+  category: 纤维
+  query_family: fiber_research

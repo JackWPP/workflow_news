@@ -553,8 +553,8 @@ class AgentCore:
                         "[AgentCore] Checkpoint 3 triggered at step %d", step_index
                     )
 
-            # Checkpoint 3.5 (round >= 18): 强制 auto_finish 兜底
-            if step_index >= 18:
+            # Checkpoint 3.5 (round >= 20): 强制 auto_finish 兜底
+            if step_index >= 20:
                 has_finished = any(s.tool_name == "finish" for s in memory.step_history)
                 if not has_finished and (has_written or len(articles) >= 4):
                     logger.info(
