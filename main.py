@@ -238,8 +238,13 @@ async def scheduled_report_run():
     await _ensure_pool_fresh_before_report()
     try:
         if isinstance(pipeline, DailyOrchestrator):
-            result = await pipeline.run()
-            logger.info("Scheduled multi-agent report run finished: %s", result.get("meta", {}))
+            report = await pipeline.run()
+            logger.info(
+                "Scheduled multi-agent report run finished: id=%d, status=%s, items=%d",
+                report.id,
+                report.status,
+                len(report.items),
+            )
         elif isinstance(pipeline, (EditorAgent, DailyReportAgent)):
             await pipeline.run(shadow_mode=None)
         else:
